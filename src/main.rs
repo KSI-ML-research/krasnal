@@ -1,4 +1,5 @@
 use anyhow::Result;
+use std::fmt::Write;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::Path;
@@ -30,7 +31,7 @@ struct GameData {
     white_elo: i32,
     black_elo: i32,
     result: String,
-    moves: Vec<String>,
+    moves: String,
     opening: String,
 }
 
@@ -40,6 +41,7 @@ struct FilteredVisitor {
     valid_time_control: bool,
     parsed_count: usize,
     accepted_count: usize,
+    ply_count: usize,
 }
 
 impl FilteredVisitor {
@@ -50,6 +52,7 @@ impl FilteredVisitor {
             valid_time_control: false,
             parsed_count: 0,
             accepted_count: 0,
+            ply_count: 0,
         }
     }
 
@@ -75,8 +78,10 @@ impl Visitor for FilteredVisitor {
         }
 
         self.current_game = GameData::default();
+        self.current_game.moves.reserve(512); // Pre-allocate memory for moves
         self.skip_game = false;
         self.valid_time_control = false;
+        self.ply_count = 0;
         ControlFlow::Continue(())
     }
 
@@ -133,12 +138,16 @@ impl Visitor for FilteredVisitor {
     }
 
     fn san(&mut self, _movetext: &mut Self::Movetext, san_plus: SanPlus) -> ControlFlow<Self::Output> {
-        self.current_game.moves.push(format!("{}", san_plus));
+        if !self.current_game.moves.is_empty() {
+            self.current_game.moves.push(' ');
+        }
+        let _ = write!(self.current_game.moves, "{}", san_plus);
+        self.ply_count += 1;
         ControlFlow::Continue(())
     }
 
     fn end_game(&mut self, _movetext: Self::Movetext) -> Self::Output {
-        if self.current_game.moves.len() < CONFIG.min_plys {
+        if self.ply_count < CONFIG.min_plys {
             return None;
         }
 
@@ -253,7 +262,7 @@ fn save_batch(games: &[GameData], date: &str, part_idx: usize) -> Result<()> {
     let black_elos: Series = Series::new("black_elo".into(), games.iter().map(|g| g.black_elo).collect::<Vec<_>>());
     let results: Series = Series::new("result".into(), games.iter().map(|g| g.result.as_str()).collect::<Vec<_>>());
     let openings: Series = Series::new("opening".into(), games.iter().map(|g| g.opening.as_str()).collect::<Vec<_>>());
-    let moves: Series = Series::new("moves".into(), games.iter().map(|g| g.moves.join(" ")).collect::<Vec<_>>());
+    let moves: Series = Series::new("moves".into(), games.iter().map(|g| g.moves.as_str()).collect::<Vec<_>>());
 
     let mut df = DataFrame::new(height, vec![
         white_elos.into(),
