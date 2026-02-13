@@ -30,7 +30,7 @@ const CONFIG: Config = Config {
 struct GameData {
     white_elo: i32,
     black_elo: i32,
-    result: String,
+    result: Option<i8>,
     moves: String,
     opening: String,
 }
@@ -78,7 +78,7 @@ impl Visitor for FilteredVisitor {
         }
 
         self.current_game = GameData::default();
-        self.current_game.moves.reserve(512); // Pre-allocate memory for moves
+        self.current_game.moves.reserve(512);
         self.skip_game = false;
         self.valid_time_control = false;
         self.ply_count = 0;
@@ -95,7 +95,14 @@ impl Visitor for FilteredVisitor {
         match key_str {
             "WhiteElo" => self.current_game.white_elo = val_str.parse().unwrap_or(0),
             "BlackElo" => self.current_game.black_elo = val_str.parse().unwrap_or(0),
-            "Result" => self.current_game.result = val_str.to_string(),
+            "Result" => {
+                self.current_game.result = match val_str {
+                    "1-0" => Some(1),
+                    "0-1" => Some(-1),
+                    "1/2-1/2" => Some(0),
+                    _ => None,
+                };
+            }
             "Opening" => self.current_game.opening = val_str.to_string(),
             "TimeControl" => {
                 if let Some(base) = val_str.split('+').next() {
@@ -126,9 +133,9 @@ impl Visitor for FilteredVisitor {
             return ControlFlow::Break(None);
         }
 
-        match self.current_game.result.as_str() {
-            "1-0" | "0-1" => {}, 
-            "1/2-1/2" => {
+        match self.current_game.result {
+            Some(1) | Some(-1) => {}, 
+            Some(0) => {
                 if !CONFIG.include_draws { return ControlFlow::Break(None); }
             },
             _ => return ControlFlow::Break(None),
@@ -260,7 +267,7 @@ fn save_batch(games: &[GameData], date: &str, part_idx: usize) -> Result<()> {
     let height = games.len();
     let white_elos: Series = Series::new("white_elo".into(), games.iter().map(|g| g.white_elo).collect::<Vec<_>>());
     let black_elos: Series = Series::new("black_elo".into(), games.iter().map(|g| g.black_elo).collect::<Vec<_>>());
-    let results: Series = Series::new("result".into(), games.iter().map(|g| g.result.as_str()).collect::<Vec<_>>());
+    let results: Series = Series::new("result".into(), games.iter().map(|g| g.result.unwrap()).collect::<Vec<i8>>());
     let openings: Series = Series::new("opening".into(), games.iter().map(|g| g.opening.as_str()).collect::<Vec<_>>());
     let moves: Series = Series::new("moves".into(), games.iter().map(|g| g.moves.as_str()).collect::<Vec<_>>());
 
