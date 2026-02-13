@@ -1,0 +1,15 @@
+[package]
+name = "krasnal-rs"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1.0.101"
+env_logger = "0.11.9"
+log = "0.4.29"
+pgn-reader = "0.28.0"
+polars = { version = "0.53.0", features = ["lazy", "parquet", "strings", "performant", "dtype-struct"] }
+reqwest = { version = "0.13.2", features = ["blocking"] }
+shakmaty = "0.29.4"
+zstd = "0.13.3"
+chrono = "0.4.38"
