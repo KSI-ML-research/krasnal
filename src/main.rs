@@ -1,12 +1,15 @@
 use anyhow::Result;
+use indicatif::{ProgressBar, ProgressStyle};
+use pgn_reader::{RawTag, Reader, SanPlus, Visitor};
+use polars::prelude::*;
+use rayon::prelude::*;
 use std::fmt::Write;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
-use std::path::Path;
-use pgn_reader::{Visitor, SanPlus, Reader, RawTag}; 
-use polars::prelude::*;
 use std::ops::ControlFlow;
-use chrono::Local;
+use std::path::Path;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
 
 struct Config {
     min_elo: i32,
@@ -15,6 +18,10 @@ struct Config {
     min_base_time_s: i32,
     include_draws: bool,
     batch_size: usize,
+    local_batch_size: usize,
+    target_games: usize,
+    links_path: &'static str,
+    output_dir: &'static str,
 }
 
 const CONFIG: Config = Config {
@@ -23,8 +30,93 @@ const CONFIG: Config = Config {
     max_elo_diff: 500,
     min_base_time_s: 300,
     include_draws: true,
-    batch_size: 50_000,
+    batch_size: 10_000,
+    local_batch_size: 100,
+    target_games: 50_000,
+    links_path: "data/download_links.txt",
+    output_dir: "data/parquet",
 };
+
+struct SharedState {
+    buffer: Mutex<Vec<GameData>>,
+    total_collected: AtomicUsize,
+    file_counter: AtomicUsize,
+}
+
+impl SharedState {
+    fn add_games(&self, mut games: Vec<GameData>) -> Result<usize> {
+        let count = games.len();
+        let mut to_save: Option<Vec<GameData>> = None;
+        let mut part_idx: usize = 0;
+
+        {
+            let mut buffer = self
+                .buffer
+                .lock()
+                .map_err(|e| anyhow::anyhow!("Mutex poisoned: {}", e))?;
+
+            if self.total_collected.load(Ordering::SeqCst) >= CONFIG.target_games {
+                return Ok(0);
+            }
+
+            buffer.append(&mut games);
+            self.total_collected.fetch_add(count, Ordering::SeqCst);
+
+            if buffer.len() >= CONFIG.batch_size {
+                part_idx = self.file_counter.fetch_add(1, Ordering::SeqCst);
+                to_save = Some(buffer.drain(0..CONFIG.batch_size).collect());
+            }
+        }
+
+        if let Some(data) = to_save {
+            save_batch(data, part_idx)?;
+        }
+
+        Ok(count)
+    }
+
+    fn should_stop(&self) -> bool {
+        self.total_collected.load(Ordering::SeqCst) >= CONFIG.target_games
+    }
+}
+
+fn save_batch(games: Vec<GameData>, part_idx: usize) -> Result<()> {
+    let height = games.len();
+    if height == 0 {
+        return Ok(());
+    }
+
+    let mut w_elo = Vec::with_capacity(height);
+    let mut b_elo = Vec::with_capacity(height);
+    let mut res = Vec::with_capacity(height);
+    let mut mvs = Vec::with_capacity(height);
+    let mut ops = Vec::with_capacity(height);
+
+    for g in games {
+        w_elo.push(g.white_elo);
+        b_elo.push(g.black_elo);
+        res.push(g.result);
+        mvs.push(g.moves);
+        ops.push(g.opening);
+    }
+
+    let mut df = DataFrame::new(
+        height,
+        vec![
+            Series::new("white_elo".into(), w_elo).into(),
+            Series::new("black_elo".into(), b_elo).into(),
+            Series::new("result".into(), res).into(),
+            Series::new("moves".into(), mvs).into(),
+            Series::new("opening".into(), ops).into(),
+        ],
+    )?;
+
+    let filename = format!("{}/dataset_part_{}.parquet", CONFIG.output_dir, part_idx);
+    let mut file = std::fs::File::create(&filename)?;
+    ParquetWriter::new(&mut file).finish(&mut df)?;
+    file.sync_all()?;
+    Ok(())
+}
 
 #[derive(Default, Clone)]
 struct GameData {
@@ -39,8 +131,6 @@ struct FilteredVisitor {
     current_game: GameData,
     skip_game: bool,
     valid_time_control: bool,
-    parsed_count: usize,
-    accepted_count: usize,
     ply_count: usize,
 }
 
@@ -50,19 +140,8 @@ impl FilteredVisitor {
             current_game: GameData::default(),
             skip_game: false,
             valid_time_control: false,
-            parsed_count: 0,
-            accepted_count: 0,
             ply_count: 0,
         }
-    }
-
-    fn log_status(&self) {
-        let now = Local::now();
-        println!("{} - INFO - Parsed {} games. Accepted {} so far.", 
-            now.format("%Y-%m-%d %H:%M:%S,%3f"), 
-            self.parsed_count, 
-            self.accepted_count
-        );
     }
 }
 
@@ -72,11 +151,6 @@ impl Visitor for FilteredVisitor {
     type Output = Option<GameData>;
 
     fn begin_tags(&mut self) -> ControlFlow<Self::Output, Self::Tags> {
-        self.parsed_count += 1;
-        if self.parsed_count % 10000 == 0 {
-            self.log_status();
-        }
-
         self.current_game = GameData::default();
         self.current_game.moves.reserve(512);
         self.skip_game = false;
@@ -85,12 +159,22 @@ impl Visitor for FilteredVisitor {
         ControlFlow::Continue(())
     }
 
-    fn tag(&mut self, _tags: &mut Self::Tags, key: &[u8], value: RawTag<'_>) -> ControlFlow<Self::Output> {
-        if self.skip_game { return ControlFlow::Continue(()); }
+    fn tag(
+        &mut self,
+        _tags: &mut Self::Tags,
+        key: &[u8],
+        value: RawTag<'_>,
+    ) -> ControlFlow<Self::Output> {
+        if self.skip_game {
+            return ControlFlow::Continue(());
+        }
 
         let key_str = std::str::from_utf8(key).unwrap_or_default();
         let val_bytes = value.as_bytes();
-        let val_str = std::str::from_utf8(val_bytes).unwrap_or_default().trim().trim_matches('"');
+        let val_str = std::str::from_utf8(val_bytes)
+            .unwrap_or_default()
+            .trim()
+            .trim_matches('"');
 
         match key_str {
             "WhiteElo" => self.current_game.white_elo = val_str.parse().unwrap_or(0),
@@ -121,11 +205,17 @@ impl Visitor for FilteredVisitor {
     }
 
     fn begin_movetext(&mut self, _tags: Self::Tags) -> ControlFlow<Self::Output, Self::Movetext> {
-        if self.skip_game { return ControlFlow::Break(None); }
+        if self.skip_game {
+            return ControlFlow::Break(None);
+        }
 
-        if !self.valid_time_control { return ControlFlow::Break(None); }
+        if !self.valid_time_control {
+            return ControlFlow::Break(None);
+        }
 
-        if self.current_game.white_elo < CONFIG.min_elo || self.current_game.black_elo < CONFIG.min_elo {
+        if self.current_game.white_elo < CONFIG.min_elo
+            || self.current_game.black_elo < CONFIG.min_elo
+        {
             return ControlFlow::Break(None);
         }
 
@@ -134,17 +224,23 @@ impl Visitor for FilteredVisitor {
         }
 
         match self.current_game.result {
-            Some(1) | Some(-1) => {}, 
+            Some(1) | Some(-1) => {}
             Some(0) => {
-                if !CONFIG.include_draws { return ControlFlow::Break(None); }
-            },
+                if !CONFIG.include_draws {
+                    return ControlFlow::Break(None);
+                }
+            }
             _ => return ControlFlow::Break(None),
         }
 
         ControlFlow::Continue(())
     }
 
-    fn san(&mut self, _movetext: &mut Self::Movetext, san_plus: SanPlus) -> ControlFlow<Self::Output> {
+    fn san(
+        &mut self,
+        _movetext: &mut Self::Movetext,
+        san_plus: SanPlus,
+    ) -> ControlFlow<Self::Output> {
         if !self.current_game.moves.is_empty() {
             self.current_game.moves.push(' ');
         }
@@ -158,130 +254,99 @@ impl Visitor for FilteredVisitor {
             return None;
         }
 
-        self.accepted_count += 1;
         let game = std::mem::take(&mut self.current_game);
         Some(game)
     }
 }
 
 fn main() -> Result<()> {
-    let path = Path::new("data/download_links.txt");
+    rayon::ThreadPoolBuilder::new()
+        .num_threads(4)
+        .build_global()?;
+
+    let path = Path::new(CONFIG.links_path);
     if !path.exists() {
         return Ok(());
     }
-    
     let file = File::open(&path)?;
     let reader = BufReader::new(file);
+    let links: Vec<String> = reader
+        .lines()
+        .filter_map(|l| l.ok())
+        .filter(|l| !l.trim().is_empty())
+        .collect();
 
-    let mut grand_total_saved = 0;
+    let state = Arc::new(SharedState {
+        buffer: Mutex::new(Vec::with_capacity(CONFIG.batch_size)),
+        total_collected: AtomicUsize::new(0),
+        file_counter: AtomicUsize::new(0),
+    });
 
-    for line in reader.lines() {
-        let link = line?;
-        if link.trim().is_empty() { continue; }
+    let pb = ProgressBar::new(CONFIG.target_games as u64);
+    pb.set_style(ProgressStyle::default_bar()
+        .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} ({eta}) {msg}")?
+        .progress_chars("#>-"));
 
-        let now = Local::now();
-        let date = link.split('_').last()
-            .and_then(|s| s.split('.').next())
-            .unwrap_or("unknown");
-        println!("{} - INFO - Processing {}", now.format("%Y-%m-%d %H:%M:%S,%3f"), date);
-
-        match process_link(&link) {
-            Ok(count) => grand_total_saved += count,
-            Err(e) => println!("{} - ERROR - Failed to process {}: {}", now.format("%Y-%m-%d %H:%M:%S,%3f"), date, e),
+    links.par_iter().for_each(|link| {
+        if state.should_stop() {
+            return;
         }
+
+        if let Err(e) = process_link(link, &state, &pb) {
+            pb.println(format!("Error processing {}: {}", link, e));
+        }
+    });
+
+    // Flush remaining games
+    let mut buffer = state.buffer.lock().unwrap();
+    if !buffer.is_empty() {
+        let part_idx = state.file_counter.fetch_add(1, Ordering::SeqCst);
+        let to_save: Vec<GameData> = buffer.drain(..).collect();
+        let _ = save_batch(to_save, part_idx);
     }
 
-    let now = Local::now();
-    println!("{} - INFO - All files processed. Grand total games saved: {}", 
-        now.format("%Y-%m-%d %H:%M:%S,%3f"), 
-        grand_total_saved
-    );
-
+    pb.finish_with_message(format!(
+        "Done! Saved {} games.",
+        state.total_collected.load(Ordering::SeqCst)
+    ));
     Ok(())
 }
 
-fn process_link(link: &str) -> Result<usize> {
-    let date = link.split('_').last()
-        .and_then(|s| s.split('.').next())
-        .unwrap_or("unknown");
-        
+fn process_link(link: &str, state: &SharedState, pb: &ProgressBar) -> Result<()> {
     let response = reqwest::blocking::get(link)?;
-    let decoder = zstd::stream::read::Decoder::new(response)?;
-    let reader = BufReader::with_capacity(64 * 1024, decoder); 
-    
+    // Wrap the network stream in a large buffer to smooth out chunks
+    let buf_response = BufReader::with_capacity(128 * 1024, response);
+    let decoder = zstd::stream::read::Decoder::new(buf_response)?;
+    let reader = BufReader::with_capacity(64 * 1024, decoder);
+
     let mut pgn_reader = Reader::new(reader);
     let mut visitor = FilteredVisitor::new();
-    
-    let mut games_batch = Vec::new();
-    let mut total_saved = 0;
-    let mut part_idx = 0;
+
+    let mut games_batch = Vec::with_capacity(CONFIG.local_batch_size);
 
     while let Some(game) = pgn_reader.read_game(&mut visitor)? {
         if let Some(valid_game) = game {
             games_batch.push(valid_game);
-            
-            if games_batch.len() >= CONFIG.batch_size {
-                save_batch(&games_batch, date, part_idx)?;
-                total_saved += games_batch.len();
-                part_idx += 1;
-                games_batch.clear();
-                
-                let now = Local::now();
-                println!("{} - INFO - Saved {} games to data/parquet/processed_games_{}_part_{}.parquet. Total games for {}: {}", 
-                    now.format("%Y-%m-%d %H:%M:%S,%3f"), 
-                    CONFIG.batch_size,
-                    date,
-                    part_idx,
-                    date,
-                    total_saved
-                );
+
+            if games_batch.len() >= CONFIG.local_batch_size {
+                let saved = state.add_games(games_batch)?;
+                if saved > 0 {
+                    pb.inc(saved as u64);
+                }
+                games_batch = Vec::with_capacity(CONFIG.local_batch_size);
             }
+        }
+        if state.should_stop() {
+            break;
         }
     }
 
     if !games_batch.is_empty() {
-        save_batch(&games_batch, date, part_idx)?;
-        total_saved += games_batch.len();
-        
-        let now = Local::now();
-        println!("{} - INFO - Saved {} games to data/parquet/processed_games_{}_part_{}.parquet. Total games for {}: {}", 
-            now.format("%Y-%m-%d %H:%M:%S,%3f"), 
-            games_batch.len(),
-            date,
-            part_idx,
-            date,
-            total_saved
-        );
+        let saved = state.add_games(games_batch)?;
+        if saved > 0 {
+            pb.inc(saved as u64);
+        }
     }
-
-    let now = Local::now();
-    println!("{} - INFO - Finished processing {}. Total games saved: {}", 
-        now.format("%Y-%m-%d %H:%M:%S,%3f"), 
-        date, 
-        total_saved
-    );
-    Ok(total_saved)
-}
-
-fn save_batch(games: &[GameData], date: &str, part_idx: usize) -> Result<()> {
-    let height = games.len();
-    let white_elos: Series = Series::new("white_elo".into(), games.iter().map(|g| g.white_elo).collect::<Vec<_>>());
-    let black_elos: Series = Series::new("black_elo".into(), games.iter().map(|g| g.black_elo).collect::<Vec<_>>());
-    let results: Series = Series::new("result".into(), games.iter().map(|g| g.result.unwrap()).collect::<Vec<i8>>());
-    let openings: Series = Series::new("opening".into(), games.iter().map(|g| g.opening.as_str()).collect::<Vec<_>>());
-    let moves: Series = Series::new("moves".into(), games.iter().map(|g| g.moves.as_str()).collect::<Vec<_>>());
-
-    let mut df = DataFrame::new(height, vec![
-        white_elos.into(),
-        black_elos.into(),
-        results.into(),
-        moves.into(),
-        openings.into(),
-    ])?;
-
-    let filename = format!("data/parquet/processed_games_{}_part_{}.parquet", date, part_idx);
-    let mut file = std::fs::File::create(&filename)?;
-    ParquetWriter::new(&mut file).finish(&mut df)?;
 
     Ok(())
 }
