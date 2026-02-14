@@ -8,5 +8,9 @@ dependencies = [
     "notebook>=7.5.3",
     "polars>=1.38.1",
     "pyarrow>=23.0.0",
+    "ruff>=0.15.1",
     "torch>=2.10.0",
 ]
+
+[tool.ruff]
+line-length = 100
