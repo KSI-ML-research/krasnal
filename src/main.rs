@@ -3,6 +3,7 @@ use indicatif::{ProgressBar, ProgressStyle};
 use pgn_reader::{RawTag, Reader, SanPlus, Visitor};
 use polars::prelude::*;
 use rayon::prelude::*;
+use shakmaty::{CastlingMode, Chess, Position};
 use std::fmt::Write;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
@@ -25,14 +26,14 @@ struct Config {
 }
 
 const CONFIG: Config = Config {
-    min_elo: 1800,
+    min_elo: 2000,
     min_plys: 20,
-    max_elo_diff: 500,
+    max_elo_diff: 3000,
     min_base_time_s: 300,
-    include_draws: true,
+    include_draws: false,
     batch_size: 10_000,
     local_batch_size: 100,
-    target_games: 50_000,
+    target_games: 50_000, // TODO: make it 1 million for PoC training
     links_path: "data/download_links.txt",
     output_dir: "data/parquet",
 };
@@ -132,6 +133,7 @@ struct FilteredVisitor {
     skip_game: bool,
     valid_time_control: bool,
     ply_count: usize,
+    position: Chess,
 }
 
 impl FilteredVisitor {
@@ -141,6 +143,7 @@ impl FilteredVisitor {
             skip_game: false,
             valid_time_control: false,
             ply_count: 0,
+            position: Chess::default(),
         }
     }
 }
@@ -156,6 +159,7 @@ impl Visitor for FilteredVisitor {
         self.skip_game = false;
         self.valid_time_control = false;
         self.ply_count = 0;
+        self.position = Chess::default();
         ControlFlow::Continue(())
     }
 
@@ -241,10 +245,19 @@ impl Visitor for FilteredVisitor {
         _movetext: &mut Self::Movetext,
         san_plus: SanPlus,
     ) -> ControlFlow<Self::Output> {
+        let move_ = match san_plus.san.to_move(&self.position) {
+            Ok(m) => m,
+            Err(_) => return ControlFlow::Break(None),
+        };
+
         if !self.current_game.moves.is_empty() {
             self.current_game.moves.push(' ');
         }
-        let _ = write!(self.current_game.moves, "{}", san_plus);
+
+        let uci = move_.to_uci(CastlingMode::Standard).to_string();
+        let _ = write!(self.current_game.moves, "{}", uci);
+
+        self.position.play_unchecked(move_);
         self.ply_count += 1;
         ControlFlow::Continue(())
     }
