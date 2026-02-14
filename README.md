@@ -30,7 +30,7 @@ System będzie się składać z trzech głównych modułów:
 
 ### 3.3 Tokenizacja
 
-Tokenami będą wszystkie możliwe unikalne ruchy w notacji UCI (np. `a2a3`, `h7h8q`). Jest ich dokładnie **1968**. Dodatkowo dodajemy tokeny specjalne `<SOS>` (Start of Sequence) i `<EOS>` (End of Sequence).
+Tokenami będą wszystkie możliwe unikalne ruchy w notacji UCI (np. `a2a3`, `h7h8q`). Jest ich dokładnie [**1968**](https://gist.github.com/void4/11b1623128c9a97ff461eef81edae665). Dodatkowo dodajemy tokeny specjalne `<SOS>` (Start of Sequence) i `<EOS>` (End of Sequence).
 
 - `a2a3` -> `0`, `a2a4` -> `1`, ..., `h7h8q` -> `1967`
 - `<SOS>` (Start of Sequence) - początek partii.

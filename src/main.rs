@@ -274,7 +274,7 @@ impl Visitor for FilteredVisitor {
 
 fn main() -> Result<()> {
     rayon::ThreadPoolBuilder::new()
-        .num_threads(4)
+        .num_threads(4) // more threads caused issues with lichess rate-limiting
         .build_global()?;
 
     let path = Path::new(CONFIG.links_path);
