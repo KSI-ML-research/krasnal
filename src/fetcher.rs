@@ -54,7 +54,7 @@ pub const CONFIG: Config = Config {
     min_base_time_s: 300,
     include_draws: false,
     batch_size: 50_000,
-    target_games: 1_000_000,
+    target_games: 5_000_000,
     links_path: "data/download_links.txt",
     output_dir: "data/raw",
     manifest_path: "data/manifest.json",
