@@ -1,29 +1,22 @@
 import polars as pl
 import logging
-from pathlib import Path
 from tokenizer import Tokenizer
+from config import MOVES_FILE, RAW_DATA_DIR, DATASET_PATH, ChessGPTConfig
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 logger = logging.getLogger(__name__)
 
-DATA_DIR = Path("data/parquet")
-MOVES_FILE = Path("data/all_uci_moves.txt")
-OUTPUT_FILE = Path("data/parquet/tokenized_games.parquet")
-
 
 def tokenize_df(lazy_df: pl.LazyFrame, tokenizer: Tokenizer) -> pl.LazyFrame:
-    sos_id = tokenizer.sos_id
-    eos_id = tokenizer.eos_id
-
     return lazy_df.select(
         pl.concat_list(
             [
-                pl.lit([sos_id], dtype=pl.List(pl.UInt16)),
+                pl.lit([tokenizer.sos_id], dtype=pl.List(pl.UInt16)),
                 pl.col("moves")
                 .str.split(" ")
                 .list.eval(pl.element().replace_strict(tokenizer.move_to_id))
                 .cast(pl.List(pl.UInt16)),
-                pl.lit([eos_id], dtype=pl.List(pl.UInt16)),
+                pl.lit([tokenizer.eos_id], dtype=pl.List(pl.UInt16)),
             ]
         ).alias("token_ids")
     )
@@ -35,15 +28,23 @@ def main():
         return
 
     tokenizer = Tokenizer(MOVES_FILE)
+    try:
+        df = pl.scan_parquet(f"{RAW_DATA_DIR}/*.parquet").pipe(tokenize_df, tokenizer).collect()
+    except Exception as e:
+        logger.error(f"Failed to process parquet files in {RAW_DATA_DIR}: {e}")
+        return
 
-    df = pl.scan_parquet(f"{DATA_DIR}/*.parquet").pipe(tokenize_df, tokenizer).collect()
+    max_len = ChessGPTConfig.block_size
+    oversized_count = df.filter(pl.col("token_ids").list.len() > max_len).height
 
-    oversized_count = df.filter(pl.col("token_ids").list.len() > 510).height
     if oversized_count > 0:
-        logger.error(f"Found {oversized_count} games longer than 510 tokens!")
+        logger.warning(
+            f"Found {oversized_count} games longer than {max_len} tokens! They might be truncated during training."
+        )
 
-    df.write_parquet(OUTPUT_FILE)
-    logger.info(f"Successfully processed {df.height} games.")
+    DATASET_PATH.parent.mkdir(parents=True, exist_ok=True)
+    df.write_parquet(DATASET_PATH)
+    logger.info(f"Successfully processed {df.height} games -> {DATASET_PATH}")
 
 
 if __name__ == "__main__":

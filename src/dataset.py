@@ -3,6 +3,7 @@ import polars as pl
 from pathlib import Path
 from torch.utils.data import Dataset
 from torch.nn.utils.rnn import pad_sequence
+from config import PAD_ID
 
 
 class ChessDataset(Dataset):
@@ -18,6 +19,5 @@ class ChessDataset(Dataset):
 
 
 def collate_fn(batch):
-    padded = pad_sequence(batch, batch_first=True, padding_value=2)
+    padded = pad_sequence(batch, batch_first=True, padding_value=PAD_ID)
     return padded[:, :-1], padded[:, 1:]
-

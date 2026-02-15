@@ -31,11 +31,11 @@ const CONFIG: Config = Config {
     max_elo_diff: 3000,
     min_base_time_s: 300,
     include_draws: false,
-    batch_size: 10_000,
+    batch_size: 50_000,
     local_batch_size: 100,
-    target_games: 50_000, // TODO: make it 1 million for PoC training
+    target_games: 1_000_000,
     links_path: "data/download_links.txt",
-    output_dir: "data/parquet",
+    output_dir: "data/raw",
 };
 
 struct SharedState {
@@ -112,7 +112,7 @@ fn save_batch(games: Vec<GameData>, part_idx: usize) -> Result<()> {
         ],
     )?;
 
-    let filename = format!("{}/dataset_part_{}.parquet", CONFIG.output_dir, part_idx);
+    let filename = format!("{}/part_{}.parquet", CONFIG.output_dir, part_idx);
     let mut file = std::fs::File::create(&filename)?;
     ParquetWriter::new(&mut file).finish(&mut df)?;
     file.sync_all()?;
