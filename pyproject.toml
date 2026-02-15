@@ -5,12 +5,24 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [
+    "chess>=1.11.2",
+    "datasets>=4.5.0",
+    "mingpt",
     "notebook>=7.5.3",
+    "numpy>=2.4.2",
+    "pillow>=12.1.1",
     "polars>=1.38.1",
     "pyarrow>=23.0.0",
     "ruff>=0.15.1",
+    "tiktoken>=0.12.0",
     "torch>=2.10.0",
+    "tqdm>=4.67.3",
+    "transformers>=5.1.0",
+    "wandb>=0.25.0",
 ]
 
 [tool.ruff]
 line-length = 100
+
+[tool.uv.sources]
+mingpt = { git = "https://github.com/karpathy/minGPT.git" }
