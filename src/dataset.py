@@ -1,9 +1,11 @@
+from pathlib import Path
+
 import torch
 import torch.nn.functional as F
-from pathlib import Path
-from torch.utils.data import Dataset
-from torch.nn.utils.rnn import pad_sequence
 from datasets import Dataset as HFDataset
+from torch.nn.utils.rnn import pad_sequence
+from torch.utils.data import Dataset
+
 from config import PAD_ID, TrainConfig
 
 PADDING_BUCKET_SIZES = TrainConfig.padding_bucket_sizes

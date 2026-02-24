@@ -1,6 +1,7 @@
 import json
 from pathlib import Path
-from config import SOS_ID, EOS_ID, PAD_ID
+
+from config import EOS_ID, PAD_ID, SOS_ID
 
 
 class Tokenizer:
@@ -12,7 +13,7 @@ class Tokenizer:
         self.eos_id = EOS_ID
         self.pad_id = PAD_ID
 
-        with open(uci_moves_path, "r") as f:
+        with open(uci_moves_path) as f:
             all_uci_moves = [line.strip() for line in f if line.strip()]
 
         self.move_to_id["<SOS>"] = self.sos_id

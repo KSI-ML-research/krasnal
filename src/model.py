@@ -9,8 +9,8 @@ https://github.com/openai/gpt-2/blob/master/src/model.py
 https://github.com/huggingface/transformers/blob/main/src/transformers/models/gpt2/modeling_gpt2.py
 """
 
-import math
 import inspect
+import math
 from dataclasses import dataclass
 
 import torch
@@ -58,7 +58,8 @@ class CausalSelfAttention(nn.Module):
     def forward(self, x):
         B, T, C = x.size()  # batch size, sequence length, embedding dimensionality (n_embd)
 
-        # calculate query, key, values for all heads in batch and move head forward to be the batch dim
+        # calculate query, key, values for all heads in batch
+        # and move head forward to be the batch dim
         q, k, v = self.c_attn(x).split(self.n_embd, dim=2)
         k = k.view(B, T, self.n_head, C // self.n_head).transpose(1, 2)  # (B, nh, T, hs)
         q = q.view(B, T, self.n_head, C // self.n_head).transpose(1, 2)  # (B, nh, T, hs)
@@ -162,7 +163,7 @@ class GPT(nn.Module):
             if pn.endswith("c_proj.weight"):
                 torch.nn.init.normal_(p, mean=0.0, std=0.02 / math.sqrt(2 * config.n_layer))
 
-        print("number of parameters: %.2fM" % (self.get_num_params() / 1e6,))
+        print(f"number of parameters: {self.get_num_params() / 1e6:.2f}M")
 
     def get_num_params(self, non_embedding=True):
         """
@@ -230,10 +231,12 @@ class GPT(nn.Module):
         num_decay_params = sum(p.numel() for p in decay_params)
         num_nodecay_params = sum(p.numel() for p in nodecay_params)
         print(
-            f"num decayed parameter tensors: {len(decay_params)}, with {num_decay_params:,} parameters"
+            f"num decayed parameter tensors: {len(decay_params)}, "
+            f"with {num_decay_params:,} parameters"
         )
         print(
-            f"num non-decayed parameter tensors: {len(nodecay_params)}, with {num_nodecay_params:,} parameters"
+            f"num non-decayed parameter tensors: {len(nodecay_params)}, "
+            f"with {num_nodecay_params:,} parameters"
         )
         # Create AdamW optimizer and use the fused version if available
         fused_available = "fused" in inspect.signature(torch.optim.AdamW).parameters

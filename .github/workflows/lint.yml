@@ -1,8 +1,9 @@
-name: Lint 
+name: Lint
 
 on:
-  push:            
-  pull_request:    
+  push:
+    branches: [ main ]
+  pull_request:
 
 jobs:
   rust-lint:
@@ -13,10 +14,10 @@ jobs:
         uses: actions/checkout@v3
 
       - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable        
+        uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
-    
+
       - name: Cache Rust
         uses: Swatinem/rust-cache@v2
 
@@ -24,8 +25,8 @@ jobs:
         run: cargo clippy --all-targets --all-features -- -D warnings
 
       - name: Apply autofix
-        run: cargo fix --clippy  
-                  
+        run: cargo clippy --fix --allow-dirty --all-targets --all-features
+
   python-lint:
     name: Python Ruff Lint
     runs-on: ubuntu-latest
@@ -44,7 +45,7 @@ jobs:
         with:
           path: ~/.cache/uv
           key: uv-${{ hashFiles('uv.lock') }}
-        
+
       - name: Install dependencies
         run: uv sync
 
@@ -53,12 +54,9 @@ jobs:
         with:
           path: ~/.cache/ruff
           key: ruff-${{ hashFiles('pyproject.toml') }}
-          
-      - name: Run Ruff on notebooks
-        run: uv run nbqa ruff notebooks/*.ipynb --fix
 
       - name: Run Ruff
         run: uv run ruff check . --fix
-      
 
-
+      - name: Run Ruff Format
+        run: uv run ruff format .
