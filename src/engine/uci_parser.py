@@ -1,4 +1,5 @@
 import sys
+
 from engine.provider import ChessModelProvider
 
 
@@ -19,7 +20,7 @@ class UCIParser:
         """
         for line in sys.stdin:
             command = line.strip()
-            
+
             # Empty line (e.g., EOF or simple enter)
             if not command:
                 continue
@@ -31,7 +32,7 @@ class UCIParser:
         Main command parsing function. Handles
         commands required by the UCI protocol.
         """
-        
+
         # 1. Handshake (engine identification)
         if command == "uci":
             self._send("id name Krasnal Mock")

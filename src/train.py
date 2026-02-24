@@ -1,21 +1,22 @@
 import math
 from contextlib import nullcontext
+from datetime import datetime
 
 import torch
-from datetime import datetime
-from tqdm.auto import tqdm
-from model import GPT, GPTConfig
-from dataset import ChessDataset, collate_fn
-from tokenizer import Tokenizer
 from torch.utils.data import DataLoader
+from tqdm.auto import tqdm
+
 from config import (
-    ChessGPTConfig,
-    TrainConfig,
-    MOVES_FILE,
     DATASET_PATH,
     MODEL_PATH,
+    MOVES_FILE,
     PAD_ID,
+    ChessGPTConfig,
+    TrainConfig,
 )
+from dataset import ChessDataset, collate_fn
+from model import GPT, GPTConfig
+from tokenizer import Tokenizer
 
 torch.set_float32_matmul_precision("high")
 torch.manual_seed(42)
@@ -102,7 +103,8 @@ def main():
     # torch.compile
     if tconf.compile and device_type == "cuda":
         print(
-            f"Compiling model with torch.compile() (mode={tconf.compile_mode}, dynamic={tconf.compile_dynamic}, fullgraph={tconf.compile_fullgraph})..."
+            f"Compiling model with torch.compile() (mode={tconf.compile_mode}, "
+            f"dynamic={tconf.compile_dynamic}, fullgraph={tconf.compile_fullgraph})..."
         )
         model = torch.compile(
             model,

@@ -1,7 +1,9 @@
-import polars as pl
 import logging
+
+import polars as pl
+
+from config import DATASET_PATH, MOVES_FILE, RAW_DATA_DIR, ChessGPTConfig
 from tokenizer import Tokenizer
-from config import MOVES_FILE, RAW_DATA_DIR, DATASET_PATH, ChessGPTConfig
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 logger = logging.getLogger(__name__)
@@ -44,7 +46,8 @@ def main():
 
     if oversized_count > 0:
         logger.warning(
-            f"Found {oversized_count} games longer than {max_len} tokens! They might be truncated during training."
+            f"Found {oversized_count} games longer than {max_len} tokens! "
+            "They might be truncated during training."
         )
 
     DATASET_PATH.parent.mkdir(parents=True, exist_ok=True)

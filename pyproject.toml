@@ -25,11 +25,12 @@ dependencies = [
 [tool.ruff]
 line-length = 100
 cache-dir = "~/.cache/ruff"
+extend-include = ["*.ipynb"]
 
 
 [tool.ruff.lint]
 #syntax and runtime errors; logical errors; bug-risk; warnings; imports; pyupgrade; unused arguments
-select = ["E", "F", "B", "W", "I", "UP", "ARG"] 
+select = ["E", "F", "B", "W", "I", "UP", "ARG"]
 fixable = ["ALL"]
 
 [dependency-groups]

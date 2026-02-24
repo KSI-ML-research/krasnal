@@ -24,7 +24,7 @@ flowchart LR
         LichessBot[lichess-bot]
         Engine[UCIEngine]
         Provider["ChessModelProvider<br/>(Mock / Model)"]
-        
+
         LichessBot <--"stdin/stdout (UCI)"--> Engine
         Engine <--"DI"--> Provider
     end

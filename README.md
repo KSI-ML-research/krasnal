@@ -1,89 +1,34 @@
-# Krasnal
+# Krasnal ♟️
+
+**Wrocławski silnik szachowy oparty na architekturze Transformer.**
 
 ## 1. Cel Projektu
 
-Stworzenie Wrocławskiego silnika szachowego ("Krasnal") opartego na architekturze Transformer (GPT-style), który potrafi generować legalne i sensowne ruchy szachowe, ucząc się na bazie gier arcymistrzów i silnych amatorów.
+Stworzenie silnika szachowego ("Krasnal") opartego na architekturze **Transformer (GPT-style)**, który potrafi generować legalne i sensowne ruchy szachowe, ucząc się bezpośrednio na bazie gier arcymistrzów i silnych amatorów.
+
+Plan maksimum? Wgnieść w ziemię "Bestie z Wrocławia" (2100 ELO)!
+
+---
 
 ## 2. Architektura Systemu
 
-System będzie się składać z trzech głównych modułów:
+System składa się z trzech głównych modułów:
 
-1. **Data Ingestion (Rust):** Pobieranie, filtrowanie, parsowanie SAN -> UCI, Tokenizacja -> `.parquet`.
-2. **Model Training (Python/PyTorch):** Ładowanie danych (Polars), trening modelu Transformer.
-3. **Inference (Python/Rust):** Generowanie ruchów przez wytrenowany model.
+1.  **Data Ingestion (Rust):** Wydajne pobieranie, filtrowanie i tokenizacja gier (PGN -> UCI -> Parquet).
+2.  **Model Training (Python/PyTorch):** Trening modelu Decoder-only Transformer przy użyciu biblioteki Polars do szybkiego ładowania danych.
+3.  **Inference (Python/Rust):** Generowanie ruchów przez wytrenowany model zgodnie z protokołem UCI.
 
----
-
-## 3. Data Pipeline
-
-### 3.1 Źródło i Filtrowanie
-
-- **Źródło:** Lichess Open Database (format PGN).
-- **Wolumen:** 1 000 0000+ partii.
-
-### 3.2 Filtrowanie partii
-
-- `Elo` >= 2000 (dla obu graczy).
-- `TimeControl`: min. 300s (5 minut) - odrzucamy Bullet/Blitz.
-- `Result`: Tylko wygrane (1-0 lub 0-1). Odrzucamy remisy, chyba że dla remisów zwiększymy minimalne ELO (do decyzji w implementacji).
-- `Termination`: Odrzucamy wygrane przez czas (`Time forfeit`), chyba że utniemy ostatnie 5 ruchów (do decyzji w implementacji).
-
-### 3.3 Tokenizacja
-
-Tokenami będą wszystkie możliwe unikalne ruchy w notacji UCI (np. `a2a3`, `h7h8q`). Jest ich dokładnie [**1968**](https://gist.github.com/void4/11b1623128c9a97ff461eef81edae665). Dodatkowo dodajemy tokeny specjalne `<SOS>` (Start of Sequence) i `<EOS>` (End of Sequence).
-
-- `a2a3` -> `0`, `a2a4` -> `1`, ..., `h7h8q` -> `1967`
-- `<SOS>` (Start of Sequence) - początek partii.
-- `<EOS>` (End of Sequence) - koniec partii (mat/poddanie).
-
-### 3.4 Przetwarzanie danych
-
-Skrypt w Rustcie odpowiada za ciężką pracę CPU:
-
-1. De-kompresja `.zst` (zstandard) z Lichess.
-2. Parsowanie PGN, filtrowanie partii według kryteriów.
-3. Symulacja gry (`shakmaty`) w celu konwersji SAN -> UCI.
-4. Lookup w `vocab.json` -> zamiana UCI na `u16`.
-5. Zapis do `.parquet` w blokach po K partii (stała do ustalenia).
+Szczegółowe informacje o architekturze modelu i potoku danych znajdziesz w [**docs/bot_implementation_plan.md**](docs/bot_implementation_plan.md).
 
 ---
 
-## 4. Architektura Modelu
+## 3. Dokumentacja
 
-Model typu **Decoder-only Transformer** (architektura GPT).
-Reszta do ustalenia.
+Dla deweloperów i użytkowników przygotowaliśmy szczegółowe przewodniki:
 
----
+-   [**Installation Guide**](docs/INSTALLATION.md) - Jak skonfigurować środowisko (Python, Rust, uv).
+-   [**Contributing Guide**](docs/CONTRIBUTING.md) - Standardy kodu, pre-commit hooki i proces rozwoju projektu.
 
-# 5. Oczekiwania
+## 4. Oczekiwania
 
-- Plan minimum - model nauczy się z dużym prawdopodobieństwem generować legalne ruchy, ale może nie będą one zawsze sensowne.
-- Plan maksimum - wgnieść w ziemię "Bestie z Wrocławia" (2100 ELO)
-
-Plan maksimum powinien być możliwy - zespół Google Deepmind osiągnął ELO na poziomie 2025 (+/- 18) dla Transformera o rozmiarze 9M parametrów.
-
----
-
-## 6. Lokalne Testowanie i Gra (Setup)
-
-Aby zagrać partię z botem w terminalu lub zasymulować turniej Bot vs Bot (z generacją pliku PGN), możesz skorzystać ze skryptów w katalogu `scripts/`. Wymagane jest użycie `uv` do zarządzania środowiskiem.
-
-### Gra człowiek vs Bot (CLI)
-
-Uruchamia konsolową szachownicę, na której wpisujesz ruchy w formacie UCI (np. `e2e4`, `g1f3`). Bot odpowie automatycznie.
-```bash
-uv run scripts/play_human_cli.py
-```
-
-### Turniej Bot vs Bot
-
-Puszcza dwóch agentów (obecnie 2 Mocki) przeciwko sobie aż do mata lub remisu. Zapis partii eksportowany jest automatycznie do pliku `bot_vs_bot_match.pgn` w nowym katalogu `local_games/`.
-```bash
-uv run scripts/play_bots_cli.py
-```
-
-### Podpięcie pod GUI (np. CuteChess, Arena, BanksiaGUI)
-
-Krasnal komunikuje się za pomocą standardu **UCI**. Możesz go podpiąć pod dowolny graficzny program szachowy. W programie GUI dodaj nowy silnik podając ścieżkę do wirtualnego środowiska i skryptu wejściowego:
-- **Command:** `uv run src/engine/run.py` (lub podając pełną ścieżkę do pythona i pliku)
-
+Zespół Google DeepMind osiągnął ELO na poziomie 2025 (+/- 18) dla Transformera o rozmiarze 9M parametrów. Naszym celem jest udowodnienie, że architektura GPT świetnie radzi sobie z logiką szachową bez tradycyjnych funkcji ewaluacyjnych.
