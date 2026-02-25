@@ -13,9 +13,23 @@ UCI - Universal Chess Interface - standard do komunikacji dzięki któremu silni
 - **Silnik (Krasnal UCI)**: Nasz kod w Pythonie (np. `uci_engine.py`). Jest to program, który `lichess-bot` uruchamia jako "silnik UCI". Komunikuje się z lichess-bot wyłącznie przez standardowe wejście/wyjście (stdin/stdout) operując na protokole UCI (Universal Chess Interface).
 - **Dependency Injection**: Aby oddzielić pracę inżynierską od modelu, logikę decyzyjną bota ukrywamy za interfejsem (w Pythonie: `Protocol` z biblioteki `typing`).
 
-```ascii
-[Lichess API] <==HTTP/SSE==> [lichess-bot] <==stdin/stdout (UCI)==> [UCIEngine] <==DI==> [ChessModelProvider]
-(Świat zew.)                 (Nasz Serwer / Docker)                 (Nasz Kod)           (Mock / Model)
+```mermaid
+flowchart LR
+    subgraph Lichess [Świat zewnętrzny]
+        API[Lichess API]
+    end
+
+    subgraph NaszSerwer [Nasz Serwer / Docker]
+        direction LR
+        LichessBot[lichess-bot]
+        Engine[UCIEngine]
+        Provider["ChessModelProvider<br/>(Mock / Model)"]
+        
+        LichessBot <--"stdin/stdout (UCI)"--> Engine
+        Engine <--"DI"--> Provider
+    end
+
+    API <--"HTTP"--> LichessBot
 ```
 
 ## 2. Plan Implementacji: Moduł Silnika (Engine)
