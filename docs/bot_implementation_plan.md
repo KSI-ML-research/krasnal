@@ -71,10 +71,9 @@ Fajnie jak nam się uda ograć to, że wdrożenie musi unikać przerywania tocz�
 2. **Automatyzacja (GitHub Actions)**
    - Nowe wagi modelu lub zmiany w kodzie po wpadnięciu na maina triggerują workflow z budowaniem nowego obrazu Dockerowego i podmienianiem tego, co obecnie chodzi na serwerze.
 3. **Graceful Wait (Zero-Downtime Deployment)**
-   - Nice to have: Nie przerywamy instniejących partii: Przed wykonaniem komendy wyłączającej kontener (`docker stop`), pipeline deploymentowy wykonuje zapytanie HTTP GET do Lichess API (endpoint `users/status` z flagą `withGameIds=true`).
-   - Skrypt CI/CD sprawdza, czy Krasnal aktualnie uczestniczy w grze. Jeśli tak, to wchodzi w pętlę i czeka ("sleep").
-   - Wdrożenie (wymiana kontenera) następuje tylko wtedy, gdy bot jest "w stanie spoczynku". Zapobiega to przegranym przez walkower na czas ładowania nowego kontenera. Jakiś timeout by się przydał, żeby deploy jednak prędzej czy później zadziałał na siłę.
-   - Można to olać i wrzucać od razu (pewnie jako pierwsze podejście to jest lepsze). Wtedy lichess powinno to ograć i poczekać aż serwer z nowym botem wstanie, ale nie wiadomo czy to zadziała w ten sposób.
+   - **Uproszczenie dzięki lichess-bot**: Nie musimy ręcznie odpytywać API Lichess. `lichess-bot` posiada wbudowaną opcję `quit_after_all_games_finish: true` w pliku `config.yml`.
+   - Kiedy `lichess-bot` otrzyma sygnał `SIGINT` (Ctrl+C), przestaje przyjmować nowe wyzwania, kończy trwające partie i dopiero wtedy się wyłącza.
+   - W `Dockerfile` wystarczy dodać instrukcję `STOPSIGNAL SIGINT`, aby komenda `docker stop` (używana przez pipeline wdrożeniowy) wysyłała odpowiedni sygnał. Docker poczeka na zakończenie procesu (warto ustawić odpowiednio długi `--time` przy `docker stop`, np. `docker stop -t 3600 <container>`, aby zapobiec twardemu ubiciu kontenera po domyślnych 10 sekundach).
 
 ## 6. Co później
 
