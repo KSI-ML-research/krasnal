@@ -21,7 +21,7 @@ class ChessGPTConfig:
 @dataclass
 class TrainConfig:
     learning_rate: float = 5e-4
-    max_iters: int = 5000
+    max_iters: int = 10000
     batch_size: int = 32
     num_workers: int = 4
 
