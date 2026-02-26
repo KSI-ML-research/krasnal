@@ -61,4 +61,3 @@ Reszta do ustalenia.
 - Plan maksimum - wgnieść w ziemię "Bestie z Wrocławia" (2100 ELO)
 
 Plan maksimum powinien być możliwy - zespół Google Deepmind osiągnął ELO na poziomie 2025 (+/- 18) dla Transformera o rozmiarze 9M parametrów.
-
