@@ -16,14 +16,23 @@ class ChessGPTConfig:
     n_layer: int = 6
     n_head: int = 6
     n_embd: int = 384
+    dropout: float = 0.0
+    bias: bool = False  # no bias = slightly better and faster
 
 
 @dataclass
 class TrainConfig:
     learning_rate: float = 5e-4
+    min_lr: float = 5e-5  # cosine annealing minimum LR
     max_iters: int = 10000
+    warmup_iters: int = 100
     batch_size: int = 32
     num_workers: int = 4
+    weight_decay: float = 0.1
+    beta1: float = 0.9
+    beta2: float = 0.95
+    grad_clip: float = 1.0
+    compile: bool = True  # use torch.compile (best for long runs, e.g. 10k+ iters; disable for short/debug runs to avoid compile overhead)
 
 
 SOS_ID = 0
