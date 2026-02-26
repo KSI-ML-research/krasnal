@@ -6,7 +6,8 @@ from mingpt.trainer import Trainer
 from dataset import ChessDataset, collate_fn
 from tokenizer import Tokenizer
 from torch.utils.data import DataLoader
-from config import ChessGPTConfig, TrainConfig, MOVES_FILE, DATASET_PATH, MODEL_PATH
+from torch.nn import functional as F
+from config import ChessGPTConfig, TrainConfig, MOVES_FILE, DATASET_PATH, MODEL_PATH, PAD_ID
 
 
 def main():
@@ -68,7 +69,8 @@ def main():
             x = x.to(train_config.device)
             y = y.to(train_config.device)
 
-            _, loss = model(x, y)
+            logits, _ = model(x)
+            loss = F.cross_entropy(logits.view(-1, logits.size(-1)), y.view(-1), ignore_index=PAD_ID)
 
             model.zero_grad(set_to_none=True)
             loss.backward()
