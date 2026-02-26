@@ -34,33 +34,43 @@ class UCIParser:
         
         # 1. Rozpoznanie bota przez lichess-bota (przedstawienie się)
         if command == "uci":
-            # TODO: Wypisać "id name Krasnal" na standardowe wyjście (stdout).
-            # TODO: Wypisać "id author Zespol Krasnal"
-            # TODO: Wypisać "uciok", kończące handshake'a uci.
-            pass
+            self._send("id name Krasnal Mock")
+            self._send("id author Zespol Krasnal")
+            self._send("uciok")
 
         # 2. Silnik otrzymał komendę gotowości - powinien odpowiedzieć, że jest OK.
         elif command == "isready":
-            # TODO: Wypisać "readyok".
-            pass
+            self._send("readyok")
 
         # 3. Zaktualizowanie stanu gry / nowa partia / restart gry
         elif command == "ucinewgame":
-            # TODO: Wyzerować stan i przygotować nowe okienko.
-            pass
+            self.current_moves = ""
 
         # 4. Ustala historię gry lub pozycję startową
+        # Przykład wejścia: "position startpos moves e2e4 e7e5 g1f3"
         elif command.startswith("position"):
-            # TODO: Parsować string z historią `uci_moves` po `position startpos moves `
-            # Zrobić `self.current_moves = wyłapane ruchy`.
-            pass
+            parts = command.split("moves")
+            if len(parts) > 1:
+                # Bierzemy wszystko po słowie 'moves' i usuwamy białe znaki
+                self.current_moves = parts[1].strip()
+            else:
+                # Jeśli słowa 'moves' nie było, znaczy że jesteśmy na starcie (bez historii)
+                self.current_moves = ""
 
         # 5. Silnik wywoływany przez bota lichess-a o podanie ruchu z ustalonym stanem.
         elif command.startswith("go"):
-            # TODO: Zapytać Providera (`self.provider.get_best_move(self.current_moves)`).
-            # Otrzymany wynik wypisać jako `bestmove {nasz_ruch}` np. "bestmove e2e4"
-            pass
+            best_move = self.provider.get_best_move(self.current_moves)
+            self._send(f"bestmove {best_move}")
 
         # 6. Silnik wyłącza działanie
         elif command == "quit":
             sys.exit(0)
+
+    def _send(self, msg: str):
+        """
+        Wysyła komunikat na standardowe wyjście i wymusza opróżnienie bufora.
+        Jest to niezbędne, żeby lichess-bot otrzymał wiadomość natychmiast, a nie
+        dopiero po zapełnieniu całego bufora stdout!
+        """
+        print(msg)
+        sys.stdout.flush()

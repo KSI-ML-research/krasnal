@@ -1,19 +1,38 @@
-class RandomMockProvider():
+import random
+import chess
+from engine.provider import ChessModelProvider
+
+
+class RandomMockProvider(ChessModelProvider):
     """
     Mockowa implementacja Providera - uderza na "sucho" bez ML.
-    Służy wyłącznie do testów integracji `lichess-bot` i interfejsu UCI.
+    Wybiera losowy, ale legalny ruch, korzystając z biblioteki python-chess.
     """
 
     def get_best_move(self, uci_moves: str) -> str:
         """
         Zwraca losowy, ale *legalny* ruch na podstawie danej historii.
-
-        Zależność do przyszłej implementacji: `python-chess`
-        W przyszłości ten model odtworzy stan planszy z `uci_moves`,
-        sprawdzi listę legalnych ruchów i wylosuje jeden z nich.
         """
-        # TODO: Zaimplementować z `python-chess` lub napisać na razie stały ciąg znaków (np. "e2e4").
-        # Zastąpić to właściwą logiką.
+        board = chess.Board()
         
-        print(f"DEBUG: Otrzymano historię ruchów: '{uci_moves}'")
-        return "e2e4"  # Stała zwracana wartość na ten moment.
+        # Odtworzenie stanu planszy na podstawie historii
+        if uci_moves.strip():
+            for move_str in uci_moves.strip().split():
+                try:
+                    move = chess.Move.from_uci(move_str)
+                    board.push(move)
+                except ValueError as e:
+                    print(f"DEBUG: Błąd parsowania ruchu '{move_str}': {e}")
+        
+        # Pobranie listy legalnych ruchów w aktualnej pozycji
+        legal_moves = list(board.legal_moves)
+        
+        if not legal_moves:
+            # W przypadku mata lub pata brakuje legalnych ruchów, zwracamy rzut oznaczający koniec (tzw. null move).
+            return "0000" 
+            
+        # Wylosowanie legalnego ruchu z listy
+        chosen_move = random.choice(legal_moves)
+        
+        # Konwersja wybranego obiektu Move z powrotem na string UCI (np. "e2e4")
+        return chosen_move.uci()
