@@ -18,6 +18,9 @@ from config import (
 )
 
 
+torch.manual_seed(42)
+
+
 def get_lr(it, train_config):
     """Cosine annealing learning rate schedule with warmup."""
     # 1) linear warmup for warmup_iters steps
