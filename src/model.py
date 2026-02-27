@@ -30,6 +30,65 @@ class LayerNorm(nn.Module):
         return F.layer_norm(input, self.weight.shape, self.weight, self.bias, 1e-5)
 
 
+class RoPE(nn.Module):
+    def __init__(self, head_dim: int, max_seq_len: int, base: int = 10000):
+        super().__init__()
+        assert head_dim % 2 == 0, "head_dim must be even"
+        self.head_dim = head_dim
+
+        # precompute RoPE matrices for the maximum sequence length
+        theta = 1.0 / (base ** (torch.arange(0, head_dim, 2).float() / head_dim))
+        seq_idx = torch.arange(max_seq_len).float()
+        idx_theta = torch.einsum("n,d->nd", seq_idx, theta)
+        idx_theta2 = torch.cat([idx_theta, idx_theta], dim=1)
+
+        # cache [1, 1, max_seq_len, head_dim] for broadcasting over (B, nh, T, hs)
+        self.register_buffer("cos_cached", idx_theta2.cos()[None, None, :, :], persistent=False)
+        self.register_buffer("sin_cached", idx_theta2.sin()[None, None, :, :], persistent=False)
+
+    def _neg_half(self, x: torch.Tensor):
+        """
+        Returns a vector rotated by pi/2.
+        If considered as a 2D vector x = [x1, y1], this returns [-y1, x1].
+        """
+        d_2 = self.head_dim // 2
+        return torch.cat([-x[..., d_2:], x[..., :d_2]], dim=-1)
+
+    def forward(self, q, k):
+        """
+        Applies Rotary Position Embedding (RoPE) to queries and keys.
+
+        The standard 2D rotation matrix formula is:
+        Rot(theta, (x, y)) = (x * cos(theta) - y * sin(theta), x * sin(theta) + y * cos(theta))
+
+        Here, we split our feature dimension into two halves: the first half is 'x' and
+        the second half is 'y'. Let's denote q = [x, y].
+        Then _neg_half(q) = [-y, x].
+
+        The rotation is applied as:
+        q_rope = (q * cos) + (_neg_half(q) * sin)
+               = ([x, y] * [cos, cos]) + ([-y, x] * [sin, sin])
+               = [x*cos - y*sin, x*sin + y*cos]
+
+        This precisely matches the mathematical 2D rotation, allowing us to compute
+        it highly efficiently using element-wise vector operations.
+        """
+        # q, k: (B, nh, T, hs)
+        T = q.shape[2]
+
+        # Ensure RoPE caches match the dtype and device of q/k to avoid upcasting
+        cos = self.cos_cached[:, :, :T].to(device=q.device, dtype=q.dtype)
+        sin = self.sin_cached[:, :, :T].to(device=q.device, dtype=q.dtype)
+
+        neg_half_q = self._neg_half(q)
+        q_rope = (q * cos) + (neg_half_q * sin)
+
+        neg_half_k = self._neg_half(k)
+        k_rope = (k * cos) + (neg_half_k * sin)
+
+        return q_rope, k_rope
+
+
 class CausalSelfAttention(nn.Module):
     def __init__(self, config):
         super().__init__()
@@ -44,6 +103,7 @@ class CausalSelfAttention(nn.Module):
         self.n_head = config.n_head
         self.n_embd = config.n_embd
         self.dropout = config.dropout
+        self.rope = RoPE(config.n_embd // config.n_head, config.block_size)
         # flash attention make GPU go brrrrr but support is only in PyTorch >= 2.0
         self.flash = hasattr(torch.nn.functional, "scaled_dot_product_attention")
         if not self.flash:
@@ -58,12 +118,14 @@ class CausalSelfAttention(nn.Module):
     def forward(self, x):
         B, T, C = x.size()  # batch size, sequence length, embedding dimensionality (n_embd)
 
-        # calculate query, key, values for all heads in batch
-        # and move head forward to be the batch dim
+        # calculate Q, K, V for all heads in batch and move heads forward to be the batch dim
         q, k, v = self.c_attn(x).split(self.n_embd, dim=2)
         k = k.view(B, T, self.n_head, C // self.n_head).transpose(1, 2)  # (B, nh, T, hs)
         q = q.view(B, T, self.n_head, C // self.n_head).transpose(1, 2)  # (B, nh, T, hs)
         v = v.view(B, T, self.n_head, C // self.n_head).transpose(1, 2)  # (B, nh, T, hs)
+
+        # apply RoPE per head
+        q, k = self.rope(q, k)
 
         # causal self-attention; Self-attend: (B, nh, T, hs) x (B, nh, hs, T) -> (B, nh, T, T)
         if self.flash:
@@ -141,20 +203,15 @@ class GPT(nn.Module):
         self.transformer = nn.ModuleDict(
             dict(
                 wte=nn.Embedding(config.vocab_size, config.n_embd),
-                wpe=nn.Embedding(config.block_size, config.n_embd),
                 drop=nn.Dropout(config.dropout),
                 h=nn.ModuleList([Block(config) for _ in range(config.n_layer)]),
                 ln_f=LayerNorm(config.n_embd, bias=config.bias),
             )
         )
         self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
-        # with weight tying when using torch.compile() some warnings get generated:
-        # "UserWarning: functional_call was passed multiple values for tied weights.
-        # This behavior is deprecated and will be an error in future versions"
-        # not 100% sure what this is, so far seems to be harmless. TODO investigate
-        self.transformer.wte.weight = (
-            self.lm_head.weight
-        )  # https://paperswithcode.com/method/weight-tying
+
+        # https://paperswithcode.com/method/weight-tying
+        self.transformer.wte.weight = self.lm_head.weight
 
         # init all weights
         self.apply(self._init_weights)
@@ -165,17 +222,11 @@ class GPT(nn.Module):
 
         print(f"number of parameters: {self.get_num_params() / 1e6:.2f}M")
 
-    def get_num_params(self, non_embedding=True):
+    def get_num_params(self):
         """
         Return the number of parameters in the model.
-        For non-embedding count (default), the position embeddings get subtracted.
-        The token embeddings would too, except due to the parameter sharing these
-        params are actually used as weights in the final layer, so we include them.
         """
-        n_params = sum(p.numel() for p in self.parameters())
-        if non_embedding:
-            n_params -= self.transformer.wpe.weight.numel()
-        return n_params
+        return sum(p.numel() for p in self.parameters())
 
     def _init_weights(self, module):
         if isinstance(module, nn.Linear):
@@ -186,16 +237,13 @@ class GPT(nn.Module):
             torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
 
     def forward(self, idx, targets=None, ignore_index=-1):
-        device = idx.device
         b, t = idx.size()
         assert t <= self.config.block_size, (
             f"Cannot forward sequence of length {t}, block size is only {self.config.block_size}"
         )
-        pos = torch.arange(0, t, dtype=torch.long, device=device)  # (t)
 
         tok_emb = self.transformer.wte(idx)  # token embeddings (b, t, n_embd)
-        pos_emb = self.transformer.wpe(pos)  # position embeddings (t, n_embd)
-        x = self.transformer.drop(tok_emb + pos_emb)
+        x = self.transformer.drop(tok_emb)
         for block in self.transformer.h:
             x = block(x)
         x = self.transformer.ln_f(x)
