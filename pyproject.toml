@@ -11,7 +11,6 @@ dependencies = [
     "numpy>=2.4.2",
     "pillow>=12.1.1",
     "polars>=1.38.1",
-    "pre-commit>=3.0.0",
     "pyarrow>=23.0.0",
     "pytest>=7.0.0",
     "ruff>=0.15.1",
@@ -24,3 +23,8 @@ dependencies = [
 
 [tool.ruff]
 line-length = 100
+
+[dependency-groups]
+dev = [
+    "pre-commit>=4.5.1",
+]

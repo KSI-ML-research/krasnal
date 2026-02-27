@@ -984,7 +984,6 @@ dependencies = [
     { name = "numpy" },
     { name = "pillow" },
     { name = "polars" },
-    { name = "pre-commit" },
     { name = "pyarrow" },
     { name = "pytest" },
     { name = "ruff" },
@@ -995,6 +994,11 @@ dependencies = [
     { name = "wandb" },
 ]
 
+[package.dev-dependencies]
+dev = [
+    { name = "pre-commit" },
+]
+
 [package.metadata]
 requires-dist = [
     { name = "chess", specifier = ">=1.11.2" },
@@ -1003,7 +1007,6 @@ requires-dist = [
     { name = "numpy", specifier = ">=2.4.2" },
     { name = "pillow", specifier = ">=12.1.1" },
     { name = "polars", specifier = ">=1.38.1" },
-    { name = "pre-commit", specifier = ">=3.0.0" },
     { name = "pyarrow", specifier = ">=23.0.0" },
     { name = "pytest", specifier = ">=7.0.0" },
     { name = "ruff", specifier = ">=0.15.1" },
@@ -1013,6 +1016,9 @@ requires-dist = [
     { name = "transformers", specifier = ">=5.1.0" },
     { name = "wandb", specifier = ">=0.25.0" },
 ]
+
+[package.metadata.requires-dev]
+dev = [{ name = "pre-commit", specifier = ">=4.5.1" }]
 
 [[package]]
 name = "lark"
