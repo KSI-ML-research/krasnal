@@ -4,23 +4,23 @@ from engine.provider import ChessModelProvider
 
 class UCIParser:
     """
-    Pętla nasłuchująca komunikaty na wejściu i przesyłająca
-    stan gry do Providera w celu uzyskania ruchu.
+    Loop listening for input messages and sending
+    the game state to the Provider to obtain a move.
     """
 
     def __init__(self, provider: ChessModelProvider):
         self.provider = provider
-        # Aktualny stan planszy / historii w formacie UCI
+        # Current board state / history in UCI format
         self.current_moves: str = ""
 
     def run(self):
         """
-        Główna nieskończona pętla nasłuchująca poleceń standardowego wejścia.
+        Main infinite loop listening for standard input commands.
         """
         for line in sys.stdin:
             command = line.strip()
             
-            # Pusta linijka (np. EOF lub zwykły enter)
+            # Empty line (e.g., EOF or simple enter)
             if not command:
                 continue
 
@@ -28,49 +28,49 @@ class UCIParser:
 
     def _process_command(self, command: str):
         """
-        Główna funkcja parsowania komend. Obsługuje
-        komendy wymagane przez protokół UCI.
+        Main command parsing function. Handles
+        commands required by the UCI protocol.
         """
         
-        # 1. Rozpoznanie bota przez lichess-bota (przedstawienie się)
+        # 1. Handshake (engine identification)
         if command == "uci":
             self._send("id name Krasnal Mock")
-            self._send("id author Zespol Krasnal")
+            self._send("id author KSI UWr")
             self._send("uciok")
 
-        # 2. Silnik otrzymał komendę gotowości - powinien odpowiedzieć, że jest OK.
+        # 2. Engine receives a readiness command - should respond that it is OK.
         elif command == "isready":
             self._send("readyok")
 
-        # 3. Zaktualizowanie stanu gry / nowa partia / restart gry
+        # 3. Update game state / new game / game restart
         elif command == "ucinewgame":
             self.current_moves = ""
 
-        # 4. Ustala historię gry lub pozycję startową
-        # Przykład wejścia: "position startpos moves e2e4 e7e5 g1f3"
+        # 4. Sets game history or starting position
+        # Input example: "position startpos moves e2e4 e7e5 g1f3"
         elif command.startswith("position"):
             parts = command.split("moves")
             if len(parts) > 1:
-                # Bierzemy wszystko po słowie 'moves' i usuwamy białe znaki
+                # We take everything after the word 'moves' and strip whitespace
                 self.current_moves = parts[1].strip()
             else:
-                # Jeśli słowa 'moves' nie było, znaczy że jesteśmy na starcie (bez historii)
+                # If 'moves' word was missing, it means we are at the start (no history)
                 self.current_moves = ""
 
-        # 5. Silnik wywoływany przez bota lichess-a o podanie ruchu z ustalonym stanem.
+        # 5. Engine called to provide a move with current state.
         elif command.startswith("go"):
             best_move = self.provider.get_best_move(self.current_moves)
             self._send(f"bestmove {best_move}")
 
-        # 6. Silnik wyłącza działanie
+        # 6. Engine exits
         elif command == "quit":
             sys.exit(0)
 
     def _send(self, msg: str):
         """
-        Wysyła komunikat na standardowe wyjście i wymusza opróżnienie bufora.
-        Jest to niezbędne, żeby lichess-bot otrzymał wiadomość natychmiast, a nie
-        dopiero po zapełnieniu całego bufora stdout!
+        Sends a message to standard output and forces a buffer flush.
+        This is necessary so the client (like lichess-bot) receives the message immediately,
+        rather than after the entire stdout buffer is full!
         """
         print(msg)
         sys.stdout.flush()
