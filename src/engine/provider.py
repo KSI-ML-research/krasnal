@@ -3,21 +3,20 @@ from typing import Protocol
 
 class ChessModelProvider(Protocol):
     """
-    Interfejs (Protocol) dla silnika szachowego.
-    Wszystkie implementacje (mock, model PyTorch, API sieciowe)
-    muszą spełniać ten kontrakt.
+    Interface (Protocol) for the chess engine.
+    All implementations (mock, PyTorch model, web API)
+    must satisfy this contract.
     """
 
     def get_best_move(self, uci_moves: str) -> str:
         """
-        Zwraca najlepszy ruch w notacji UCI na podstawie podanej historii ruchów.
+        Returns the best move in UCI notation based on the provided move history.
 
         Args:
-            uci_moves: Ciąg znaków reprezentujący dotychczasowe ruchy w grze w formacie UCI,
-                       np. "e2e4 e7e5 g1f3".
+            uci_moves: String representing current moves in the game in UCI format,
+                       e.g., "e2e4 e7e5 g1f3".
 
         Returns:
-            str: Ciąg znaków w notacji UCI reprezentujący wybrany ruch (np. "b8c6").
+            str: String in UCI notation representing the chosen move (e.g., "b8c6").
         """
-        # TODO: Zostawiamy pusty kontrakt (to interfejs).
         ...

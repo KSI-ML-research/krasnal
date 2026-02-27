@@ -5,20 +5,16 @@ from engine.uci_parser import UCIParser
 
 def main():
     """
-    Entrypoint do silnika UCI bota "Krasnal". Skleja mocka z pętlą UCI.
+    Entrypoint tailored for Lichess-bot. Connects a specific engine implementation with the UCI loop.
     """
-    # TODO: Zmienna środowiskowa `ENGINE_ENV` determinująca wstrzyknięcie 
-    # odpowiedniego Providera (Model PyTorch lub MockProvider).
-    # Na ten moment sztywno ustawiamy używanie Mocka.
+    # TODO: Environment variable `ENGINE_ENV` to determine which 
+    # Provider to inject (PyTorch Model or MockProvider).
+    # For now, we hardcode the Mock use.
 
-    # 1. Wstrzyknięcie implementacji "ChessModelProvider"
     provider = RandomMockProvider()
 
-    # 2. Zainicjalizowanie pętli UCI naszym Mockiem.
     uci = UCIParser(provider)
 
-    # 3. Uruchomienie parsera oczekującego na wejście Lichess-bota (stdin)
-    # i na jego podstawie przekazującego komendy Providerowi.
     uci.run()
 
 if __name__ == "__main__":
