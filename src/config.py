@@ -24,7 +24,7 @@ class ChessGPTConfig:
 class TrainConfig:
     learning_rate: float = 5e-4
     min_lr: float = 5e-5  # cosine annealing minimum LR
-    max_iters: int = 10000
+    max_iters: int = 50000
     warmup_iters: int = 100
     batch_size: int = 32
     num_workers: int = 4
