@@ -90,7 +90,9 @@ def main():
     print("Training finished.")
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M")
-    params = f"L{mconf.n_layer}_H{mconf.n_head}_E{mconf.n_embd}_I{tconf.max_iters}_B{tconf.batch_size}"
+    params = (
+        f"L{mconf.n_layer}_H{mconf.n_head}_E{mconf.n_embd}_I{tconf.max_iters}_B{tconf.batch_size}"
+    )
 
     MODEL_PATH.parent.mkdir(parents=True, exist_ok=True)
 
