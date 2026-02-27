@@ -32,8 +32,8 @@ def main():
         df = (
             pl.scan_parquet(f"{RAW_DATA_DIR}/*.parquet")
             .pipe(tokenize_df, tokenizer)
-            .sample(fraction=1.0, shuffle=True, seed=42)
             .collect()
+            .sample(fraction=1.0, shuffle=True, seed=42)
         )
     except Exception as e:
         logger.error(f"Failed to process parquet files in {RAW_DATA_DIR}: {e}")
