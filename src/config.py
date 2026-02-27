@@ -12,7 +12,7 @@ PIECES_DIR = Path("assets/pieces")
 
 @dataclass
 class ChessGPTConfig:
-    block_size: int = 512
+    block_size: int = 1024
     n_layer: int = 6
     n_head: int = 6
     n_embd: int = 384
