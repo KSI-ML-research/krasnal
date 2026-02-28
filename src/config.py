@@ -33,6 +33,7 @@ class TrainConfig:
     beta2: float = 0.95
     grad_clip: float = 1.0
     compile: bool = True  # use torch.compile (best for long runs, e.g. 10k+ iters; disable for short/debug runs to avoid compile overhead)
+    padding_bucket_sizes: tuple[int, ...] = (64, 128, 192, 256, 384, 512, 768, 1024)
 
 
 SOS_ID = 0

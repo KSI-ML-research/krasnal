@@ -1,9 +1,20 @@
 import torch
+import torch.nn.functional as F
 from pathlib import Path
 from torch.utils.data import Dataset
 from torch.nn.utils.rnn import pad_sequence
 from datasets import Dataset as HFDataset
-from config import PAD_ID
+from config import PAD_ID, TrainConfig
+
+PADDING_BUCKET_SIZES = TrainConfig.padding_bucket_sizes
+
+
+def _get_bucket_size(seq_len: int) -> int:
+    """Return the smallest bucket size that is >= seq_len."""
+    for b in PADDING_BUCKET_SIZES:
+        if seq_len <= b:
+            return b
+    return seq_len
 
 
 class ChessDataset(Dataset[torch.Tensor]):
@@ -29,5 +40,27 @@ class ChessDataset(Dataset[torch.Tensor]):
 
 
 def collate_fn(batch):
+    """
+    Pads sequences and applies Bucket Padding (Sequence Bucketing) to stabilize torch.compile().
+
+    Dynamo/torch.compile recompiles the graph on every unique input shape. By padding
+    batch sequences to predefined bucket sizes (multiples of 64), we minimize recompilations
+    and optimize hardware utilization for Flash Attention and Tensor Cores.
+
+    The sequence is padded to (bucket_size + 1) to ensure that after splitting into
+    inputs [:, :-1] and targets [:, 1:], both tensors match the optimal bucket size exactly.
+    """
     padded = pad_sequence(batch, batch_first=True, padding_value=PAD_ID)
+
+    # The actual length for the model input/output is padded.size(1) - 1
+    seq_len = padded.size(1) - 1
+    if seq_len > 0:
+        # Find the optimal bucket size
+        target_len = _get_bucket_size(seq_len)
+        target_total_len = target_len + 1
+
+        if padded.size(1) < target_total_len:
+            pad_size = target_total_len - padded.size(1)
+            padded = F.pad(padded, (0, pad_size), value=PAD_ID)
+
     return padded[:, :-1], padded[:, 1:]
