@@ -102,7 +102,7 @@ def main():
     # torch.compile
     if tconf.compile and device_type == "cuda":
         print("Compiling model with torch.compile()...")
-        model = torch.compile(model, dynamic=True)  # dynamic padding
+        model = torch.compile(model, dynamic=False)
 
     # dataloader
     train_loader = DataLoader(
