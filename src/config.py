@@ -33,6 +33,9 @@ class TrainConfig:
     beta2: float = 0.95
     grad_clip: float = 1.0
     compile: bool = True  # use torch.compile (best for long runs, e.g. 10k+ iters; disable for short/debug runs to avoid compile overhead)
+    compile_mode: str = "default"  # "default", "reduce-overhead", "max-autotune"
+    compile_dynamic: bool = False  # False since we use explicit padding buckets
+    compile_fullgraph: bool = True  # captures the entire model into a single graph if True
     padding_bucket_sizes: tuple[int, ...] = (64, 128, 192, 256, 384, 512, 768, 1024)
 
 

@@ -101,8 +101,15 @@ def main():
 
     # torch.compile
     if tconf.compile and device_type == "cuda":
-        print("Compiling model with torch.compile()...")
-        model = torch.compile(model, dynamic=False)
+        print(
+            f"Compiling model with torch.compile() (mode={tconf.compile_mode}, dynamic={tconf.compile_dynamic}, fullgraph={tconf.compile_fullgraph})..."
+        )
+        model = torch.compile(
+            model,
+            mode=tconf.compile_mode,
+            dynamic=tconf.compile_dynamic,
+            fullgraph=tconf.compile_fullgraph,
+        )
 
     # dataloader
     train_loader = DataLoader(
