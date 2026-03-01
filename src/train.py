@@ -17,7 +17,7 @@ from config import (
     PAD_ID,
 )
 
-
+torch.set_float32_matmul_precision("high")
 torch.manual_seed(42)
 
 
