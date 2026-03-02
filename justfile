@@ -22,3 +22,7 @@ test:
 # Run all pre-commit hooks
 pre-commit:
     uv run pre-commit run --all-files
+
+# Run chess model evaluation
+eval *args:
+    uv run python src/evaluate.py {{args}}

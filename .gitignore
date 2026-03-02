@@ -212,6 +212,7 @@ __marimo__/
 # Added by cargo
 
 /target
+results/
 
 # Local Games
 local_games/
