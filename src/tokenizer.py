@@ -1,7 +1,7 @@
 import json
 from pathlib import Path
 
-from config import EOS_ID, PAD_ID, SOS_ID
+from config import DRAW_ID, EOS_ID, PAD_ID, SOS_ID, WIN_BLACK_ID, WIN_WHITE_ID
 
 
 class Tokenizer:
@@ -12,6 +12,9 @@ class Tokenizer:
         self.sos_id = SOS_ID
         self.eos_id = EOS_ID
         self.pad_id = PAD_ID
+        self.win_white_id = WIN_WHITE_ID
+        self.win_black_id = WIN_BLACK_ID
+        self.draw_id = DRAW_ID
 
         with open(uci_moves_path) as f:
             all_uci_moves = [line.strip() for line in f if line.strip()]
@@ -19,8 +22,14 @@ class Tokenizer:
         self.move_to_id["<SOS>"] = self.sos_id
         self.move_to_id["<EOS>"] = self.eos_id
         self.move_to_id["<PAD>"] = self.pad_id
+        self.move_to_id["<WW>"] = self.win_white_id
+        self.move_to_id["<BW>"] = self.win_black_id
+        self.move_to_id["<DW>"] = self.draw_id
 
-        for idx, move in enumerate(all_uci_moves, start=max(SOS_ID, EOS_ID, PAD_ID) + 1):
+        for idx, move in enumerate(
+            all_uci_moves,
+            start=max(SOS_ID, EOS_ID, PAD_ID, WIN_WHITE_ID, WIN_BLACK_ID, DRAW_ID) + 1,
+        ):
             self.move_to_id[move] = idx
 
         self.id_to_move = {v: k for k, v in self.move_to_id.items()}

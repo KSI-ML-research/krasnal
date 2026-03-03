@@ -13,7 +13,13 @@ def tokenize_df(lazy_df: pl.LazyFrame, tokenizer: Tokenizer) -> pl.LazyFrame:
     return lazy_df.select(
         pl.concat_list(
             [
-                pl.lit([tokenizer.sos_id], dtype=pl.List(pl.UInt16)),
+                (
+                    pl.when(pl.col("result") == 1)
+                    .then(pl.lit([tokenizer.win_white_id], dtype=pl.List(pl.UInt16)))
+                    .when(pl.col("result") == -1)
+                    .then(pl.lit([tokenizer.win_black_id], dtype=pl.List(pl.UInt16)))
+                    .otherwise(pl.lit([tokenizer.draw_id], dtype=pl.List(pl.UInt16)))
+                ),
                 pl.col("moves")
                 .str.split(" ")
                 .list.eval(pl.element().replace_strict(tokenizer.move_to_id))
