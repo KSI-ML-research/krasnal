@@ -1,7 +1,9 @@
+import logging
 import random
 import chess
 from engine.provider import ChessModelProvider
 
+logger = logging.getLogger(__name__)
 
 class RandomMockProvider(ChessModelProvider):
     """
@@ -18,7 +20,7 @@ class RandomMockProvider(ChessModelProvider):
                     move = chess.Move.from_uci(move_str)
                     board.push(move)
                 except ValueError as e:
-                    print(f"DEBUG: Error parsing move '{move_str}': {e}")
+                    logger.error(f"Error parsing move '{move_str}': {e}")
         
         # Get a list of legal moves in the current position
         legal_moves = list(board.legal_moves)

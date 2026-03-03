@@ -61,3 +61,29 @@ Reszta do ustalenia.
 - Plan maksimum - wgnieść w ziemię "Bestie z Wrocławia" (2100 ELO)
 
 Plan maksimum powinien być możliwy - zespół Google Deepmind osiągnął ELO na poziomie 2025 (+/- 18) dla Transformera o rozmiarze 9M parametrów.
+
+---
+
+## 6. Lokalne Testowanie i Gra (Setup)
+
+Aby zagrać partię z botem w terminalu lub zasymulować turniej Bot vs Bot (z generacją pliku PGN), możesz skorzystać ze skryptów w katalogu `scripts/`. Wymagane jest użycie `uv` do zarządzania środowiskiem.
+
+### Gra człowiek vs Bot (CLI)
+
+Uruchamia konsolową szachownicę, na której wpisujesz ruchy w formacie UCI (np. `e2e4`, `g1f3`). Bot odpowie automatycznie.
+```bash
+uv run scripts/play_human_cli.py
+```
+
+### Turniej Bot vs Bot
+
+Puszcza dwóch agentów (obecnie 2 Mocki) przeciwko sobie aż do mata lub remisu. Zapis partii eksportowany jest automatycznie do pliku `bot_vs_bot_match.pgn` w nowym katalogu `local_games/`.
+```bash
+uv run scripts/play_bots_cli.py
+```
+
+### Podpięcie pod GUI (np. CuteChess, Arena, BanksiaGUI)
+
+Krasnal komunikuje się za pomocą standardu **UCI**. Możesz go podpiąć pod dowolny graficzny program szachowy. W programie GUI dodaj nowy silnik podając ścieżkę do wirtualnego środowiska i skryptu wejściowego:
+- **Command:** `uv run src/engine/run.py` (lub podając pełną ścieżkę do pythona i pliku)
+
