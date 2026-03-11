@@ -21,7 +21,7 @@ fn main() -> Result<()> {
 
     let mut links: Vec<String> = BufReader::new(File::open(links_file)?)
         .lines()
-        .filter_map(|l| l.ok())
+        .map_while(Result::ok)
         .filter(|l| !l.trim().is_empty())
         .collect();
 
@@ -51,10 +51,10 @@ fn main() -> Result<()> {
             break;
         }
 
-        if let Some(entry) = manifest.links.get(link) {
-            if entry.status == "completed" {
-                continue;
-            }
+        if let Some(entry) = manifest.links.get(link)
+            && entry.status == "completed"
+        {
+            continue;
         }
 
         pb.set_message(format!(

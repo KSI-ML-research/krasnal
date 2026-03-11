@@ -23,7 +23,7 @@ pub struct Manifest {
 impl Manifest {
     pub fn load(path: &str) -> Self {
         File::open(path)
-            .and_then(|f| Ok(serde_json::from_reader(f).unwrap_or_default()))
+            .map(|f| serde_json::from_reader(f).unwrap_or_default())
             .unwrap_or_default()
     }
 
@@ -133,13 +133,13 @@ impl Visitor for FilteredVisitor {
             }
             "Opening" => self.current_game.opening = val_str.to_string(),
             "TimeControl" => {
-                if let Some(base) = val_str.split('+').next() {
-                    if let Ok(secs) = base.parse::<i32>() {
-                        if secs >= CONFIG.min_base_time_s {
-                            self.valid_time_control = true;
-                        } else {
-                            self.skip_game = true;
-                        }
+                if let Some(base) = val_str.split('+').next()
+                    && let Ok(secs) = base.parse::<i32>()
+                {
+                    if secs >= CONFIG.min_base_time_s {
+                        self.valid_time_control = true;
+                    } else {
+                        self.skip_game = true;
                     }
                 }
             }

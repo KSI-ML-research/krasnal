@@ -32,6 +32,10 @@ cache-dir = "~/.cache/ruff"
 select = ["E", "F", "B", "W", "I", "UP", "ARG"] 
 fixable = ["ALL"]
 
+[tool.ruff.lint.per-file-ignores]
+# B018: notebooks use bare expressions to display values (valid Jupyter pattern)
+"*.ipynb" = ["B018"]
+
 [dependency-groups]
 dev = [
     "pre-commit>=4.5.1",
