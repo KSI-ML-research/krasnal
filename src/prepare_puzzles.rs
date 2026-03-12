@@ -64,7 +64,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         };
 
-        let first_move = match record.get(2).and_then(|m| m.split_whitespace().next()) {
+        let first_move = match record.get(2).and_then(|m| m.split_whitespace().nth(1)) {
             Some(m) => m.to_string(),
             None => {
                 eprintln!("Skipping record #{total}: missing Moves");
