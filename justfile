@@ -22,3 +22,10 @@ test:
 # Run all pre-commit hooks
 pre-commit:
     uv run pre-commit run --all-files
+
+# Run whole pipeline
+pipeline:
+    uv sync
+    cargo run --release
+    uv run src/preprocess.py
+    uv run src/train.py
