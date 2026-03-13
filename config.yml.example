@@ -1,0 +1,19 @@
+token: "TOKEN_PLACEHOLDER"
+url: "https://lichess.org/"
+
+engine:
+  protocol: "uci"
+  name: "src/engine/run.py"
+  dir: ".."
+
+challenge:
+  concurrency: 1
+  variants:
+    - standard
+  time_controls:
+    - blitz
+    - rapid
+    - bullet
+  modes:
+    - casual
+    - rated

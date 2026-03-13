@@ -1,3 +1,6 @@
+# load .env variables for every command
+set dotenv-load := true
+
 SEED := "42"
 export PYTHONPATH := "."
 export UV_CACHE_DIR := ".uv_cache"
@@ -7,6 +10,26 @@ setup:
     uv sync
     uv run pre-commit install
     cargo build
+
+# --- Lichess Bot Integration ---
+
+# Download and setup lichess-bot client
+bot-setup:
+    @if [ ! -d "lichess-bot" ]; then \
+        echo "Cloning lichess-bot..."; \
+        git clone --depth 1 https://github.com/lichess-bot-devs/lichess-bot.git; \
+    fi
+    @echo "Installing lichess-bot dependencies..."
+    cd lichess-bot && uv pip install -r requirements.txt
+
+# Run the bot locally (requires .env with LICHESS_BOT_TOKEN)
+bot-run:
+    @echo "Preparing configuration..."
+    @cp config.yml.example lichess-bot/config.yml
+    @sed -i '' "s|TOKEN_PLACEHOLDER|${LICHESS_BOT_TOKEN}|g" lichess-bot/config.yml
+    @echo "Starting bot..."
+    @cd lichess-bot && PYTHONPATH=../src uv run python lichess-bot.py
+
 
 # Run linters for Python and Rust code
 lint *args:

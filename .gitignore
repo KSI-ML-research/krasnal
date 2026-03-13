@@ -219,6 +219,9 @@ __marimo__/
 # Local Games
 local_games/
 
+# Lichess Bot
+lichess-bot/
+
 
 artifacts/
 data/
