@@ -34,6 +34,7 @@ filterwarnings = [
 line-length = 100
 cache-dir = "~/.cache/ruff"
 extend-include = ["*.ipynb"]
+exclude = ["lichess-bot"]
 
 
 [tool.ruff.lint]
@@ -45,3 +46,7 @@ fixable = ["ALL"]
 dev = [
     "pre-commit>=4.5.1",
 ]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+norecursedirs = ["lichess-bot", ".venv", ".git"]
