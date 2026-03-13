@@ -1,7 +1,11 @@
 #!/usr/bin/env -S uv run python
 
 import logging
+import os
 import sys
+
+# Add the directory containing 'engine' to sys.path
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from engine.mock_provider import RandomMockProvider
 from engine.uci_parser import UCIParser
