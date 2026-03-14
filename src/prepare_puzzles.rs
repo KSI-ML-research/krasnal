@@ -6,6 +6,7 @@ const MIN_RATING: u32 = 2000;
 const INPUT_PATH: &str = "data/lichess_db_puzzle.csv.zst";
 const OUTPUT_PATH: &str = "data/puzzles_filtered.jsonl";
 
+#[allow(dead_code)]
 enum TokenFormat {
     Uci,
     EnrichedUci,
@@ -23,8 +24,7 @@ impl TokenFormat {
             TokenFormat::San => {
                 // TODO: use shakmaty to parse FEN + convert UCI move to Standard Algebraic Notation
                 unimplemented!("San requires shakmaty integration")
-            }
-            // TODO: other token handling options
+            } // TODO: other token handling options
         }
     }
 }
@@ -98,7 +98,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     writer.flush()?;
 
-    println!("Done. Processed {total} records, wrote {written} puzzles (rating >= {MIN_RATING}) to {OUTPUT_PATH}");
+    println!(
+        "Done. Processed {total} records, wrote {written} puzzles (rating >= {MIN_RATING}) to {OUTPUT_PATH}"
+    );
 
     Ok(())
 }
