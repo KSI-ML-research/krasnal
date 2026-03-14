@@ -64,13 +64,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         };
 
-        let first_move = match record.get(2).and_then(|m| m.split_whitespace().nth(1)) {
-            Some(m) => m.to_string(),
-            None => {
-                eprintln!("Skipping record #{total}: missing Moves");
-                continue;
-            }
-        };
+        // Lichess `Moves` field layout:
+        //   - token 0: "setup" move (opponent's last move before the puzzle starts)
+        //   - tokens 1..: solution moves for the side to play
+        //
+        // Here we intentionally keep ONLY the first solution move (token 1). Many
+        // puzzles have multi-move solutions, but this script evaluates just the
+        // first move; consumers of the output should not assume a full line.
+        let solution_first_move_uci =
+            match record.get(2).and_then(|m| m.split_whitespace().nth(1)) {
+                Some(m) => m.to_string(),
+                None => {
+                    eprintln!("Skipping record #{total}: missing Moves");
+                    continue;
+                }
+            };
 
         let rating: u32 = match record.get(3).and_then(|r| r.parse().ok()) {
             Some(r) => r,
@@ -84,11 +92,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             continue;
         }
 
-        let solution = format.format_move(&first_move, &fen);
+        let formatted_solution_first_move =
+            format.format_move(&solution_first_move_uci, &fen);
 
+        // Note: `"solution"` here contains only the first move of the puzzle solution,
+        // not the entire multi-move sequence.
         let entry = serde_json::json!({
             "fen": fen,
-            "solution": solution,
+            "solution": formatted_solution_first_move,
             "rating": rating,
         });
 
