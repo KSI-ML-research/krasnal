@@ -2,7 +2,7 @@ import logging
 
 import polars as pl
 
-from config import DATASET_PATH, MOVES_FILE, RAW_DATA_DIR, ChessGPTConfig
+from config import MOVES_FILE, PRETRAIN_DATASET_PATH, RAW_DATA_DIR, ChessGPTConfig
 from tokenizer import Tokenizer
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
@@ -56,9 +56,9 @@ def main():
             "They might be truncated during training."
         )
 
-    DATASET_PATH.parent.mkdir(parents=True, exist_ok=True)
-    df.write_parquet(DATASET_PATH)
-    logger.info(f"Successfully processed {df.height} games -> {DATASET_PATH}")
+    PRETRAIN_DATASET_PATH.parent.mkdir(parents=True, exist_ok=True)
+    df.write_parquet(PRETRAIN_DATASET_PATH)
+    logger.info(f"Successfully processed {df.height} games -> {PRETRAIN_DATASET_PATH}")
 
 
 if __name__ == "__main__":
