@@ -2,7 +2,13 @@ import logging
 
 import polars as pl
 
-from config import MOVES_FILE, PRETRAIN_DATASET_PATH, RAW_DATA_DIR, ChessGPTConfig
+from config import (
+    EVAL_DATASET_PATH,
+    MOVES_FILE,
+    PRETRAIN_DATASET_PATH,
+    RAW_DATA_DIR,
+    ChessGPTConfig,
+)
 from tokenizer import Tokenizer
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
@@ -56,9 +62,26 @@ def main():
             "They might be truncated during training."
         )
 
+    if df.height < 2:
+        logger.error("Need at least 2 games to build train/eval split.")
+        return
+
+    eval_size = max(1, int(df.height * 0.01))
+    eval_size = min(eval_size, df.height - 1)
+
+    eval_df = df.head(eval_size)
+    train_df = df.slice(eval_size)
+
     PRETRAIN_DATASET_PATH.parent.mkdir(parents=True, exist_ok=True)
-    df.write_parquet(PRETRAIN_DATASET_PATH)
-    logger.info(f"Successfully processed {df.height} games -> {PRETRAIN_DATASET_PATH}")
+    train_df.write_parquet(PRETRAIN_DATASET_PATH)
+    eval_df.write_parquet(EVAL_DATASET_PATH)
+    logger.info(
+        "Successfully processed %s games -> %s (train: %s, eval: %s)",
+        df.height,
+        PRETRAIN_DATASET_PATH.parent,
+        train_df.height,
+        eval_df.height,
+    )
 
 
 if __name__ == "__main__":

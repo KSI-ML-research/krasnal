@@ -1,3 +1,6 @@
+# Global defaults
+SEED := "42"
+
 # ===== SETUP & DEVELOPMENT =====
 setup:
     uv sync
@@ -28,7 +31,11 @@ pipeline:
     just pretrain
 
 pretrain:
-    uv run src/train.py
+    SEED={{SEED}} uv run src/train.py
+    uv run scripts/evaluate.py
+
+eval:
+    uv run scripts/evaluate.py
 
 preprocess:
     uv run src/preprocess.py
