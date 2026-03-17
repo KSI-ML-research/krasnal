@@ -52,7 +52,7 @@ def main():
     if not PRETRAIN_DATASET_PATH.exists():
         raise FileNotFoundError(
             "Pretraining dataset not found at "
-            f"{PRETRAIN_DATASET_PATH}. Run src/preprocess.py first."
+            f"{PRETRAIN_DATASET_PATH}. Run scripts/preprocess.py first."
         )
 
     train_dataset = ChessDataset(PRETRAIN_DATASET_PATH)
