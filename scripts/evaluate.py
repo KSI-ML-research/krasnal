@@ -1,14 +1,8 @@
 import argparse
-import sys
 from pathlib import Path
 
 import torch
 from torch.utils.data import DataLoader
-
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
-SRC_DIR = PROJECT_ROOT / "src"
-if str(SRC_DIR) not in sys.path:
-    sys.path.insert(0, str(SRC_DIR))
 
 from config import EVAL_DATASET_PATH, MODEL_PATH, MOVES_FILE, PAD_ID, ChessGPTConfig  # noqa: E402
 from dataset import ChessDataset, collate_fn  # noqa: E402

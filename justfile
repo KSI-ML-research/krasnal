@@ -26,16 +26,19 @@ pre-commit:
 
 pipeline:
     uv sync
-    cargo run --release
-    uv run src/preprocess.py
+    just download-games
+    just preprocess
     just pretrain
 
-pretrain:
-    SEED={{SEED}} uv run src/train.py
-    uv run scripts/evaluate.py
-
-eval:
-    uv run scripts/evaluate.py
+download-games:
+    cargo run --release --bin download-games
 
 preprocess:
-    uv run src/preprocess.py
+    PYTHONPATH=src uv run scripts/preprocess.py
+
+pretrain:
+    SEED={{SEED}} PYTHONPATH=src uv run scripts/pretrain.py
+    PYTHONPATH=src uv run scripts/evaluate.py
+
+eval:
+    PYTHONPATH=src uv run scripts/evaluate.py
