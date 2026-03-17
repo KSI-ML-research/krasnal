@@ -1,3 +1,14 @@
+//! PGN dataset builder for chess games.
+//!
+//! Streams compressed PGN files, parses and filters games by configurable quality criteria,
+//! and saves valid games into Parquet batches.
+//!
+//! Tracks progress during processing and maintains rejection statistics, recording counts
+//! for games excluded due to factors such as low Elo, large Elo difference, short games,
+//! invalid moves, disallowed draws, or improper termination.
+//!
+//! Supports resuming via a manifest to avoid reprocessing files.
+
 use anyhow::Result;
 use indicatif::{ProgressBar, ProgressStyle};
 use pgn_reader::{RawTag, Reader, SanPlus, Visitor};
@@ -5,7 +16,8 @@ use polars::prelude::*;
 use serde::{Deserialize, Serialize};
 use shakmaty::{CastlingMode, Chess, Position};
 use std::collections::HashMap;
-use std::fmt::Write;
+use std::collections::BTreeMap;
+use std::fmt::{self, Write};
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::ops::ControlFlow;
@@ -69,6 +81,37 @@ pub struct GameData {
     pub result: Option<i8>,
     pub moves: String,
     pub opening: String,
+    pub termination: Option<String>,
+}
+
+#[derive(Hash, Eq, PartialEq, Debug, Clone, Copy, Ord, PartialOrd)]
+pub enum RejectionReason {
+    TimeControl, // game was too short
+    LowElo,
+    EloDiff, // the diff in elo is too great
+    DrawFiltered, // not allowing draws
+    NoResult, // game result is missing 
+    InvalidResult, // other result than (1, -1, 0)
+    InvalidMove,
+    BadTermination, // any termination other than "normal" 
+    ShortGame, // game was too short ply-wise
+}
+
+impl fmt::Display for RejectionReason {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let s = match self {
+            RejectionReason::TimeControl => "Game too short",
+            RejectionReason::LowElo => "Player Elo too low",
+            RejectionReason::EloDiff => "Elo difference too high",
+            RejectionReason::DrawFiltered => "Draw filtered",
+            RejectionReason::NoResult => "No result provided",
+            RejectionReason::InvalidResult => "Invalid result",
+            RejectionReason::InvalidMove => "Invalid move in game",
+            RejectionReason::BadTermination => "Bad termination",
+            RejectionReason::ShortGame => "Game too short (ply count)",
+        };
+        write!(f, "{}", s)
+    }
 }
 
 pub struct FilteredVisitor {
@@ -77,6 +120,18 @@ pub struct FilteredVisitor {
     pub valid_time_control: bool,
     pub ply_count: usize,
     pub position: Chess,
+    pub rejection_stats: RejectionStats,
+}
+
+#[derive(Default)]
+pub struct RejectionStats {
+    pub counts: BTreeMap<RejectionReason, usize>,
+}
+
+impl RejectionStats {
+    pub fn record(&mut self, reason: RejectionReason) {
+        *self.counts.entry(reason).or_insert(0) += 1;
+    }
 }
 
 impl Default for FilteredVisitor {
@@ -93,6 +148,7 @@ impl FilteredVisitor {
             valid_time_control: false,
             ply_count: 0,
             position: Chess::default(),
+            rejection_stats: RejectionStats::default(),
         }
     }
 }
@@ -153,31 +209,51 @@ impl Visitor for FilteredVisitor {
                     }
                 }
             }
+            "Termination" => self.current_game.termination = Some(val_str.trim().to_string()),
             _ => {}
         }
         ControlFlow::Continue(())
     }
 
     fn begin_movetext(&mut self, _tags: Self::Tags) -> ControlFlow<Self::Output, Self::Movetext> {
+        match &self.current_game.termination {
+            Some(term) if term.eq_ignore_ascii_case("Normal") => {}, 
+            _ => {
+                self.rejection_stats.record(RejectionReason::BadTermination); //reject cnt +1 for given reason
+                return ControlFlow::Break(None);
+            }
+        } 
         if self.skip_game || !self.valid_time_control {
+            self.rejection_stats.record(RejectionReason::TimeControl); 
             return ControlFlow::Break(None);
         }
         if self.current_game.white_elo < CONFIG.min_elo
             || self.current_game.black_elo < CONFIG.min_elo
         {
+            self.rejection_stats.record(RejectionReason::LowElo);
             return ControlFlow::Break(None);
         }
         if (self.current_game.white_elo - self.current_game.black_elo).abs() > CONFIG.max_elo_diff {
+            self.rejection_stats.record(RejectionReason::EloDiff);
             return ControlFlow::Break(None);
         }
         match self.current_game.result {
             Some(1) | Some(-1) => {}
             Some(0) => {
                 if !CONFIG.include_draws {
+                    self.rejection_stats.record(RejectionReason::DrawFiltered);
                     return ControlFlow::Break(None);
                 }
             }
-            _ => return ControlFlow::Break(None),
+            None => {              
+                self.rejection_stats.record(RejectionReason::NoResult);
+                return ControlFlow::Break(None);
+            }
+            _ => {              
+                self.rejection_stats.record(RejectionReason::InvalidResult);
+                return ControlFlow::Break(None);
+            }
+
         }
         ControlFlow::Continue(())
     }
@@ -189,7 +265,10 @@ impl Visitor for FilteredVisitor {
     ) -> ControlFlow<Self::Output> {
         let m = match san_plus.san.to_move(&self.position) {
             Ok(m) => m,
-            Err(_) => return ControlFlow::Break(None),
+            Err(_) => {
+                self.rejection_stats.record(RejectionReason::InvalidMove); 
+                return ControlFlow::Break(None);
+            }
         };
         if !self.current_game.moves.is_empty() {
             self.current_game.moves.push(' ');
@@ -206,6 +285,7 @@ impl Visitor for FilteredVisitor {
 
     fn end_game(&mut self, _movetext: Self::Movetext) -> Self::Output {
         if self.ply_count < CONFIG.min_plys {
+            self.rejection_stats.record(RejectionReason::ShortGame); 
             return None;
         }
         Some(std::mem::take(&mut self.current_game))
@@ -260,6 +340,7 @@ fn main() -> Result<()> {
 
     let manifest_path = CONFIG.manifest_path;
     let mut manifest = Manifest::load(manifest_path);
+    let mut global_stats: BTreeMap<RejectionReason, usize> = BTreeMap::new();
 
     let links_file = std::path::Path::new(CONFIG.links_path);
     if !links_file.exists() {
@@ -317,7 +398,13 @@ fn main() -> Result<()> {
         ));
 
         match process_link(link, &mut total_games, &pb) {
-            Ok((count, fully_completed)) => {
+            Ok((count, fully_completed, rejection_s)) => {
+
+                pb.println(format!("\n Stats for {}:", get_file_prefix(link)));
+                for (&reason, &cnt) in rejection_s.counts.iter() {
+                    pb.println(format!("  {}: {}", reason, cnt));
+                    *global_stats.entry(reason).or_insert(0) += cnt;
+                }
                 if fully_completed {
                     manifest.links.insert(
                         link.clone(),
@@ -345,12 +432,15 @@ fn main() -> Result<()> {
             }
         }
     }
-
+    pb.println("\n\nRejection stats");
+    for (reason, count) in &global_stats {
+        pb.println(format!("  {}: {}", reason, count));
+    }
     pb.finish_with_message(format!("Done! Total games: {}", total_games));
     Ok(())
 }
 
-fn process_link(link: &str, total_games: &mut usize, pb: &ProgressBar) -> Result<(usize, bool)> {
+fn process_link(link: &str, total_games: &mut usize, pb: &ProgressBar) -> Result<(usize, bool, RejectionStats)> {
     let response = reqwest::blocking::get(link)?;
     let decoder = zstd::stream::read::Decoder::new(BufReader::with_capacity(512 * 1024, response))?;
     let mut pgn_reader = Reader::new(BufReader::with_capacity(256 * 1024, decoder));
@@ -389,5 +479,5 @@ fn process_link(link: &str, total_games: &mut usize, pb: &ProgressBar) -> Result
         save_batch(&batch, &filename)?;
     }
 
-    Ok((games_in_link, fully_read))
+    Ok((games_in_link, fully_read, visitor.rejection_stats))
 }
