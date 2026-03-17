@@ -1,4 +1,5 @@
 import math
+import os
 from contextlib import nullcontext
 from datetime import datetime
 
@@ -19,7 +20,10 @@ from model import GPT, GPTConfig
 from tokenizer import Tokenizer
 
 torch.set_float32_matmul_precision("high")
-torch.manual_seed(42)
+SEED = int(os.environ.get("SEED", "42"))
+torch.manual_seed(SEED)
+if torch.cuda.is_available():
+    torch.cuda.manual_seed_all(SEED)
 
 
 def get_lr(it, total_iters, train_config):

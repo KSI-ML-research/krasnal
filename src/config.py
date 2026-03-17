@@ -5,6 +5,7 @@ DATA_DIR = Path("data")
 RAW_DATA_DIR = DATA_DIR / "raw"
 MOVES_FILE = DATA_DIR / "all_uci_moves.txt"
 PRETRAIN_DATASET_PATH = DATA_DIR / "processed/pretrain.parquet"
+EVAL_DATASET_PATH = DATA_DIR / "processed/eval.parquet"
 MODEL_DIR = Path("models")
 MODEL_PATH = MODEL_DIR / "chess_model.pt"
 PIECES_DIR = Path("assets/pieces")
