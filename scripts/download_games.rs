@@ -79,6 +79,12 @@ pub struct FilteredVisitor {
     pub position: Chess,
 }
 
+impl Default for FilteredVisitor {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl FilteredVisitor {
     pub fn new() -> Self {
         Self {
