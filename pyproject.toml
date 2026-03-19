@@ -20,6 +20,7 @@ dependencies = [
     "tqdm>=4.67.3",
     "transformers>=5.1.0",
     "wandb>=0.25.0",
+    "requests>=2.32",
 ]
 
 [tool.ruff]

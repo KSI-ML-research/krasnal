@@ -2,6 +2,8 @@ use std::fs::File;
 use std::io::{BufWriter, Write};
 use std::path::Path;
 
+use indicatif::{ProgressBar, ProgressStyle};
+
 const MIN_RATING: u32 = 2000;
 const INPUT_PATH: &str = "data/lichess_db_puzzle.csv.zst";
 const OUTPUT_PATH: &str = "data/puzzles_filtered.jsonl";
@@ -24,13 +26,13 @@ impl TokenFormat {
             TokenFormat::San => {
                 // TODO: use shakmaty to parse FEN + convert UCI move to Standard Algebraic Notation
                 unimplemented!("San requires shakmaty integration")
-            } // TODO: other token handling options
+            }
         }
     }
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let format = TokenFormat::Uci;
+    let token_format = TokenFormat::Uci;
 
     let input_file = File::open(Path::new(INPUT_PATH))?;
     let decoder = zstd::stream::Decoder::new(input_file)?;
@@ -42,11 +44,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .has_headers(true)
         .from_reader(decoder);
 
+    let pb = ProgressBar::new_spinner();
+    pb.set_style(
+        ProgressStyle::default_spinner()
+            .template("{spinner:.green} [{elapsed_precise}] {pos} records processed ({msg})")
+            .unwrap(),
+    );
+    pb.set_message("filtering...");
+
     let mut total: u64 = 0;
     let mut written: u64 = 0;
 
     for result in reader.records() {
         total += 1;
+        if total % 10_000 == 0 {
+            pb.set_position(total);
+            pb.set_message(format!("{written} written so far"));
+        }
 
         let record = match result {
             Ok(r) => r,
@@ -71,14 +85,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         // Here we intentionally keep ONLY the first solution move (token 1). Many
         // puzzles have multi-move solutions, but this script evaluates just the
         // first move; consumers of the output should not assume a full line.
-        let solution_first_move_uci =
-            match record.get(2).and_then(|m| m.split_whitespace().nth(1)) {
-                Some(m) => m.to_string(),
-                None => {
-                    eprintln!("Skipping record #{total}: missing Moves");
-                    continue;
-                }
-            };
+        let solution_first_move_uci = match record.get(2).and_then(|m| m.split_whitespace().nth(1))
+        {
+            Some(m) => m.to_string(),
+            None => {
+                eprintln!("Skipping record #{total}: missing Moves");
+                continue;
+            }
+        };
 
         let rating: u32 = match record.get(3).and_then(|r| r.parse().ok()) {
             Some(r) => r,
@@ -92,8 +106,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             continue;
         }
 
+        let game_url = record.get(8).unwrap_or("").to_string();
+
         let formatted_solution_first_move =
-            format.format_move(&solution_first_move_uci, &fen);
+            token_format.format_move(&solution_first_move_uci, &fen);
 
         // Note: `"solution"` here contains only the first move of the puzzle solution,
         // not the entire multi-move sequence.
@@ -101,6 +117,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "fen": fen,
             "solution": formatted_solution_first_move,
             "rating": rating,
+            "game_url": game_url,
         });
 
         writeln!(writer, "{entry}")?;
@@ -108,6 +125,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     writer.flush()?;
+    pb.finish_with_message(format!("done — {written}/{total} puzzles written"));
 
     println!(
         "Done. Processed {total} records, wrote {written} puzzles (rating >= {MIN_RATING}) to {OUTPUT_PATH}"

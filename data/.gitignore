@@ -1,2 +1,6 @@
 *.parquet
 manifest.json
+*.zst
+*.jsonl
+puzzles_filtered.jsonl
+lichess_db_puzzle.csv.zst
