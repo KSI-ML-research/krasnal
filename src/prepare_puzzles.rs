@@ -57,7 +57,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     for result in reader.records() {
         total += 1;
-        if total % 10_000 == 0 {
+        if total.is_multiple_of(10_000) {
             pb.set_position(total);
             pb.set_message(format!("{written} written so far"));
         }
