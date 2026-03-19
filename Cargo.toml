@@ -17,7 +17,7 @@ serde_json = "1.0"
 
 [[bin]]
 name = "download-games"
-path = "src/download_games.rs"
+path = "scripts/download_games.rs"
 
 [[bin]]
 name = "prepare_puzzles"
