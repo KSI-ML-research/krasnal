@@ -4,7 +4,8 @@ from pathlib import Path
 DATA_DIR = Path("data")
 RAW_DATA_DIR = DATA_DIR / "raw"
 MOVES_FILE = DATA_DIR / "all_uci_moves.txt"
-DATASET_PATH = DATA_DIR / "processed/tokenized_games.parquet"
+PRETRAIN_DATASET_PATH = DATA_DIR / "processed/pretrain.parquet"
+EVAL_DATASET_PATH = DATA_DIR / "processed/eval.parquet"
 MODEL_DIR = Path("models")
 MODEL_PATH = MODEL_DIR / "chess_model.pt"
 PIECES_DIR = Path("assets/pieces")
@@ -24,7 +25,7 @@ class ChessGPTConfig:
 class TrainConfig:
     learning_rate: float = 5e-4
     min_lr: float = 5e-5  # cosine annealing minimum LR
-    max_iters: int = 100000
+    epochs: float = 0.1
     warmup_iters: int = 100
     batch_size: int = 32
     num_workers: int = 4

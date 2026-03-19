@@ -1,4 +1,5 @@
 import math
+import os
 from contextlib import nullcontext
 from datetime import datetime
 
@@ -7,10 +8,10 @@ from torch.utils.data import DataLoader
 from tqdm.auto import tqdm
 
 from config import (
-    DATASET_PATH,
     MODEL_PATH,
     MOVES_FILE,
     PAD_ID,
+    PRETRAIN_DATASET_PATH,
     ChessGPTConfig,
     TrainConfig,
 )
@@ -19,22 +20,28 @@ from model import GPT, GPTConfig
 from tokenizer import Tokenizer
 
 torch.set_float32_matmul_precision("high")
-torch.manual_seed(42)
+SEED = int(os.environ.get("SEED", "42"))
+torch.manual_seed(SEED)
+if torch.cuda.is_available():
+    torch.cuda.manual_seed_all(SEED)
 
 
-def get_lr(it, train_config):
+def get_lr(it, total_iters, train_config):
     """Cosine annealing learning rate schedule with warmup."""
+    warmup_iters = min(train_config.warmup_iters, total_iters)
+
+    if total_iters <= 0:
+        return train_config.min_lr
+
     # 1) linear warmup for warmup_iters steps
-    if it < train_config.warmup_iters:
-        return train_config.learning_rate * it / train_config.warmup_iters
-    # 2) if it > max_iters, return min learning rate
-    if it > train_config.max_iters:
+    if warmup_iters > 0 and it < warmup_iters:
+        return train_config.learning_rate * it / warmup_iters
+    # 2) if it > total_iters, return min learning rate
+    if it > total_iters:
         return train_config.min_lr
     # 3) in between, use cosine decay down to min learning rate
-    assert train_config.max_iters > train_config.warmup_iters
-    decay_ratio = (it - train_config.warmup_iters) / (
-        train_config.max_iters - train_config.warmup_iters
-    )
+    decay_span = max(total_iters - warmup_iters, 1)
+    decay_ratio = (it - warmup_iters) / decay_span
     assert 0 <= decay_ratio <= 1
     coeff = 0.5 * (1.0 + math.cos(math.pi * decay_ratio))  # coeff ranges 0..1
     return train_config.min_lr + coeff * (train_config.learning_rate - train_config.min_lr)
@@ -42,9 +49,16 @@ def get_lr(it, train_config):
 
 def main():
     print("Loading dataset...")
-    train_dataset = ChessDataset(DATASET_PATH)
+    if not PRETRAIN_DATASET_PATH.exists():
+        raise FileNotFoundError(
+            "Pretraining dataset not found at "
+            f"{PRETRAIN_DATASET_PATH}. Run scripts/preprocess.py first."
+        )
+
+    train_dataset = ChessDataset(PRETRAIN_DATASET_PATH)
     tokenizer = Tokenizer(MOVES_FILE)
     vocab_size = tokenizer.get_vocab_size()
+
     print(f"Vocab size: {vocab_size}")
     print(f"Dataset size: {len(train_dataset)} games")
 
@@ -63,6 +77,9 @@ def main():
 
     # --- Training config ---
     tconf = TrainConfig()
+    if tconf.epochs <= 0:
+        raise ValueError("TrainConfig.epochs must be > 0")
+
     device = "cuda" if torch.cuda.is_available() else "cpu"
     device_type = "cuda" if "cuda" in device else "cpu"
     print(f"Using device: {device}")
@@ -129,18 +146,22 @@ def main():
     log_interval = 10
     iter_num = 0
     steps_per_epoch = len(train_loader)
-    est_epochs = tconf.max_iters / max(steps_per_epoch, 1)
+    if steps_per_epoch == 0:
+        raise ValueError("Training dataset is empty. Cannot run training.")
+
+    total_iters = max(1, math.ceil(tconf.epochs * steps_per_epoch))
+
     pbar = tqdm(
-        total=tconf.max_iters,
-        desc=f"train (~{est_epochs:.2f} ep)",
+        total=total_iters,
+        desc=f"train ({tconf.epochs} ep)",
         unit="iter",
         dynamic_ncols=True,
     )
 
-    while iter_num < tconf.max_iters:
+    while iter_num < total_iters:
         for x, y in train_loader:
             # update learning rate for this iteration
-            lr = get_lr(iter_num, tconf)
+            lr = get_lr(iter_num, total_iters, tconf)
             for param_group in optimizer.param_groups:
                 param_group["lr"] = lr
 
@@ -173,7 +194,7 @@ def main():
 
             pbar.update(1)
             iter_num += 1
-            if iter_num >= tconf.max_iters:
+            if iter_num >= total_iters:
                 break
 
     pbar.close()
@@ -181,7 +202,7 @@ def main():
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M")
     params = (
-        f"L{mconf.n_layer}_H{mconf.n_head}_E{mconf.n_embd}_I{tconf.max_iters}_B{tconf.batch_size}"
+        f"L{mconf.n_layer}_H{mconf.n_head}_E{mconf.n_embd}_EP{tconf.epochs:g}_B{tconf.batch_size}"
     )
 
     MODEL_PATH.parent.mkdir(parents=True, exist_ok=True)

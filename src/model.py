@@ -1,12 +1,11 @@
 """
-NanoGPT model for Krasnal chess engine.
-Based on https://github.com/karpathy/nanoGPT/blob/master/model.py
+Krasnal GPT model definition, based on NanoGPT by Andrej Karpathy:
+https://github.com/karpathy/nanoGPT/blob/master/model.py
 
-References:
-1) the official GPT-2 TensorFlow implementation released by OpenAI:
-https://github.com/openai/gpt-2/blob/master/src/model.py
-2) huggingface/transformers PyTorch implementation:
-https://github.com/huggingface/transformers/blob/main/src/transformers/models/gpt2/modeling_gpt2.py
+Differences from the original NanoGPT implementation:
+- Replaced LayerNorm with RMSNorm, which is more efficient. (paper: https://arxiv.org/abs/1910.07467)
+- Replaced absolute positional embeddings with RoPE, which is better at extrapolation.
+- Replaced ReLU activation with GeLU which is smoother and performs better in practice.
 """
 
 import inspect
@@ -16,18 +15,6 @@ from dataclasses import dataclass
 import torch
 import torch.nn as nn
 from torch.nn import functional as F
-
-
-class LayerNorm(nn.Module):
-    """LayerNorm but with an optional bias. PyTorch doesn't support simply bias=False."""
-
-    def __init__(self, ndim, bias):
-        super().__init__()
-        self.weight = nn.Parameter(torch.ones(ndim))
-        self.bias = nn.Parameter(torch.zeros(ndim)) if bias else None
-
-    def forward(self, input):
-        return F.layer_norm(input, self.weight.shape, self.weight, self.bias, 1e-5)
 
 
 class RoPE(nn.Module):
@@ -171,9 +158,9 @@ class MLP(nn.Module):
 class Block(nn.Module):
     def __init__(self, config):
         super().__init__()
-        self.ln_1 = LayerNorm(config.n_embd, bias=config.bias)
+        self.ln_1 = nn.RMSNorm(config.n_embd)
         self.attn = CausalSelfAttention(config)
-        self.ln_2 = LayerNorm(config.n_embd, bias=config.bias)
+        self.ln_2 = nn.RMSNorm(config.n_embd)
         self.mlp = MLP(config)
 
     def forward(self, x):
@@ -205,7 +192,7 @@ class GPT(nn.Module):
                 wte=nn.Embedding(config.vocab_size, config.n_embd),
                 drop=nn.Dropout(config.dropout),
                 h=nn.ModuleList([Block(config) for _ in range(config.n_layer)]),
-                ln_f=LayerNorm(config.n_embd, bias=config.bias),
+                ln_f=nn.RMSNorm(config.n_embd),
             )
         )
         self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)

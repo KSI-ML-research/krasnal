@@ -28,6 +28,7 @@ Dla deweloperów i użytkowników przygotowaliśmy szczegółowe przewodniki:
 
 -   [**Installation Guide**](docs/INSTALLATION.md) - Jak skonfigurować środowisko (Python, Rust, uv).
 -   [**Contributing Guide**](docs/CONTRIBUTING.md) - Standardy kodu, pre-commit hooki i proces rozwoju projektu.
+-   [**Experiment Notes**](docs/EXPERIMENT_NOTES.md) - Krotkie podsumowanie przetestowanych wariantow architektury.
 
 ## 4. Oczekiwania
 
