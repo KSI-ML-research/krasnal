@@ -26,6 +26,12 @@ def tokenize_df(lazy_df: pl.LazyFrame, tokenizer: Tokenizer) -> pl.LazyFrame:
                     .then(pl.lit([tokenizer.win_black_id], dtype=pl.List(pl.UInt16)))
                     .otherwise(pl.lit([tokenizer.draw_id], dtype=pl.List(pl.UInt16)))
                 ),
+                # (
+                #     pl.when(pl.col("white_elo") >= 1000 and pl.col("white_elo") < 1500)
+                #     .then(pl.lit([tokenizer.elo_white_id], dtype=pl.List(pl.UInt32)))
+                #     pl.when(pl.col("black_elo") >= 1000 and pl.col("balck_elo") < 1500)
+                #     .then(pl.lit([tokenizer.elo_black_id], dtype=pl.List(pl.UInt32)))
+                # )
                 pl.col("moves")
                 .str.split(" ")
                 .list.eval(pl.element().replace_strict(tokenizer.move_to_id))

@@ -1,7 +1,18 @@
 import json
 from pathlib import Path
 
-from config import DRAW_ID, EOS_ID, PAD_ID, SOS_ID, WIN_BLACK_ID, WIN_WHITE_ID
+from config import (
+    DRAW_ID,
+    ELO_1000_ID,
+    ELO_1500_ID,
+    ELO_2000_ID,
+    ELO_2500_ID,
+    EOS_ID,
+    PAD_ID,
+    SOS_ID,
+    WIN_BLACK_ID,
+    WIN_WHITE_ID,
+)
 
 
 class Tokenizer:
@@ -12,7 +23,10 @@ class Tokenizer:
         self.sos_id = SOS_ID
         self.eos_id = EOS_ID
         self.pad_id = PAD_ID
-        self.win_white_id = WIN_WHITE_ID
+        self.elo_1000_id = ELO_1000_ID
+        self.elo_1500_id = ELO_1500_ID
+        self.elo_2000_id = ELO_2000_ID
+        self.elo_2500_id = ELO_2500_ID
         self.win_black_id = WIN_BLACK_ID
         self.draw_id = DRAW_ID
 
@@ -25,10 +39,26 @@ class Tokenizer:
         self.move_to_id["<WW>"] = self.win_white_id
         self.move_to_id["<BW>"] = self.win_black_id
         self.move_to_id["<DW>"] = self.draw_id
+        self.move_to_id["<E10>"] = self.elo_1000_id
+        self.move_to_id["<E15>"] = self.elo_1500_id
+        self.move_to_id["<E20>"] = self.elo_2000_id
+        self.move_to_id["<E25>"] = self.elo_2500_id
 
         for idx, move in enumerate(
             all_uci_moves,
-            start=max(SOS_ID, EOS_ID, PAD_ID, WIN_WHITE_ID, WIN_BLACK_ID, DRAW_ID) + 1,
+            start=max(
+                SOS_ID,
+                EOS_ID,
+                PAD_ID,
+                ELO_1000_ID,
+                ELO_1500_ID,
+                ELO_2000_ID,
+                ELO_2500_ID,
+                WIN_WHITE_ID,
+                WIN_BLACK_ID,
+                DRAW_ID,
+            )
+            + 1,
         ):
             self.move_to_id[move] = idx
 
