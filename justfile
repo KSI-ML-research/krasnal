@@ -1,44 +1,52 @@
-# Global defaults
 SEED := "42"
+export PYTHONPATH := "."
+export UV_CACHE_DIR := ".uv_cache"
 
-# ===== SETUP & DEVELOPMENT =====
+# Install dependencies and setup pre-commit hooks
 setup:
     uv sync
     uv run pre-commit install
     cargo build
 
-lint:
-    uv run ruff check .
-    cargo clippy
+# Run linters for Python and Rust code
+lint *args:
+    uv run ruff check . {{args}}
+    cargo clippy {{args}}
 
-format:
-    uv run ruff format .
-    cargo fmt
+# Format code with ruff and rustfmt
+format *args:
+    uv run ruff format . {{args}}
+    cargo fmt {{args}}
 
-test:
-    PYTHONPATH=src uv run pytest
-    cargo test
+# Run tests for Python and Rust code
+test *args:
+    PYTHONPATH=src uv run pytest {{args}}
+    cargo test {{args}}
 
+# Run all pre-commit hooks
 pre-commit:
     uv run pre-commit run --all-files
 
-# ===== TRAINING =====
-
+# Run full training pipeline: download games, preprocess, pretrain, evaluate
 pipeline:
     uv sync
     just download-games
     just preprocess
     just pretrain
+    just evaluate --latest
 
+# Download chess games from Lichess
 download-games:
     cargo run --release --bin download-games
 
-preprocess:
-    PYTHONPATH=src uv run scripts/preprocess.py
+# Preprocess downloaded games into training dataset
+preprocess *args:
+    PYTHONPATH=src uv run scripts/preprocess.py {{args}} --seed {{SEED}}
 
-pretrain:
-    SEED={{SEED}} PYTHONPATH=src uv run scripts/pretrain.py
-    PYTHONPATH=src uv run scripts/evaluate.py
+# Stage 1: Pretrain model on large dataset of chess games
+pretrain *args:
+    PYTHONPATH=src uv run scripts/pretrain.py {{args}} --seed {{SEED}}
 
-eval:
-    PYTHONPATH=src uv run scripts/evaluate.py
+# Evaluate trained model on held-out dataset
+evaluate *args:
+    PYTHONPATH=src uv run scripts/evaluate.py {{args}} --seed {{SEED}}

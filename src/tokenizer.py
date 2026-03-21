@@ -1,3 +1,4 @@
+import hashlib
 import json
 from pathlib import Path
 
@@ -56,3 +57,38 @@ class Tokenizer:
     def save_to_json(self, path: Path):
         with open(path, "w") as f:
             json.dump(self.move_to_id, f)
+
+    def mapping_hash(self) -> str:
+        payload = json.dumps(self.move_to_id, sort_keys=True, separators=(",", ":"))
+        return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+    @classmethod
+    def from_mapping(cls, move_to_id: dict[str, int]) -> Tokenizer:
+        tok = cls.__new__(cls)
+        tok.move_to_id = {k: int(v) for k, v in move_to_id.items()}
+        tok.id_to_move = {int(v): k for k, v in tok.move_to_id.items()}
+        tok.sos_id = SOS_ID
+        tok.eos_id = EOS_ID
+        tok.pad_id = PAD_ID
+        tok.win_white_id = WIN_WHITE_ID
+        tok.win_black_id = WIN_BLACK_ID
+        tok.draw_id = DRAW_ID
+        return tok
+
+
+def tokenizer_sidecar_path_for_artifact(artifact_path: Path) -> Path:
+    return artifact_path.parent / "tokenizer.json"
+
+
+def save_tokenizer_for_artifact(tokenizer: Tokenizer, artifact_path: Path) -> Path:
+    sidecar_path = tokenizer_sidecar_path_for_artifact(artifact_path)
+    sidecar_path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "tokenizer_format": 1,
+        "mapping_hash": tokenizer.mapping_hash(),
+        "vocab_size": tokenizer.get_vocab_size(),
+        "move_to_id": tokenizer.move_to_id,
+    }
+    with sidecar_path.open("w", encoding="utf-8") as f:
+        json.dump(payload, f, sort_keys=True)
+    return sidecar_path

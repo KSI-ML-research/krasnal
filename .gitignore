@@ -216,4 +216,5 @@ __marimo__/
 # Local Games
 local_games/
 
-results/
+# Training outputs
+outputs/

@@ -3,11 +3,13 @@ from pathlib import Path
 
 DATA_DIR = Path("data")
 RAW_DATA_DIR = DATA_DIR / "raw"
-MOVES_FILE = DATA_DIR / "all_uci_moves.txt"
+MOVES_FILE = Path("src/uci_moves.txt")
 PRETRAIN_DATASET_PATH = DATA_DIR / "processed/pretrain.parquet"
 EVAL_DATASET_PATH = DATA_DIR / "processed/eval.parquet"
-MODEL_DIR = Path("models")
-MODEL_PATH = MODEL_DIR / "chess_model.pt"
+OUTPUTS_DIR = Path("outputs")
+RUNS_DIR = OUTPUTS_DIR / "runs"
+RESULTS_DIR = OUTPUTS_DIR / "results"
+LOGS_DIR = OUTPUTS_DIR / "logs"
 PIECES_DIR = Path("assets/pieces")
 
 
