@@ -16,7 +16,7 @@ format:
     cargo fmt
 
 test:
-    uv run pytest
+    PYTHONPATH=src uv run pytest
     cargo test
 
 pre-commit:
