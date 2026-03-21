@@ -46,3 +46,12 @@ PAD_ID = 2
 WIN_WHITE_ID = 3
 WIN_BLACK_ID = 4
 DRAW_ID = 5
+
+SPECIAL_TOKENS = [
+    SOS_ID,
+    EOS_ID,
+    PAD_ID,
+    WIN_WHITE_ID,
+    WIN_BLACK_ID,
+    DRAW_ID,
+]

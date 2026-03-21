@@ -1,7 +1,14 @@
 import json
 from pathlib import Path
 
-from config import DRAW_ID, EOS_ID, PAD_ID, SOS_ID, WIN_BLACK_ID, WIN_WHITE_ID
+from config import (
+    DRAW_ID,
+    EOS_ID,
+    PAD_ID,
+    SOS_ID,
+    WIN_BLACK_ID,
+    WIN_WHITE_ID,
+)
 
 
 class Tokenizer:
