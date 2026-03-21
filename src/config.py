@@ -3,21 +3,35 @@ from pathlib import Path
 
 DATA_DIR = Path("data")
 RAW_DATA_DIR = DATA_DIR / "raw"
-MOVES_FILE = DATA_DIR / "all_uci_moves.txt"
-PRETRAIN_DATASET_PATH = DATA_DIR / "processed/pretrain.parquet"
+MOVES_FILE = Path("src/uci_moves.txt")
+DATASET_PATH = DATA_DIR / "processed/pretrain.parquet"
+SFT_DATA_PATH = DATA_DIR / "processed/sft_data.parquet"
+RLVR_DATASET_PATH = DATA_DIR / "processed/rlvr.parquet"
 EVAL_DATASET_PATH = DATA_DIR / "processed/eval.parquet"
-MODEL_DIR = Path("models")
-MODEL_PATH = MODEL_DIR / "chess_model.pt"
+OUTPUTS_DIR = Path("outputs")
+RUNS_DIR = OUTPUTS_DIR / "runs"
+RESULTS_DIR = OUTPUTS_DIR / "results"
+LOGS_DIR = OUTPUTS_DIR / "logs"
 PIECES_DIR = Path("assets/pieces")
+
+
+# @dataclass
+# class ChessGPTConfig:
+#     block_size: int = 1024
+#     n_layer: int = 6
+#     n_head: int = 6
+#     n_embd: int = 384
+#     dropout: float = 0.0
+#     bias: bool = False  # no bias = slightly better and faster
 
 
 @dataclass
 class ChessGPTConfig:
-    block_size: int = 1024
-    n_layer: int = 6
-    n_head: int = 6
-    n_embd: int = 384
-    dropout: float = 0.0
+    block_size: int = 2048
+    n_layer: int = 12
+    n_head: int = 8
+    n_embd: int = 512
+    dropout: float = 0.1
     bias: bool = False  # no bias = slightly better and faster
 
 
@@ -40,9 +54,14 @@ class TrainConfig:
     padding_bucket_sizes: tuple[int, ...] = (64, 128, 192, 256, 384, 512, 768, 1024)
 
 
-SOS_ID = 0
-EOS_ID = 1
-PAD_ID = 2
-WIN_WHITE_ID = 3
-WIN_BLACK_ID = 4
-DRAW_ID = 5
+@dataclass
+class GRPOConfig:
+    group_size: int = 8  # G
+    kl_coeff: float = 0.01  # beta
+    clip_eps: float = 0.2  # epsilon
+    num_samples: int = 4  # prompts per batch
+    reward_weights: dict | None = None  # weights for different reward components
+
+    def __post_init__(self):
+        if self.reward_weights is None:
+            self.reward_weights = {"legality": 1.0, "outcome": 0.0}

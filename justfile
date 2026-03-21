@@ -1,7 +1,7 @@
-# Global defaults
-SEED := "42"
+export PYTHONPATH := "."
+export UV_CACHE_DIR := ".uv_cache"
+default_seed := "42"
 
-# ===== SETUP & DEVELOPMENT =====
 setup:
     uv sync
     uv run pre-commit install
@@ -22,23 +22,29 @@ test:
 pre-commit:
     uv run pre-commit run --all-files
 
-# ===== TRAINING =====
-
 pipeline:
     uv sync
-    just download-games
+    cargo run --release
     just preprocess
     just pretrain
+    just finetune
+    just eval
 
-download-games:
-    cargo run --release --bin download-games
+preprocess *args:
+    uv run scripts/preprocess.py --seed {{ default_seed }} {{ args }}
 
-preprocess:
-    PYTHONPATH=src uv run scripts/preprocess.py
+pretrain *args:
+    uv run python scripts/pretrain.py --seed {{ default_seed }} {{ args }}
 
-pretrain:
-    SEED={{SEED}} PYTHONPATH=src uv run scripts/pretrain.py
-    PYTHONPATH=src uv run scripts/evaluate.py
+sft *args:
+    uv run python scripts/sft.py --seed {{ default_seed }} {{ args }}
 
-eval:
-    PYTHONPATH=src uv run scripts/evaluate.py
+rlvr_legal *args:
+    uv run python scripts/rlvr_legal_think.py {{ args }}
+
+finetune *args:
+    just sft --latest {{ args }}
+    just rlvr_legal --latest {{ args }}
+
+eval RUN *args:
+	uv run python -m src.evals.run --run {{ RUN }} --seed {{ default_seed }} {{ args }}

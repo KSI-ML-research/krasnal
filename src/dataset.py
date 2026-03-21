@@ -6,7 +6,8 @@ from datasets import Dataset as HFDataset
 from torch.nn.utils.rnn import pad_sequence
 from torch.utils.data import Dataset
 
-from config import PAD_ID, TrainConfig
+from .config import TrainConfig
+from .tokenizer import PAD_ID
 
 PADDING_BUCKET_SIZES = TrainConfig.padding_bucket_sizes
 
@@ -36,9 +37,9 @@ class ChessDataset(Dataset[torch.Tensor]):
     def __len__(self):
         return len(self.dataset)
 
-    def __getitem__(self, idx: int):
+    def __getitem__(self, index: int):
         # HF datasets upcasts UInt16 from Parquet, casting explicitly for nn.Embedding just in case
-        return self.dataset[idx]["token_ids"].to(torch.long)
+        return self.dataset[index]["token_ids"].to(torch.long)
 
 
 def collate_fn(batch):
@@ -66,3 +67,35 @@ def collate_fn(batch):
             padded = F.pad(padded, (0, pad_size), value=PAD_ID)
 
     return padded[:, :-1], padded[:, 1:]
+
+
+def prompt_collate_fn(batch, min_len=4, max_len=None):
+    """
+    Collate function for GRPO that returns random prefixes (prompts) of games.
+    Each game in the batch is truncated at a random move index.
+    """
+    prompts = []
+    for seq in batch:
+        total_len = len(seq)
+        if total_len <= min_len:
+            prompts.append(seq)
+            continue
+
+        # Pick a random truncation point
+        high = min(total_len, max_len) if max_len else total_len
+        if high <= min_len:
+            prompts.append(seq)
+        else:
+            cutoff = torch.randint(min_len, high, (1,)).item()
+            prompts.append(seq[:cutoff])
+
+    # Pad to match the bucket sizes for efficiency
+    padded = pad_sequence(prompts, batch_first=True, padding_value=PAD_ID)
+    seq_len = padded.size(1)
+    target_len = _get_bucket_size(seq_len)
+
+    if padded.size(1) < target_len:
+        pad_size = target_len - padded.size(1)
+        padded = F.pad(padded, (0, pad_size), value=PAD_ID)
+
+    return padded

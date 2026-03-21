@@ -8,7 +8,6 @@ Differences from the original NanoGPT implementation:
 - Replaced ReLU activation with GeLU which is smoother and performs better in practice.
 """
 
-import inspect
 import math
 from dataclasses import dataclass
 
@@ -171,7 +170,7 @@ class Block(nn.Module):
 
 @dataclass
 class GPTConfig:
-    block_size: int = 512
+    block_size: int = 1024
     vocab_size: int = 1971
     n_layer: int = 6
     n_head: int = 6
@@ -206,8 +205,6 @@ class GPT(nn.Module):
         for pn, p in self.named_parameters():
             if pn.endswith("c_proj.weight"):
                 torch.nn.init.normal_(p, mean=0.0, std=0.02 / math.sqrt(2 * config.n_layer))
-
-        print(f"number of parameters: {self.get_num_params() / 1e6:.2f}M")
 
     def get_num_params(self):
         """
@@ -250,7 +247,7 @@ class GPT(nn.Module):
 
         return logits, loss
 
-    def configure_optimizers(self, weight_decay, learning_rate, betas, device_type):
+    def configure_optimizers(self, weight_decay, learning_rate, betas, _device_type):
         # start with all of the candidate parameters
         param_dict = {pn: p for pn, p in self.named_parameters()}
         # filter out those that do not require grad
@@ -263,22 +260,7 @@ class GPT(nn.Module):
             {"params": decay_params, "weight_decay": weight_decay},
             {"params": nodecay_params, "weight_decay": 0.0},
         ]
-        num_decay_params = sum(p.numel() for p in decay_params)
-        num_nodecay_params = sum(p.numel() for p in nodecay_params)
-        print(
-            f"num decayed parameter tensors: {len(decay_params)}, "
-            f"with {num_decay_params:,} parameters"
-        )
-        print(
-            f"num non-decayed parameter tensors: {len(nodecay_params)}, "
-            f"with {num_nodecay_params:,} parameters"
-        )
-        # Create AdamW optimizer and use the fused version if available
-        fused_available = "fused" in inspect.signature(torch.optim.AdamW).parameters
-        use_fused = fused_available and device_type == "cuda"
-        extra_args = dict(fused=True) if use_fused else dict()
-        optimizer = torch.optim.AdamW(optim_groups, lr=learning_rate, betas=betas, **extra_args)
-        print(f"using fused AdamW: {use_fused}")
+        optimizer = torch.optim.AdamW(optim_groups, lr=learning_rate, betas=betas)
         return optimizer
 
     def estimate_mfu(self, fwdbwd_per_iter, dt):
@@ -297,7 +279,7 @@ class GPT(nn.Module):
         mfu = flops_achieved / flops_promised
         return mfu
 
-    @torch.no_grad()
+    @torch.inference_mode()
     def generate(self, idx, max_new_tokens, temperature=1.0, top_k=None):
         """
         Take a conditioning sequence of indices idx (LongTensor of shape (b,t)) and complete

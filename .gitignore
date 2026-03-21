@@ -212,8 +212,10 @@ __marimo__/
 # Added by cargo
 
 /target
-
 # Local Games
 local_games/
 
-results/
+# Outputs
+outputs/runs/
+outputs/results/
+outputs/logs/
