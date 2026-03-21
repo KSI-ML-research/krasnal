@@ -22,6 +22,12 @@ dependencies = [
     "wandb>=0.25.0",
 ]
 
+[tool.pytest.ini_options]
+# Suppress chess library deprecation warning for Python 3.16 compatibility
+filterwarnings = [
+    "ignore:'asyncio.DefaultEventLoopPolicy' is deprecated:DeprecationWarning",
+]
+
 [tool.ruff]
 line-length = 100
 cache-dir = "~/.cache/ruff"
