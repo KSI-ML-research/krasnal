@@ -33,6 +33,11 @@ def test_inference():
     legal_moves = [m.uci() for m in board.legal_moves]
     assert move in legal_moves, f"Invalid move: {move}"
 
+    # Apply the generated move to keep the board in sync with the session.
+    board.push_uci(move)
     session.feed(tokenizer.move_to_id[move])
     move2 = generator.generate_move(session, board, tokenizer, sampler)
-    assert move2 in legal_moves, f"Invalid move 2: {move2}"
+
+    # Recompute legal moves from the updated board position for the second move.
+    legal_moves_after = [m.uci() for m in board.legal_moves]
+    assert move2 in legal_moves_after, f"Invalid move 2: {move2}"
