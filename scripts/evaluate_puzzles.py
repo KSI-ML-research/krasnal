@@ -1,3 +1,15 @@
+"""Evaluate a trained Krasnal model on filtered Lichess puzzles.
+
+Loads puzzles from a JSONL file (produced by prepare_puzzles), fetches the
+full game history from the Lichess API for each puzzle, and measures the
+model's move prediction accuracy (Pass@1) broken down by rating bucket.
+
+Usage:
+    uv run scripts/evaluate_puzzles.py \
+        --puzzles data/puzzles_filtered.jsonl \
+            --model models/krasnal_base.pt
+"""
+
 import argparse
 import json
 import sys
