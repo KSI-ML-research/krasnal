@@ -18,6 +18,7 @@ from pathlib import Path
 
 import chess
 import requests
+import torch
 
 from src.tokenizer import Tokenizer
 
@@ -66,9 +67,11 @@ def load_puzzles(path: Path) -> list[Puzzle]:
     return puzzles
 
 
-def load_model(checkpoint_path: str):  # noqa: ARG001
-    # TODO: Instantiate KrasnalModel(config) and load weights from checkpoint_path
-    return None
+def load_model(checkpoint_path: str, device: torch.device):
+    from inference.utils import load_model as _load_model
+
+    model, _ = _load_model(checkpoint_path, device)
+    return model
 
 
 def _fen_position_matches(board: chess.Board, target_fen: str) -> bool:
@@ -237,7 +240,8 @@ def main() -> None:
         sys.exit(1)
 
     tokenizer = Tokenizer(UCI_MOVES_PATH)
-    model = load_model(args.model)
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model = load_model(args.model, device)
     results = evaluate(puzzles, model, tokenizer)
     print_summary(results, args.model)
 
