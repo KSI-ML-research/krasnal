@@ -5,10 +5,10 @@ import torch
 from torch.utils.data import DataLoader
 from utils import set_seed
 
-from config import ARTIFACTS_DIR, EVAL_DATASET_PATH, MOVES_FILE, PAD_ID, ChessGPTConfig
+from config import ARTIFACTS_DIR, EVAL_DATASET_PATH, MOVES_FILE, ChessGPTConfig
 from dataset import ChessDataset, collate_fn
 from model import GPT, GPTConfig
-from tokenizer import Tokenizer
+from tokenizer import PAD_ID, Tokenizer
 
 
 def evaluate(model_path: Path, dataset_path: Path, batch_size: int, num_workers: int) -> float:

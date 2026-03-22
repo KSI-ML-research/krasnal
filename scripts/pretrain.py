@@ -11,14 +11,13 @@ import wandb
 from config import (
     ARTIFACTS_DIR,
     MOVES_FILE,
-    PAD_ID,
     PRETRAIN_DATASET_PATH,
     ChessGPTConfig,
     TrainConfig,
 )
 from dataset import ChessDataset, collate_fn
 from model import GPT, GPTConfig
-from tokenizer import Tokenizer
+from tokenizer import PAD_ID, Tokenizer
 from trainer import (
     cosine_warmup_lr,
     run_supervised_training,
