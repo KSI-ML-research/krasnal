@@ -60,3 +60,30 @@ jobs:
 
       - name: Run Ruff Format
         run: uv run ruff format .
+
+  python-test:
+    name: Python Pytest
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.14"
+      - run: pip install uv
+
+      - name: Cache uv deps
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/uv
+          key: uv-${{ hashFiles('uv.lock') }}
+
+      - name: Install dependencies
+        run: uv sync
+
+      - name: Run Pytest
+        run: uv run pytest
+        env:
+          PYTHONPATH: src
