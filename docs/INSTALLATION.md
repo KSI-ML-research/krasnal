@@ -22,12 +22,22 @@ To set up the **Krasnal** chess engine for development, you need both Python (ma
    uv sync
    ```
 
-3. **Install Pre-commit hooks**:
+3. **Install PyTorch variant (choose one)**:
+   - CPU (recommended default):
+   ```bash
+   uv run python scripts/install_torch.py --target cpu
+   ```
+   - CUDA 12.4 (NVIDIA GPU):
+   ```bash
+   uv run python scripts/install_torch.py --target cu124
+   ```
+
+4. **Install Pre-commit hooks**:
    ```bash
    uv run pre-commit install
    ```
 
-4. **Build Rust components** (optional, handled by scripts if needed):
+5. **Build Rust components** (optional, handled by scripts if needed):
    ```bash
    cargo build --release
    ```

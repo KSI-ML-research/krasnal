@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 
 import logging
+import os
 import sys
 
 from engine.mock_provider import RandomMockProvider
+from engine.pytorch_provider import PyTorchModelProvider
 from engine.uci_parser import UCIParser
 
 
@@ -23,11 +25,19 @@ def main():
     logger = logging.getLogger(__name__)
     logger.info("Starting Krasnal UCI Engine")
 
-    # TODO: Environment variable `ENGINE_ENV` to determine which
-    # Provider to inject (PyTorch Model or MockProvider).
-    # For now, we hardcode the Mock use.
+    provider_name = os.environ.get("ENGINE_PROVIDER", "mock").strip().lower()
+    logger.info("ENGINE_PROVIDER=%s", provider_name)
 
-    provider = RandomMockProvider()
+    if provider_name == "pytorch":
+        temperature = float(os.environ.get("ENGINE_TEMPERATURE", "0.0"))
+        top_p = float(os.environ.get("ENGINE_TOP_P", "1.0"))
+        provider = PyTorchModelProvider(temperature=temperature, top_p=top_p)
+    elif provider_name == "mock":
+        provider = RandomMockProvider()
+    else:
+        raise ValueError(
+            f"Unknown ENGINE_PROVIDER='{provider_name}'. Supported values: mock, pytorch"
+        )
 
     uci = UCIParser(provider)
 

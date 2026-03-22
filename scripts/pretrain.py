@@ -1,5 +1,6 @@
 import math
 import os
+from importlib.util import find_spec
 from contextlib import nullcontext
 from datetime import datetime
 
@@ -119,16 +120,24 @@ def main():
 
     # torch.compile
     if tconf.compile and device_type == "cuda":
+        has_triton = find_spec("triton") is not None
+        if not has_triton:
+            print("Triton package not found. Skipping torch.compile() and using eager mode.")
+
+    if tconf.compile and device_type == "cuda" and find_spec("triton") is not None:
         print(
             f"Compiling model with torch.compile() (mode={tconf.compile_mode}, "
             f"dynamic={tconf.compile_dynamic}, fullgraph={tconf.compile_fullgraph})..."
         )
-        model = torch.compile(
-            model,
-            mode=tconf.compile_mode,
-            dynamic=tconf.compile_dynamic,
-            fullgraph=tconf.compile_fullgraph,
-        )
+        try:
+            model = torch.compile(
+                model,
+                mode=tconf.compile_mode,
+                dynamic=tconf.compile_dynamic,
+                fullgraph=tconf.compile_fullgraph,
+            )
+        except Exception as exc:
+            print(f"torch.compile unavailable, falling back to eager mode: {exc}")
 
     # dataloader
     train_loader = DataLoader(

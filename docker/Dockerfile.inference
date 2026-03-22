@@ -1,0 +1,31 @@
+FROM python:3.14-slim
+
+ENV PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PYTHONPATH=/app/src \
+    PATH=/app/.venv/bin:$PATH \
+    PORT=8000 \
+    ENGINE_PROVIDER=pytorch
+
+WORKDIR /app
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY pyproject.toml uv.lock README.md /app/
+
+RUN pip install --upgrade pip \
+    && pip install uv \
+    && uv sync --frozen --no-dev \
+    && uv pip install torch==2.10.0 --index-url https://download.pytorch.org/whl/cpu
+
+COPY src /app/src
+COPY scripts /app/scripts
+COPY data/all_uci_moves.txt /app/data/all_uci_moves.txt
+
+RUN mkdir -p /app/models
+
+EXPOSE 8000
+
+CMD ["python", "scripts/inference_server.py"]
