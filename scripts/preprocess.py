@@ -1,3 +1,4 @@
+import argparse
 import logging
 
 import polars as pl
@@ -37,6 +38,10 @@ def tokenize_df(lazy_df: pl.LazyFrame, tokenizer: Tokenizer) -> pl.LazyFrame:
 
 
 def main():
+    parser = argparse.ArgumentParser(description="Preprocess raw games into parquet files.")
+    parser.add_argument("--seed", type=int, default=42)
+    args = parser.parse_args()
+
     if not MOVES_FILE.exists():
         logger.error(f"Moves file not found at {MOVES_FILE}")
         return
@@ -47,7 +52,7 @@ def main():
             pl.scan_parquet(f"{RAW_DATA_DIR}/*.parquet")
             .pipe(tokenize_df, tokenizer)
             .collect()
-            .sample(fraction=1.0, shuffle=True, seed=42)
+            .sample(fraction=1.0, shuffle=True, seed=args.seed)
         )
     except Exception as e:
         logger.error(f"Failed to process parquet files in {RAW_DATA_DIR}: {e}")

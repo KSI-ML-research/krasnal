@@ -216,4 +216,8 @@ __marimo__/
 # Local Games
 local_games/
 
-results/
+
+artifacts/
+data/
+!data/download_links.txt
+wandb
