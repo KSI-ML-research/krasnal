@@ -16,6 +16,13 @@ logger = logging.getLogger(__name__)
 
 
 def tokenize_df(lazy_df: pl.LazyFrame, tokenizer: Tokenizer) -> pl.LazyFrame:
+    ELO_BINS = [999, 1499, 1999, 2499, float("inf")] # -1 bc pl.cut makes (left, right] intervals and we want [ )  
+    ELO_TOKEN_IDS = [
+        tokenizer.elo_1000_id,
+        tokenizer.elo_1500_id,
+        tokenizer.elo_2000_id,
+        tokenizer.elo_2500_id,
+    ]
     return lazy_df.select(
         pl.concat_list(
             [
@@ -26,12 +33,18 @@ def tokenize_df(lazy_df: pl.LazyFrame, tokenizer: Tokenizer) -> pl.LazyFrame:
                     .then(pl.lit([tokenizer.win_black_id], dtype=pl.List(pl.UInt16)))
                     .otherwise(pl.lit([tokenizer.draw_id], dtype=pl.List(pl.UInt16)))
                 ),
-                # (
-                #     pl.when(pl.col("white_elo") >= 1000 and pl.col("white_elo") < 1500)
-                #     .then(pl.lit([tokenizer.elo_white_id], dtype=pl.List(pl.UInt32)))
-                #     pl.when(pl.col("black_elo") >= 1000 and pl.col("balck_elo") < 1500)
-                #     .then(pl.lit([tokenizer.elo_black_id], dtype=pl.List(pl.UInt32)))
-                # )
+                (
+                    pl.col("white_elo")
+                    .cut(ELO_BINS, ELO_TOKEN_IDS) # matches ELO_TOKEN_IDS[i] to intervals ( ELO_BINS[i]  , ELO_BINS[i+1] ]
+                    .cast(pl.UInt32)
+                    .list.wrap()
+                ),
+                (
+                    pl.col("black_elo")
+                    .cut(ELO_BINS, ELO_TOKEN_IDS)
+                    .cast(pl.UInt32)
+                    .list.wrap()
+                ),
                 pl.col("moves")
                 .str.split(" ")
                 .list.eval(pl.element().replace_strict(tokenizer.move_to_id))
