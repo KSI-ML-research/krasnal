@@ -3,11 +3,12 @@ from pathlib import Path
 
 import torch
 from torch.utils.data import DataLoader
+from utils import set_seed
 
-from config import EVAL_DATASET_PATH, MODEL_PATH, MOVES_FILE, PAD_ID, ChessGPTConfig  # noqa: E402
-from dataset import ChessDataset, collate_fn  # noqa: E402
-from model import GPT, GPTConfig  # noqa: E402
-from tokenizer import Tokenizer  # noqa: E402
+from config import ARTIFACTS_DIR, EVAL_DATASET_PATH, MOVES_FILE, PAD_ID, ChessGPTConfig
+from dataset import ChessDataset, collate_fn
+from model import GPT, GPTConfig
+from tokenizer import Tokenizer
 
 
 def evaluate(model_path: Path, dataset_path: Path, batch_size: int, num_workers: int) -> float:
@@ -72,15 +73,55 @@ def evaluate(model_path: Path, dataset_path: Path, batch_size: int, num_workers:
     return total_loss / total_tokens
 
 
+def resolve_latest_model_path() -> Path:
+    """Find the latest artifact folder by modification time and return its model.pt path."""
+    pretrain_dir = ARTIFACTS_DIR / "pretrain"
+    if not pretrain_dir.exists():
+        raise FileNotFoundError(f"No artifacts found in {pretrain_dir}")
+
+    subdirs = sorted(
+        [d for d in pretrain_dir.iterdir() if d.is_dir()], key=lambda p: p.stat().st_mtime
+    )
+    if not subdirs:
+        raise FileNotFoundError(f"No artifact folders found in {pretrain_dir}")
+
+    latest = subdirs[-1]
+    model_path = latest / "model.pt"
+    if not model_path.exists():
+        raise FileNotFoundError(f"model.pt not found in {latest}")
+    return model_path
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Evaluate trained model on eval.parquet")
-    parser.add_argument("--model-path", type=Path, default=MODEL_PATH)
+    parser.add_argument(
+        "model",
+        nargs="?",
+        type=str,
+        help="Path to model.pt or run folder",
+    )
+    parser.add_argument("--latest", action="store_true", help="Evaluate the latest local artifact")
+    parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--dataset-path", type=Path, default=EVAL_DATASET_PATH)
     parser.add_argument("--batch-size", type=int, default=32)
     parser.add_argument("--num-workers", type=int, default=4)
     args = parser.parse_args()
 
-    eval_loss = evaluate(args.model_path, args.dataset_path, args.batch_size, args.num_workers)
+    if args.latest and args.model is not None:
+        parser.error("Use either a model argument or --latest, not both.")
+    if not args.latest and args.model is None:
+        parser.error("the following arguments are required: model (or use --latest)")
+
+    set_seed(args.seed)
+
+    if args.model:
+        model_path = Path(args.model)
+        if model_path.is_dir():
+            model_path = model_path / "model.pt"
+    else:
+        model_path = resolve_latest_model_path()
+
+    eval_loss = evaluate(model_path, args.dataset_path, args.batch_size, args.num_workers)
     print(f"eval_loss={eval_loss:.6f}")
 
 

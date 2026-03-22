@@ -56,3 +56,9 @@ class Tokenizer:
     def save_to_json(self, path: Path):
         with open(path, "w") as f:
             json.dump(self.move_to_id, f)
+
+
+def save_tokenizer_for_artifact(tokenizer: Tokenizer, model_path: Path) -> None:
+    """Save tokenizer vocabulary alongside a model checkpoint."""
+    tokenizer_path = model_path.parent / f"{model_path.stem}_tokenizer.json"
+    tokenizer.save_to_json(tokenizer_path)
