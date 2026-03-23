@@ -6,7 +6,9 @@ RAW_DATA_DIR = DATA_DIR / "raw"
 MOVES_FILE = Path("src/uci_moves.txt")
 PRETRAIN_DATASET_PATH = DATA_DIR / "processed/pretrain.parquet"
 EVAL_DATASET_PATH = DATA_DIR / "processed/eval.parquet"
+SFT_COT_DATASET_PATH = DATA_DIR / "processed/sft_cot.parquet"
 ARTIFACTS_DIR = Path("artifacts")
+SFT_COT_SHARDS_DIR = ARTIFACTS_DIR / "sft_cot" / "shards"
 PIECES_DIR = Path("assets/pieces")
 
 

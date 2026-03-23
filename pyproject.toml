@@ -32,7 +32,7 @@ filterwarnings = [
 
 [tool.ruff]
 line-length = 100
-cache-dir = "~/.cache/ruff"
+cache-dir = ".ruff_cache"
 extend-include = ["*.ipynb"]
 
 
