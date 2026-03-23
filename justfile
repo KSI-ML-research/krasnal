@@ -50,3 +50,7 @@ pretrain *args:
 # Evaluate trained model on held-out dataset
 evaluate *args:
     PYTHONPATH=src uv run scripts/evaluate.py {{args}} --seed {{SEED}}
+
+# Stage 2: RLVR phase 1 fine-tuning from a pretrained checkpoint
+rlvr-phase1 *args:
+    PYTHONPATH=src uv run scripts/rlvr_phase1.py {{args}} --seed {{SEED}}
