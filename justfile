@@ -2,6 +2,9 @@ SEED := "42"
 export PYTHONPATH := "."
 export UV_CACHE_DIR := ".uv_cache"
 
+
+# ===== DEVELOPMENT =====
+
 # Install dependencies and setup pre-commit hooks
 setup:
     uv sync
@@ -27,6 +30,9 @@ test *args:
 pre-commit:
     uv run pre-commit run --all-files
 
+
+# ===== TRAINING PIPELINE =====
+
 # Run full training pipeline: download games, preprocess, pretrain, evaluate
 pipeline:
     uv sync
@@ -51,6 +57,11 @@ pretrain *args:
 evaluate *args:
     PYTHONPATH=src uv run scripts/evaluate.py {{args}} --seed {{SEED}}
 
+# Stage 2: RLVR phase 1 fine-tuning from a pretrained checkpoint
+rlvr-phase1 *args:
+    PYTHONPATH=src uv run scripts/rlvr_phase1.py {{args}} --seed {{SEED}}
+
+
 # ===== PUZZLES =====
 
 # Download Lichess puzzle database (~1GB)
@@ -67,3 +78,4 @@ prepare-puzzles:
 # Download games for specific chess players from PGN Mentor
 download-player-games *args:
     cargo run --release --bin download-player-games -- {{args}}
+
