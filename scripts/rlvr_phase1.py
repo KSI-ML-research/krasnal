@@ -4,9 +4,9 @@ from datetime import datetime
 from pathlib import Path
 
 import torch
+import wandb
 from utils import set_seed
 
-import wandb
 from config import ARTIFACTS_DIR, MOVES_FILE, PRETRAIN_DATASET_PATH, ChessGPTConfig
 from model import GPT, GPTConfig
 from rl import (

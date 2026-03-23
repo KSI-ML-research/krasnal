@@ -5,7 +5,7 @@ from datetime import datetime
 
 import torch
 from torch.utils.data import DataLoader
-from utils import set_seed
+from utils import print_model_config, set_seed
 
 import wandb
 from config import (
@@ -104,14 +104,17 @@ def main():
     project = wandb.run.project  # type: ignore[union-attr]
     wandb_run_url = f"https://wandb.ai/{entity}/{project}/runs/{run_id}"
 
-    print(
-        f"{'=' * 60}\n"
-        f"  Pretrain  |  {params_M:.2f}M params  |  {len(train_dataset):,} games\n"
-        f"  layers={mconf.n_layer}, heads={mconf.n_head}, embd={mconf.n_embd}, "
-        f"context={mconf.block_size}, vocab={vocab_size}\n"
-        f"  Device: {device}  |  dtype: {dtype}  |  compile: {tconf.compile}\n"
-        f"  Artifact dir: {artifact_dir.name}\n"
-        f"{'=' * 60}"
+    print_model_config(
+        stage="Pretrain",
+        params_m=params_M,
+        dataset_size=len(train_dataset),
+        dataset_label="games",
+        config=mconf,
+        vocab_size=vocab_size,
+        device=device,
+        dtype=dtype,
+        compile_enabled=tconf.compile,
+        artifact_dir=artifact_dir,
     )
 
     optimizer = model.configure_optimizers(

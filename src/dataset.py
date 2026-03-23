@@ -1,3 +1,5 @@
+import os
+import random
 from pathlib import Path
 
 import torch
@@ -9,6 +11,7 @@ from torch.utils.data import Dataset
 from config import TrainConfig
 from tokenizer import PAD_ID
 
+HF_DATASETS_CACHE = os.environ.get("HF_DATASETS_CACHE", "/tmp/krasnal-hf-datasets")
 PADDING_BUCKET_SIZES = TrainConfig.padding_bucket_sizes
 
 
@@ -30,16 +33,73 @@ class ChessDataset(Dataset[torch.Tensor]):
     effectively solving memory usage issues during multi-process training.
     """
 
-    def __init__(self, parquet_path: Path):
-        self.dataset = HFDataset.from_parquet(str(parquet_path))
+    def __init__(self, parquet_path: Path | list[Path]):
+        paths = (
+            [str(path) for path in parquet_path]
+            if isinstance(parquet_path, list)
+            else str(parquet_path)
+        )
+        self.dataset = HFDataset.from_parquet(paths, cache_dir=HF_DATASETS_CACHE)
         self.dataset.set_format(type="torch", columns=["token_ids"])
 
     def __len__(self):
         return len(self.dataset)
 
     def __getitem__(self, idx: int):
-        # HF datasets upcasts UInt16 from Parquet, casting explicitly for nn.Embedding just in case
         return self.dataset[idx]["token_ids"].to(torch.long)
+
+
+class MixedChessDataset(Dataset[torch.Tensor]):
+    """Sample a fixed-ratio mixture of CoT and normal-play rows."""
+
+    def __init__(self, cot_path: Path, normal_path: Path, *, cot_ratio: float, seed: int = 42):
+        if not 0.0 <= cot_ratio <= 1.0:
+            raise ValueError("cot_ratio must be between 0 and 1")
+
+        self.cot_dataset = HFDataset.from_parquet(str(cot_path), cache_dir=HF_DATASETS_CACHE)
+        self.normal_dataset = HFDataset.from_parquet(str(normal_path), cache_dir=HF_DATASETS_CACHE)
+        self.cot_dataset.set_format(type="torch", columns=["token_ids"])
+        self.normal_dataset.set_format(type="torch", columns=["token_ids"])
+
+        cot_len = len(self.cot_dataset)
+        normal_len = len(self.normal_dataset)
+        if cot_len == 0 and normal_len == 0:
+            raise ValueError("Both datasets are empty")
+        if cot_len == 0:
+            cot_count = 0
+            normal_count = normal_len
+        elif normal_len == 0 or cot_ratio == 1.0:
+            cot_count = cot_len
+            normal_count = 0
+        elif cot_ratio == 0.0:
+            cot_count = 0
+            normal_count = normal_len
+        else:
+            normal_target = round(cot_len * (1.0 - cot_ratio) / cot_ratio)
+            if normal_target <= normal_len:
+                cot_count = cot_len
+                normal_count = normal_target
+            else:
+                normal_count = normal_len
+                cot_count = max(1, min(cot_len, round(normal_len * cot_ratio / (1.0 - cot_ratio))))
+
+        rng = random.Random(seed)
+        cot_indices = list(range(cot_len))
+        normal_indices = list(range(normal_len))
+        rng.shuffle(cot_indices)
+        rng.shuffle(normal_indices)
+        self.sources = [("cot", idx) for idx in cot_indices[:cot_count]]
+        self.sources.extend(("normal", idx) for idx in normal_indices[:normal_count])
+        self.cot_count = cot_count
+        self.normal_count = normal_count
+
+    def __len__(self) -> int:
+        return len(self.sources)
+
+    def __getitem__(self, idx: int) -> torch.Tensor:
+        source, source_idx = self.sources[idx]
+        dataset = self.cot_dataset if source == "cot" else self.normal_dataset
+        return dataset[source_idx]["token_ids"].to(torch.long)
 
 
 def collate_fn(batch):

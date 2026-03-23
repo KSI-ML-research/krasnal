@@ -5,9 +5,9 @@ from contextlib import nullcontext
 import torch
 import torch.nn.functional as F
 
-from config import SOS_ID
 from inference.abstracts import BaseInferenceSession
 from model import GPT
+from tokenizer import SOS_ID
 
 
 class InferenceSession(BaseInferenceSession):
