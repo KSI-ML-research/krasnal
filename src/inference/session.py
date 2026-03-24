@@ -1,12 +1,11 @@
 from __future__ import annotations
 
-from contextlib import nullcontext
-
 import torch
 import torch.nn.functional as F
 
 from config import SOS_ID
 from inference.abstracts import BaseInferenceSession
+from inference.utils import create_amp_context
 from model import GPT
 
 
@@ -31,11 +30,7 @@ class InferenceSession(BaseInferenceSession):
     ):
         self.model = model
         self.device = device
-        self._amp_ctx = (
-            torch.amp.autocast(device_type="cuda", dtype=torch.bfloat16)
-            if device.type == "cuda"
-            else nullcontext()
-        )
+        self._amp_ctx = create_amp_context(device)
         self.reset(outcome_token)
 
     def reset(self, outcome_token: int = SOS_ID) -> None:

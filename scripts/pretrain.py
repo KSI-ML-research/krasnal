@@ -5,19 +5,21 @@ from datetime import datetime
 
 import torch
 from torch.utils.data import DataLoader
-from utils import set_seed
 
 import wandb
 from config import (
     ARTIFACTS_DIR,
+    EVAL_DATASET_PATH,
     MOVES_FILE,
     PAD_ID,
     PRETRAIN_DATASET_PATH,
-    ChessGPTConfig,
+    GPTConfig,
     TrainConfig,
 )
 from dataset import ChessDataset, collate_fn
-from model import GPT, GPTConfig
+from eval import ChessEvaluator, EvalConfig, get_stockfish_client
+from eval.metrics import DEFAULT_METRICS
+from model import GPT
 from tokenizer import Tokenizer
 from trainer import (
     cosine_warmup_lr,
@@ -26,6 +28,7 @@ from trainer import (
     setup_runtime,
     unwrap_model,
 )
+from utils import set_seed
 
 torch.set_float32_matmul_precision("high")
 
@@ -54,7 +57,7 @@ def main():
     tokenizer = Tokenizer(MOVES_FILE)
     vocab_size = tokenizer.get_vocab_size()
 
-    mconf = ChessGPTConfig()
+    mconf = GPTConfig()
     model_config = GPTConfig(
         block_size=mconf.block_size,
         vocab_size=vocab_size,
@@ -99,6 +102,7 @@ def main():
     wandb.init(
         project=args.wandb_project,
         config=wandb_config,
+        tags=["pretrain"],
     )
     run_id = wandb.run.id  # type: ignore[union-attr]
     entity = wandb.run.entity  # type: ignore[union-attr]
@@ -151,6 +155,28 @@ def main():
     def log_fn(_iter_num, last_loss_value, epoch_float):
         wandb.log({"train_loss": last_loss_value, "epoch": epoch_float})
 
+    eval_config = None
+    eval_fn = None
+    eval_log_fn = None
+
+    if EVAL_DATASET_PATH.exists():
+        eval_dataset = ChessDataset(EVAL_DATASET_PATH)
+        stockfish = get_stockfish_client(depth=10)
+        evaluator = ChessEvaluator(metrics=DEFAULT_METRICS, stockfish=stockfish)
+        eval_device = torch.device(device)
+
+        def eval_fn(model, _iter_num):
+            raw_model = unwrap_model(model)
+            return evaluator.evaluate(raw_model, tokenizer, eval_dataset, 100, eval_device)
+
+        def eval_log_fn(_iter_num, metrics):
+            wandb.log({f"eval/{k}": v for k, v in metrics.items()})
+
+        eval_config = EvalConfig(
+            eval_dataset_path=EVAL_DATASET_PATH,
+            num_games=100,
+        )
+
     run_supervised_training(
         model=model,
         optimizer=optimizer,
@@ -166,6 +192,9 @@ def main():
         desc="train",
         log_interval=10,
         log_fn=log_fn,
+        eval_config=eval_config,
+        eval_fn=eval_fn,
+        eval_log_fn=eval_log_fn,
     )
 
     print("Training finished.")
