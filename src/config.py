@@ -11,13 +11,14 @@ PIECES_DIR = Path("assets/pieces")
 
 
 @dataclass
-class ChessGPTConfig:
+class GPTConfig:
     block_size: int = 1024
+    vocab_size: int | None = None
     n_layer: int = 6
     n_head: int = 6
     n_embd: int = 384
     dropout: float = 0.0
-    bias: bool = False  # no bias = slightly better and faster
+    bias: bool = False
 
 
 @dataclass

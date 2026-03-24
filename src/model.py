@@ -10,7 +10,6 @@ Differences from the original NanoGPT implementation:
 
 import inspect
 import math
-from dataclasses import dataclass
 
 import torch
 import torch.nn as nn
@@ -167,17 +166,6 @@ class Block(nn.Module):
         x = x + self.attn(self.ln_1(x))
         x = x + self.mlp(self.ln_2(x))
         return x
-
-
-@dataclass
-class GPTConfig:
-    block_size: int = 512
-    vocab_size: int = 1971
-    n_layer: int = 6
-    n_head: int = 6
-    n_embd: int = 384
-    dropout: float = 0.0
-    bias: bool = False
 
 
 class GPT(nn.Module):

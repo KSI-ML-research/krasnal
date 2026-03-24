@@ -2,10 +2,13 @@ import math
 from collections.abc import Callable
 from contextlib import nullcontext
 from pathlib import Path
+from typing import Any
 
 import torch
 from tqdm.auto import tqdm
 
+from config import TrainConfig
+from eval.config import EvalConfig
 from tokenizer import Tokenizer, save_tokenizer_for_artifact
 
 
@@ -34,7 +37,7 @@ def setup_runtime(device: str | None = None):
     return selected_device, device_type, dtype, ctx, scaler
 
 
-def cosine_warmup_lr(iter_num: int, train_config) -> float:
+def cosine_warmup_lr(iter_num: int, train_config: TrainConfig) -> float:
     """Cosine annealing learning rate schedule with warmup.
 
     Args:
@@ -96,6 +99,10 @@ def run_supervised_training(
     desc: str,
     log_interval: int = 10,
     log_fn: Callable[[int, float, float], None] | None = None,
+    eval_config: EvalConfig | None = None,
+    eval_interval: int = 5000,
+    eval_fn: Callable[[torch.nn.Module, int], dict[str, Any]] | None = None,
+    eval_log_fn: Callable[[int, dict[str, Any]], None] | None = None,
 ):
     """Run a standard autoregressive supervised training loop.
 
@@ -114,6 +121,9 @@ def run_supervised_training(
         desc: Description for progress bar.
         log_interval: How often to log metrics.
         log_fn: Optional callback (iter_num, last_loss_value, epoch_float) for custom logging.
+        eval_config: Optional EvalConfig for periodic evaluation.
+        eval_interval: How often to run evaluation (in iterations).
+        eval_fn: Optional callback (model, iter_num) -> dict of eval metrics.
 
     Returns:
         The last loss value observed during training.
@@ -162,10 +172,21 @@ def run_supervised_training(
                 if log_fn is not None:
                     log_fn(iter_num, last_loss_value, epoch_float)
 
+            if eval_config is not None and eval_fn is not None and iter_num % eval_interval == 0:
+                eval_metrics = eval_fn(model, iter_num)
+                if eval_log_fn is not None:
+                    eval_log_fn(iter_num, eval_metrics)
+
             pbar.update(1)
             iter_num += 1
             if iter_num >= max_iters:
                 break
 
     pbar.close()
+
+    if eval_config is not None and eval_fn is not None:
+        final_metrics = eval_fn(model, iter_num)
+        if eval_log_fn is not None:
+            eval_log_fn(iter_num, final_metrics)
+
     return last_loss_value
