@@ -1,7 +1,7 @@
 import logging
 import random
 
-import chess
+import bulletchess
 
 from engine.provider import ChessModelProvider
 
@@ -14,19 +14,19 @@ class RandomMockProvider(ChessModelProvider):
     """
 
     def get_best_move(self, uci_moves: str) -> str:
-        board = chess.Board()
+        board = bulletchess.Board()
 
         # Recreate the board state based on move history
         if uci_moves.strip():
             for move_str in uci_moves.strip().split():
                 try:
-                    move = chess.Move.from_uci(move_str)
-                    board.push(move)
-                except ValueError as e:
+                    move = bulletchess.Move.from_uci(move_str)
+                    board.apply(move)
+                except Exception as e:
                     logger.error(f"Error parsing move '{move_str}': {e}")
 
         # Get a list of legal moves in the current position
-        legal_moves = list(board.legal_moves)
+        legal_moves = list(board.legal_moves())
 
         if not legal_moves:
             # In case of checkmate or stalemate, there are no legal moves, return the null move.

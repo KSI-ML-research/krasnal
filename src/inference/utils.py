@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 
-import chess
+import bulletchess
 import torch
 
 from config import MOVES_FILE, ChessGPTConfig
@@ -34,10 +34,10 @@ def load_model(model_path: str, device: torch.device) -> tuple[GPT, Tokenizer]:
     return model, tokenizer
 
 
-def get_legal_token_ids(board: chess.Board, tokenizer: Tokenizer) -> list[int]:
+def get_legal_token_ids(board: bulletchess.Board, tokenizer: Tokenizer) -> list[int]:
     """Map legal UCI moves on the board to token IDs."""
     return [
         tokenizer.move_to_id[uci]
-        for m in board.legal_moves
+        for m in board.legal_moves()
         if (uci := m.uci()) in tokenizer.move_to_id
     ]

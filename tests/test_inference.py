@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Test script for inference module."""
 
-import chess
+import bulletchess
 import torch
 
 from config import MOVES_FILE
@@ -27,13 +27,13 @@ def test_inference():
     sampler = DefaultSampler()
     generator = MoveGenerator()
 
-    board = chess.Board()
+    board = bulletchess.Board()
     move = generator.generate_move(session, board, tokenizer, sampler)
 
-    legal_moves = [m.uci() for m in board.legal_moves]
+    legal_moves = [m.uci() for m in board.legal_moves()]
     assert move in legal_moves, f"Invalid move: {move}"
 
-    board.push_uci(move)
+    board.apply(bulletchess.Move.from_uci(move))
     move2 = generator.generate_move(session, board, tokenizer, sampler)
-    legal_moves = [m.uci() for m in board.legal_moves]
+    legal_moves = [m.uci() for m in board.legal_moves()]
     assert move2 in legal_moves, f"Invalid move 2: {move2}"
