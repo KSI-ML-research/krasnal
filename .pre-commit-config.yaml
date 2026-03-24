@@ -1,4 +1,4 @@
-exclude: "^lichess-bot/"
+exclude: "lichess-bot/"
 
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks

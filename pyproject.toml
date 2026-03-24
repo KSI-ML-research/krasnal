@@ -5,7 +5,6 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [
-    "backoff>=2.2.1",
     "bulletchess>=0.4.0",
     "chess>=1.11.2",
     "datasets>=4.5.0",
@@ -29,6 +28,8 @@ dependencies = [
 filterwarnings = [
     "ignore:'asyncio.DefaultEventLoopPolicy' is deprecated:DeprecationWarning",
 ]
+testpaths = ["tests"]
+norecursedirs = ["lichess-bot", ".venv", ".git"]
 
 [tool.ruff]
 line-length = 100
@@ -46,7 +47,3 @@ fixable = ["ALL"]
 dev = [
     "pre-commit>=4.5.1",
 ]
-
-[tool.pytest.ini_options]
-testpaths = ["tests"]
-norecursedirs = ["lichess-bot", ".venv", ".git"]
