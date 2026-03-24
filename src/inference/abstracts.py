@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Protocol
 
-import chess
+import bulletchess
 import torch
 
 if TYPE_CHECKING:
@@ -67,7 +67,7 @@ class BaseGenerator(Protocol):
     def generate_move(
         self,
         session: BaseInferenceSession,
-        board: chess.Board,
+        board: bulletchess.Board,
         tokenizer: Tokenizer,
         sampler: BaseSampler,
         *,

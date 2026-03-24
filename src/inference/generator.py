@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-import chess
+import bulletchess
 import torch
 
 from inference.abstracts import BaseGenerator, BaseInferenceSession, BaseSampler
@@ -34,7 +34,7 @@ class MoveGenerator(BaseGenerator):
     def generate_move(
         self,
         session: BaseInferenceSession,
-        board: chess.Board,
+        board: bulletchess.Board,
         tokenizer: Tokenizer,
         sampler: BaseSampler,
         *,
@@ -44,7 +44,7 @@ class MoveGenerator(BaseGenerator):
     ) -> str:
         legal_ids = [
             tokenizer.move_to_id[uci]
-            for m in board.legal_moves
+            for m in board.legal_moves()
             if (uci := m.uci()) in tokenizer.move_to_id
         ]
         if not legal_ids:
