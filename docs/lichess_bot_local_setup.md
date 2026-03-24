@@ -2,6 +2,8 @@
 
 You can run our bot from your machine.
 
+Lichess recipes are maintained in a dedicated file (`lichess.just`) and imported by the root `justfile`, so commands below stay the same.
+
 Read docs/bot_implementation_plan.md for architecture details.
 
 ### Setup:
@@ -11,7 +13,7 @@ Read docs/bot_implementation_plan.md for architecture details.
 ```bash
    just bot-setup
    ```
-4. run the actual bot. As long as this process is running, you can play the bot on lichess 
+4. run the actual bot. As long as this process is running, you can play the bot on lichess
 ```bash
    just bot-run
    ```
