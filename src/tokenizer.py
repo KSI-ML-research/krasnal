@@ -27,6 +27,7 @@ class Tokenizer:
         self.elo_1500_id = ELO_1500_ID
         self.elo_2000_id = ELO_2000_ID
         self.elo_2500_id = ELO_2500_ID
+        self.win_white_id = WIN_WHITE_ID
         self.win_black_id = WIN_BLACK_ID
         self.draw_id = DRAW_ID
 
@@ -36,13 +37,13 @@ class Tokenizer:
         self.move_to_id["<SOS>"] = self.sos_id
         self.move_to_id["<EOS>"] = self.eos_id
         self.move_to_id["<PAD>"] = self.pad_id
-        self.move_to_id["<WW>"] = self.win_white_id
-        self.move_to_id["<BW>"] = self.win_black_id
-        self.move_to_id["<DW>"] = self.draw_id
         self.move_to_id["<E10>"] = self.elo_1000_id
         self.move_to_id["<E15>"] = self.elo_1500_id
         self.move_to_id["<E20>"] = self.elo_2000_id
         self.move_to_id["<E25>"] = self.elo_2500_id
+        self.move_to_id["<WW>"] = self.win_white_id
+        self.move_to_id["<BW>"] = self.win_black_id
+        self.move_to_id["<DW>"] = self.draw_id
 
         for idx, move in enumerate(
             all_uci_moves,

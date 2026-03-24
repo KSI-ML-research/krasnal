@@ -43,7 +43,7 @@ class TrainConfig:
 SOS_ID = 0
 EOS_ID = 1
 PAD_ID = 2
-# ELO_x means elo from x to x+500. For example ELO_1000_ID means elo from 1000 to 1500.
+# ELO_x means elo from x to x+500. For example ELO_1000_ID means elo from [1000, 1500)
 ELO_1000_ID = 3
 ELO_1500_ID = 4
 ELO_2000_ID = 5
