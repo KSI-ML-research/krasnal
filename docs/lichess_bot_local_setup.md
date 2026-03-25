@@ -17,3 +17,8 @@ Read docs/bot_implementation_plan.md for architecture details.
 ```bash
    just bot-run
    ```
+
+5. optionally clean up the local setup
+```bash
+   just bot-clean
+   ```
