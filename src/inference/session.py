@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 from contextlib import nullcontext
 
 import torch
@@ -7,6 +8,7 @@ import torch.nn.functional as F
 
 from config import SOS_ID
 from inference.abstracts import BaseInferenceSession
+from inference.kv_cache import KVCache
 from model import GPT
 
 
@@ -16,11 +18,14 @@ class InferenceSession(BaseInferenceSession):
     Tokens are accumulated in `self.context` and the entire sequence is re-passed
     through the model on each call. This is the baseline implementation.
 
-    Future improvements:
-        - KV-cache: cache key/value activations for the growing prefix to avoid
-          re-computing already-seen tokens on every forward pass.
-        - CoT awareness: a future session variant may store structured reasoning
-          state alongside the raw token sequence.
+        KV-cache integration status:
+                - This class can own/reset a `KVCache` object.
+                - If model forward supports cache inputs/outputs, the session can enable
+                    cache-aware execution.
+                - With the current model API, `get_probs()` still uses full forward pass.
+
+        CoT awareness: a future session variant may store structured reasoning
+        state alongside the raw token sequence.
     """
 
     def __init__(
@@ -28,9 +33,13 @@ class InferenceSession(BaseInferenceSession):
         model: GPT,
         device: torch.device,
         outcome_token: int = SOS_ID,
+        use_kv_cache: bool = True,
     ):
         self.model = model
         self.device = device
+        self.use_kv_cache = use_kv_cache
+        self._model_supports_kv = "past_kv" in inspect.signature(self.model.forward).parameters
+        self.kv_cache: KVCache | None = None
         self._amp_ctx = (
             torch.amp.autocast(device_type="cuda", dtype=torch.bfloat16)
             if device.type == "cuda"
@@ -38,9 +47,26 @@ class InferenceSession(BaseInferenceSession):
         )
         self.reset(outcome_token)
 
+    def _build_kv_cache(self) -> KVCache:
+        config = self.model.config
+        dtype = next(self.model.parameters()).dtype
+        return KVCache(
+            batch_size=1,
+            num_layers=config.n_layer,
+            num_heads=config.n_head,
+            head_dim=config.n_embd // config.n_head,
+            max_seq_len=config.block_size,
+            device=self.device,
+            dtype=dtype,
+        )
+
     def reset(self, outcome_token: int = SOS_ID) -> None:
         """Clear context and start a new game."""
         self.context: list[int] = [outcome_token]
+        if self.use_kv_cache:
+            self.kv_cache = self._build_kv_cache()
+        else:
+            self.kv_cache = None
 
     def feed(self, token_id: int) -> None:
         """Append a token to the context."""
@@ -52,5 +78,8 @@ class InferenceSession(BaseInferenceSession):
         context_window = self.context[-block_size:]  # sliding window context
         x = torch.tensor([context_window], dtype=torch.long, device=self.device)
         with torch.inference_mode(), self._amp_ctx:
-            logits, _ = self.model(x)
+            if self.use_kv_cache and self._model_supports_kv and self.kv_cache is not None:
+                logits, _ = self.model(x, past_kv=self.kv_cache)
+            else:
+                logits, _ = self.model(x)
         return F.softmax(logits[0, -1], dim=-1)
