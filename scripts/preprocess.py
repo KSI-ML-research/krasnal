@@ -35,13 +35,13 @@ def tokenize_df(lazy_df: pl.LazyFrame, tokenizer: Tokenizer) -> pl.LazyFrame:
                 ),
                 (
                     pl.col("white_elo")
-                    .cut(ELO_BINS, ELO_TOKEN_IDS) # matches ELO_TOKEN_IDS[i] to intervals ( ELO_BINS[i]  , ELO_BINS[i+1] ]
+                    .cut(ELO_BINS, labels=ELO_TOKEN_IDS) # matches ELO_TOKEN_IDS[i] to intervals ( ELO_BINS[i]  , ELO_BINS[i+1] ]
                     .cast(pl.UInt32)
                     .list.wrap()
                 ),
                 (
                     pl.col("black_elo")
-                    .cut(ELO_BINS, ELO_TOKEN_IDS)
+                    .cut(ELO_BINS, labels=ELO_TOKEN_IDS)
                     .cast(pl.UInt32)
                     .list.wrap()
                 ),
