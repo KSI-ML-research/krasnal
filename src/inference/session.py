@@ -63,6 +63,7 @@ class InferenceSession(BaseInferenceSession):
     def reset(self, outcome_token: int = SOS_ID) -> None:
         """Clear context and start a new game."""
         self.context: list[int] = [outcome_token]
+        self._cached_context: list[int] = []
         if self.use_kv_cache:
             self.kv_cache = self._build_kv_cache()
         else:
@@ -76,10 +77,34 @@ class InferenceSession(BaseInferenceSession):
         """Return probability distribution over the next token."""
         block_size = self.model.config.block_size
         context_window = self.context[-block_size:]  # sliding window context
-        x = torch.tensor([context_window], dtype=torch.long, device=self.device)
+
+        x_tokens = context_window
+        if self.use_kv_cache and self._model_supports_kv and self.kv_cache is not None:
+            cached_len = self.kv_cache.get_seq_len()
+            # If cached context doesn't match the current context, reset the cache.
+            # This can happen if the session context was truncated (e.g. due to block size limit)
+            # or if the session was reset with a different outcome token.
+            if (
+                cached_len != len(self._cached_context)
+                or context_window[:cached_len] != self._cached_context[:cached_len]
+                or cached_len > len(context_window)
+            ):
+                self.kv_cache.reset()
+                self._cached_context = []
+                cached_len = 0
+
+            if cached_len < len(context_window):
+                x_tokens = context_window[cached_len:]
+            else:
+                self.kv_cache.reset()
+                self._cached_context = []
+                x_tokens = context_window
+
+        x = torch.tensor([x_tokens], dtype=torch.long, device=self.device)
         with torch.inference_mode(), self._amp_ctx:
             if self.use_kv_cache and self._model_supports_kv and self.kv_cache is not None:
                 logits, _ = self.model(x, past_kv=self.kv_cache)
+                self._cached_context = list(context_window)
             else:
                 logits, _ = self.model(x)
         return F.softmax(logits[0, -1], dim=-1)

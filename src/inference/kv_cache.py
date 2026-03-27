@@ -23,57 +23,65 @@ class KVCache:
                                      head_dim, device=device, dtype=dtype)
         self.value_cache = torch.zeros(num_layers, batch_size, num_heads, max_seq_len,
                                        head_dim, device=device, dtype=dtype)
-        # Current sequence length per batch (initially 0, will be updated during decoding)
         self.cache_seqlen = torch.zeros(batch_size, dtype=torch.long, device=device)
 
     def reset(self):
         """Reset the KV cache to its initial state."""
         self.cache_seqlen.zero_()
 
-    def get_pos(self, batch_idx):
-        """Get the current position in the sequence for a given batch index."""
-        return self.cache_seqlen[batch_idx]
+    def get_seq_len(self) -> int:
+        """Get the cached sequence length (assumes uniform length across batch)."""
+        return self.cache_seqlen[0].item()
 
-    def update_cache(self, layer_idx, batch_idx, new_keys, new_values):
+    def append_layer(self, layer_idx, new_keys, new_values):
         """
-        Update the KV cache with new key and value tensors for a specific layer and batch index.
+        Append new keys/values for a single layer at the current cached position.
 
         Args:
             layer_idx (int): The index of the layer to update
-            batch_idx (int): The index of the batch to update
-            new_keys (torch.Tensor): The new key tensor to append (shape: [num_heads, head_dim])
-            new_values (torch.Tensor): The new value tensor to append (shape: [num_heads, head_dim])
+            new_keys (torch.Tensor): Shape [batch_size, num_heads, t_new, head_dim]
+            new_values (torch.Tensor): Shape [batch_size, num_heads, t_new, head_dim]
         """
-        # Get the current position in the sequence for the given batch index
-        pos = self.get_pos(batch_idx)
+        if new_keys.ndim != 4 or new_values.ndim != 4:
+            raise ValueError("new_keys/new_values must have shape [B, H, T, D]")
 
-        # Ensure that we do not exceed the maximum sequence length
-        if pos >= self.max_seq_len:
-            raise ValueError(f"Sequence length exceeded max_seq_len: {pos} >= {self.max_seq_len}")
+        b, h, t_new, d = new_keys.shape
+        if (b, h, d) != (self.batch_size, self.num_heads, self.head_dim):
+            raise ValueError(
+                "new_keys shape mismatch: "
+                f"expected [B={self.batch_size}, H={self.num_heads}, T, D={self.head_dim}], "
+                f"got {tuple(new_keys.shape)}"
+            )
+        if new_values.shape != new_keys.shape:
+            raise ValueError("new_values shape must match new_keys shape")
 
-        # Update the key and value caches at the appropriate position
-        self.key_cache[layer_idx, batch_idx, :, pos, :] = new_keys
-        self.value_cache[layer_idx, batch_idx, :, pos, :] = new_values
+        start = self.get_seq_len()
+        end = start + t_new
+        if end > self.max_seq_len:
+            raise ValueError(
+                f"Sequence length exceeded max_seq_len: {end} > {self.max_seq_len}"
+            )
 
-        # Increment the sequence length for this batch index
-        self.cache_seqlen[batch_idx] += 1
+        self.key_cache[layer_idx, :, :, start:end, :] = new_keys
+        self.value_cache[layer_idx, :, :, start:end, :] = new_values
 
-    def get_cache(self, layer_idx, batch_idx):
+    def advance(self, t_new: int) -> None:
+        """Advance the global cached sequence length after all layers are appended."""
+        if t_new < 0:
+            raise ValueError("t_new must be non-negative")
+        new_len = self.get_seq_len() + t_new
+        if new_len > self.max_seq_len:
+            raise ValueError(
+                f"Sequence length exceeded max_seq_len: {new_len} > {self.max_seq_len}"
+            )
+        self.cache_seqlen += t_new
+
+    def get_layer_cache(self, layer_idx):
         """
-        Retrieve the cached key and value tensors for a specific layer and batch index.
-
-        Args:
-            layer_idx (int): The index of the layer to retrieve
-            batch_idx (int): The index of the batch to retrieve
-        Returns:
-            Tuple[torch.Tensor, torch.Tensor]: The cached key and value tensors
-            (shapes: [num_heads, current_seq_len, head_dim])
+        Retrieve cached key/value tensors for a layer up to current sequence length.
         """
-        # Get the current position in the sequence for the given batch index
-        pos = self.get_pos(batch_idx)
-
-        # Retrieve the cached key and value tensors up to the current position
-        cached_keys = self.key_cache[layer_idx, batch_idx, :, :pos, :]
-        cached_values = self.value_cache[layer_idx, batch_idx, :, :pos, :]
-
-        return cached_keys, cached_values
+        seq_len = self.get_seq_len()
+        return (
+            self.key_cache[layer_idx, :, :, :seq_len, :],
+            self.value_cache[layer_idx, :, :, :seq_len, :],
+        )
