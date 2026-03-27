@@ -11,25 +11,15 @@ To set up the **Krasnal** chess engine for development, you need both Python (ma
 
 ## Setup Steps
 
-1. **Clone the repository** (replace `<REPOSITORY_CLONE_URL>` with the HTTPS or SSH URL copied from the project's GitHub "Code" button):
+1. **Clone the repository**:
    ```bash
-   git clone <REPOSITORY_CLONE_URL>
+   git clone git@github.com:KSI-ML-research/krasnal.git
    cd krasnal
    ```
 
-2. **Install Python dependencies**:
+2. **Run the setup**:
    ```bash
-   uv sync
-   ```
-
-3. **Install Pre-commit hooks**:
-   ```bash
-   uv run pre-commit install
-   ```
-
-4. **Build Rust components** (optional, handled by scripts if needed):
-   ```bash
-   cargo build --release
+   just setup
    ```
 
 ## Verification
