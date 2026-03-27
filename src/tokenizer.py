@@ -3,10 +3,12 @@ from pathlib import Path
 
 from config import (
     DRAW_ID,
-    ELO_1000_ID,
-    ELO_1500_ID,
-    ELO_2000_ID,
-    ELO_2500_ID,
+    ELO_1000_1499_ID,
+    ELO_1500_1999_ID,
+    ELO_2000_2499_ID,
+    ELO_2500_2999_ID,
+    ELO_ABOVE_2999_ID,
+    ELO_BELLOW_1000_ID,
     EOS_ID,
     PAD_ID,
     SOS_ID,
@@ -14,6 +16,20 @@ from config import (
     WIN_WHITE_ID,
 )
 
+SPECIAL_TOKENS = {
+    DRAW_ID,
+    ELO_1000_1499_ID,
+    ELO_1500_1999_ID,
+    ELO_2000_2499_ID,
+    ELO_2500_2999_ID,
+    ELO_ABOVE_2999_ID,
+    ELO_BELLOW_1000_ID,
+    EOS_ID,
+    PAD_ID,
+    SOS_ID,
+    WIN_BLACK_ID,
+    WIN_WHITE_ID,
+}
 
 class Tokenizer:
     def __init__(self, uci_moves_path: Path):
@@ -23,10 +39,12 @@ class Tokenizer:
         self.sos_id = SOS_ID
         self.eos_id = EOS_ID
         self.pad_id = PAD_ID
-        self.elo_1000_id = ELO_1000_ID
-        self.elo_1500_id = ELO_1500_ID
-        self.elo_2000_id = ELO_2000_ID
-        self.elo_2500_id = ELO_2500_ID
+        self.elo_bellow_1000_id = ELO_BELLOW_1000_ID
+        self.elo_1000_1499_id = ELO_1000_1499_ID
+        self.elo_1500_1999_id = ELO_1500_1999_ID
+        self.elo_2000_2499_id = ELO_2000_2499_ID
+        self.elo_2500_2999_id = ELO_2500_2999_ID
+        self.elo_above_2999_id = ELO_ABOVE_2999_ID
         self.win_white_id = WIN_WHITE_ID
         self.win_black_id = WIN_BLACK_ID
         self.draw_id = DRAW_ID
@@ -37,28 +55,19 @@ class Tokenizer:
         self.move_to_id["<SOS>"] = self.sos_id
         self.move_to_id["<EOS>"] = self.eos_id
         self.move_to_id["<PAD>"] = self.pad_id
-        self.move_to_id["<E10>"] = self.elo_1000_id
-        self.move_to_id["<E15>"] = self.elo_1500_id
-        self.move_to_id["<E20>"] = self.elo_2000_id
-        self.move_to_id["<E25>"] = self.elo_2500_id
-        self.move_to_id["<WW>"] = self.win_white_id
-        self.move_to_id["<BW>"] = self.win_black_id
-        self.move_to_id["<DW>"] = self.draw_id
+        self.move_to_id["<ELO_1000_1499>"] = self.elo_1000_1499_id
+        self.move_to_id["<ELO_1500_1999>"] = self.elo_1500_1999_id
+        self.move_to_id["<ELO_2000_2499>"] = self.elo_2000_2499_id
+        self.move_to_id["<ELO_2500_2999>"] = self.elo_2500_2999_id
+        self.move_to_id["<ELO_BELLOW_1000>"] = self.elo_bellow_1000_id
+        self.move_to_id["<ELO_ABOVE_2999>"] = self.elo_above_2999_id
+        self.move_to_id["<WHITE_WON>"] = self.win_white_id
+        self.move_to_id["<BLACK_WON>"] = self.win_black_id
+        self.move_to_id["<DRAW>"] = self.draw_id
 
         for idx, move in enumerate(
             all_uci_moves,
-            start=max(
-                SOS_ID,
-                EOS_ID,
-                PAD_ID,
-                ELO_1000_ID,
-                ELO_1500_ID,
-                ELO_2000_ID,
-                ELO_2500_ID,
-                WIN_WHITE_ID,
-                WIN_BLACK_ID,
-                DRAW_ID,
-            )
+            start=max(SPECIAL_TOKENS)
             + 1,
         ):
             self.move_to_id[move] = idx

@@ -40,14 +40,20 @@ class TrainConfig:
     padding_bucket_sizes: tuple[int, ...] = (64, 128, 192, 256, 384, 512, 768, 1024)
 
 
+# special tokens
 SOS_ID = 0
 EOS_ID = 1
 PAD_ID = 2
-# ELO_x means elo from x to x+500. For example ELO_1000_ID means elo from [1000, 1500)
-ELO_1000_ID = 3
-ELO_1500_ID = 4
-ELO_2000_ID = 5
-ELO_2500_ID = 6
-WIN_WHITE_ID = 7
-WIN_BLACK_ID = 8
-DRAW_ID = 9
+
+# elo tokens
+ELO_BELLOW_1000_ID = 3
+ELO_1000_1499_ID = 4
+ELO_1500_1999_ID = 5
+ELO_2000_2499_ID = 6
+ELO_2500_2999_ID = 7
+ELO_ABOVE_2999_ID = 8
+
+# outcome tokens
+WIN_WHITE_ID = 9
+WIN_BLACK_ID = 10
+DRAW_ID = 11

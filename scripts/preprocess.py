@@ -15,40 +15,51 @@ logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 logger = logging.getLogger(__name__)
 
 
-def tokenize_df(lazy_df: pl.LazyFrame, tokenizer: Tokenizer) -> pl.LazyFrame:
-    ELO_BINS = [999, 1499, 1999, 2499, float("inf")] # -1 bc pl.cut makes (left, right] intervals and we want [ )  
-    ELO_TOKEN_IDS = [
-        tokenizer.elo_1000_id,
-        tokenizer.elo_1500_id,
-        tokenizer.elo_2000_id,
-        tokenizer.elo_2500_id,
+def _result_token_expr(tokenizer: Tokenizer) -> pl.Expr:
+    return (
+        pl.when(pl.col("result") == 1)
+        .then(pl.lit([tokenizer.win_white_id], dtype=pl.List(pl.UInt16)))
+        .when(pl.col("result") == -1)
+        .then(pl.lit([tokenizer.win_black_id], dtype=pl.List(pl.UInt16)))
+        .otherwise(pl.lit([tokenizer.draw_id], dtype=pl.List(pl.UInt16)))
+    )
+
+
+def _elo_token_expr(column: str, tokenizer: Tokenizer) -> pl.Expr:
+    ELO_BREAKS = [999, 1499, 1999, 2499, 2999, 10000]
+
+    # `cut` creates right-closed intervals, so subtracting one from the breakpoints
+    # makes the buckets line up with [1000, 1500), [1500, 2000), etc.
+    labels = [
+        str(tokenizer.elo_bellow_1000_id),
+        str(tokenizer.elo_1000_1499_id),
+        str(tokenizer.elo_1500_1999_id),
+        str(tokenizer.elo_2000_2499_id),
+        str(tokenizer.elo_2500_2999_id),
+        str(tokenizer.elo_above_2999_id),
     ]
+    return pl.concat_list(
+        pl.col(column).cut(ELO_BREAKS, labels=labels).cast(pl.String).cast(pl.UInt16)
+    )
+
+
+def _moves_token_expr(tokenizer: Tokenizer) -> pl.Expr:
+    return (
+        pl.col("moves")
+        .str.split(" ")
+        .list.eval(pl.element().replace_strict(tokenizer.move_to_id))
+        .cast(pl.List(pl.UInt16))
+    )
+
+
+def tokenize_df(lazy_df: pl.LazyFrame, tokenizer: Tokenizer) -> pl.LazyFrame:
     return lazy_df.select(
         pl.concat_list(
             [
-                (
-                    pl.when(pl.col("result") == 1)
-                    .then(pl.lit([tokenizer.win_white_id], dtype=pl.List(pl.UInt16)))
-                    .when(pl.col("result") == -1)
-                    .then(pl.lit([tokenizer.win_black_id], dtype=pl.List(pl.UInt16)))
-                    .otherwise(pl.lit([tokenizer.draw_id], dtype=pl.List(pl.UInt16)))
-                ),
-                (
-                    pl.col("white_elo")
-                    .cut(ELO_BINS, labels=ELO_TOKEN_IDS) # matches ELO_TOKEN_IDS[i] to intervals ( ELO_BINS[i]  , ELO_BINS[i+1] ]
-                    .cast(pl.UInt32)
-                    .list.wrap()
-                ),
-                (
-                    pl.col("black_elo")
-                    .cut(ELO_BINS, labels=ELO_TOKEN_IDS)
-                    .cast(pl.UInt32)
-                    .list.wrap()
-                ),
-                pl.col("moves")
-                .str.split(" ")
-                .list.eval(pl.element().replace_strict(tokenizer.move_to_id))
-                .cast(pl.List(pl.UInt16)),
+                _result_token_expr(tokenizer),
+                _elo_token_expr("white_elo", tokenizer),
+                _elo_token_expr("black_elo", tokenizer),
+                _moves_token_expr(tokenizer),
                 pl.lit([tokenizer.eos_id], dtype=pl.List(pl.UInt16)),
             ]
         ).alias("token_ids")
@@ -61,16 +72,13 @@ def main():
         return
 
     tokenizer = Tokenizer(MOVES_FILE)
-    try:
-        df = (
-            pl.scan_parquet(f"{RAW_DATA_DIR}/*.parquet")
-            .pipe(tokenize_df, tokenizer)
-            .collect()
-            .sample(fraction=1.0, shuffle=True, seed=42)
-        )
-    except Exception as e:
-        logger.error(f"Failed to process parquet files in {RAW_DATA_DIR}: {e}")
-        return
+
+    df = (
+        pl.scan_parquet(f"{RAW_DATA_DIR}/*.parquet")
+        .pipe(tokenize_df, tokenizer)
+        .collect()
+        .sample(fraction=1.0, shuffle=True, seed=42)
+    )
 
     max_len = ChessGPTConfig.block_size
     oversized_count = df.filter(pl.col("token_ids").list.len() > max_len).height
