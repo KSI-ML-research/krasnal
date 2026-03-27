@@ -38,22 +38,3 @@ class TrainConfig:
     compile_dynamic: bool = False  # False since we use explicit padding buckets
     compile_fullgraph: bool = True  # captures the entire model into a single graph if True
     padding_bucket_sizes: tuple[int, ...] = (64, 128, 192, 256, 384, 512, 768, 1024)
-
-
-# special tokens
-SOS_ID = 0
-EOS_ID = 1
-PAD_ID = 2
-
-# elo tokens
-ELO_BELLOW_1000_ID = 3
-ELO_1000_1499_ID = 4
-ELO_1500_1999_ID = 5
-ELO_2000_2499_ID = 6
-ELO_2500_2999_ID = 7
-ELO_ABOVE_2999_ID = 8
-
-# outcome tokens
-WIN_WHITE_ID = 9
-WIN_BLACK_ID = 10
-DRAW_ID = 11

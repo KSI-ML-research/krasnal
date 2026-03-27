@@ -1,35 +1,24 @@
 import json
 from pathlib import Path
 
-from config import (
-    DRAW_ID,
-    ELO_1000_1499_ID,
-    ELO_1500_1999_ID,
-    ELO_2000_2499_ID,
-    ELO_2500_2999_ID,
-    ELO_ABOVE_2999_ID,
-    ELO_BELLOW_1000_ID,
-    EOS_ID,
-    PAD_ID,
-    SOS_ID,
-    WIN_BLACK_ID,
-    WIN_WHITE_ID,
-)
+# special tokens
+SOS_ID = 0
+EOS_ID = 1
+PAD_ID = 2
 
-SPECIAL_TOKENS = {
-    DRAW_ID,
-    ELO_1000_1499_ID,
-    ELO_1500_1999_ID,
-    ELO_2000_2499_ID,
-    ELO_2500_2999_ID,
-    ELO_ABOVE_2999_ID,
-    ELO_BELLOW_1000_ID,
-    EOS_ID,
-    PAD_ID,
-    SOS_ID,
-    WIN_BLACK_ID,
-    WIN_WHITE_ID,
-}
+# elo tokens
+ELO_BELLOW_1000_ID = 3
+ELO_1000_1499_ID = 4
+ELO_1500_1999_ID = 5
+ELO_2000_2499_ID = 6
+ELO_2500_2999_ID = 7
+ELO_ABOVE_2999_ID = 8
+
+# outcome tokens
+WIN_WHITE_ID = 9
+WIN_BLACK_ID = 10
+DRAW_ID = 11
+
 
 class Tokenizer:
     def __init__(self, uci_moves_path: Path):
@@ -55,11 +44,11 @@ class Tokenizer:
         self.move_to_id["<SOS>"] = self.sos_id
         self.move_to_id["<EOS>"] = self.eos_id
         self.move_to_id["<PAD>"] = self.pad_id
+        self.move_to_id["<ELO_BELLOW_1000>"] = self.elo_bellow_1000_id
         self.move_to_id["<ELO_1000_1499>"] = self.elo_1000_1499_id
         self.move_to_id["<ELO_1500_1999>"] = self.elo_1500_1999_id
         self.move_to_id["<ELO_2000_2499>"] = self.elo_2000_2499_id
         self.move_to_id["<ELO_2500_2999>"] = self.elo_2500_2999_id
-        self.move_to_id["<ELO_BELLOW_1000>"] = self.elo_bellow_1000_id
         self.move_to_id["<ELO_ABOVE_2999>"] = self.elo_above_2999_id
         self.move_to_id["<WHITE_WON>"] = self.win_white_id
         self.move_to_id["<BLACK_WON>"] = self.win_black_id
@@ -67,7 +56,20 @@ class Tokenizer:
 
         for idx, move in enumerate(
             all_uci_moves,
-            start=max(SPECIAL_TOKENS)
+            start=max(
+                SOS_ID,
+                EOS_ID,
+                PAD_ID,
+                ELO_BELLOW_1000_ID,
+                ELO_1000_1499_ID,
+                ELO_1500_1999_ID,
+                ELO_2000_2499_ID,
+                ELO_2500_2999_ID,
+                ELO_ABOVE_2999_ID,
+                WIN_WHITE_ID,
+                WIN_BLACK_ID,
+                DRAW_ID,
+            )
             + 1,
         ):
             self.move_to_id[move] = idx
