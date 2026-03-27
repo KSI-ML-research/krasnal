@@ -38,11 +38,3 @@ class TrainConfig:
     compile_dynamic: bool = False  # False since we use explicit padding buckets
     compile_fullgraph: bool = True  # captures the entire model into a single graph if True
     padding_bucket_sizes: tuple[int, ...] = (64, 128, 192, 256, 384, 512, 768, 1024)
-
-
-SOS_ID = 0
-EOS_ID = 1
-PAD_ID = 2
-WIN_WHITE_ID = 3
-WIN_BLACK_ID = 4
-DRAW_ID = 5
