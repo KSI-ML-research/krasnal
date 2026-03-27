@@ -4,9 +4,9 @@ import math
 from datetime import datetime
 
 import torch
+import wandb
 from torch.utils.data import DataLoader
 
-import wandb
 from config import (
     ARTIFACTS_DIR,
     EVAL_DATASET_PATH,

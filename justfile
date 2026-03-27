@@ -50,3 +50,7 @@ pretrain *args:
 # Evaluate trained model on held-out dataset
 evaluate *args:
     PYTHONPATH=src uv run scripts/evaluate.py {{args}} --seed {{SEED}}
+
+# Download games for specific chess players from PGN Mentor
+download-player-games *args:
+    cargo run --release --bin download-player-games -- {{args}}
