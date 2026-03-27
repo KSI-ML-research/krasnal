@@ -162,6 +162,9 @@ dmypy.json
 # Pyre type checker
 .pyre/
 
+# players games
+data/players/
+
 # pytype static type analyzer
 .pytype/
 

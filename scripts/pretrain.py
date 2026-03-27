@@ -4,10 +4,10 @@ import math
 from datetime import datetime
 
 import torch
+import wandb
 from torch.utils.data import DataLoader
 from utils import set_seed
 
-import wandb
 from config import (
     ARTIFACTS_DIR,
     MOVES_FILE,
