@@ -1,35 +1,94 @@
 # Krasnal ♟️
 
-**Wrocławski silnik szachowy oparty na architekturze Transformer.**
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/KSI-ML-research/krasnal)
+[![GitHub Stars](https://img.shields.io/github/stars/KSI-ML-research/krasnal)](https://github.com/KSI-ML-research/krasnal/stargazers)
+[![GitHub Forks](https://img.shields.io/github/forks/KSI-ML-research/krasnal)](https://github.com/KSI-ML-research/krasnal/network)
 
-## 1. Cel Projektu
+**Wrocław-based chess engine powered by Transformer architecture.**
 
-Stworzenie silnika szachowego ("Krasnal") opartego na architekturze **Transformer (GPT-style)**, który potrafi generować legalne i sensowne ruchy szachowe, ucząc się bezpośrednio na bazie gier arcymistrzów i silnych amatorów.
+## 1. Project Goal
 
-Plan maksimum? Wgnieść w ziemię "Bestie z Wrocławia" (2100 ELO)!
+Krasnal is a Transformer-based chess engine. It aims to play strong, human-like chess — balancing the intuition of Maya Chess with the strength of Stockfish.
+
+## 2. System Architecture
+
+The architecture is documented using the [C4 model](https://c4model.com/).
+
+### C4: Context Diagram
+
+```mermaid
+flowchart LR
+    subgraph External["External"]
+        LichessAPI[Lichess API<br/>Games Database]
+        LichessOrg[lichess.org<br/>Chess Server]
+        LichessBot[lichess-bot<br/>Bot Client]
+        User(👤 Player)
+    end
+
+    subgraph Krasnal["System: Krasnal"]
+        DataIngestion[Data Ingestion]
+        Training[Training Pipeline]
+        Inference[UCI Engine]
+        Model[Transformer Model]
+    end
+
+    LichessAPI -->|"PGN"| DataIngestion
+    DataIngestion -->|"Parquet"| Training
+    Training -->|"Model weights"| Model
+    User -->|"plays"| LichessOrg
+    LichessOrg <-->|"UCI"| LichessBot
+    LichessBot <--"UCI"--> Inference
+    Inference --> Model
+```
+
+### C4: Container Diagram
+
+```mermaid
+flowchart TD
+    subgraph Data["Data Ingestion (Rust)"]
+        LichessAPI[Lichess API]
+        Parser[Parser<br/>PGN → UCI]
+        ParquetRaw[("Parquet<br/>Raw games")]
+    end
+
+    subgraph Preprocess["Preprocessing (Python)"]
+        Tokenizer[Tokenizer]
+        Conditioning[Outcome Conditioning<br/>ELO + Result tokens]
+        ParquetTokenized[("Parquet<br/>Tokenized training data")]
+    end
+
+    subgraph Training["Model Training (Python + PyTorch)"]
+        WAndB[W&B<br/>Logging]
+        GPTTraining[GPT Training]
+        Artifacts[("Model artifacts<br/>.pt + config")]
+    end
+
+    subgraph Inference["Inference (Python)"]
+        UCI[UCI Parser]
+        Provider[Model Provider]
+        Generator[Move Generator]
+    end
+
+    subgraph External["External"]
+        LichessBot[lichess-bot]
+    end
+
+    LichessAPI -->|"PGN"| Parser -->|"UCI"| ParquetRaw
+    ParquetRaw --> Tokenizer --> Conditioning --> ParquetTokenized
+    ParquetTokenized --> GPTTraining --> Artifacts
+    GPTTraining -.->|".pt + evals"| WAndB
+    Artifacts --> Provider
+    LichessBot <--"stdin/stdout (UCI)"--> UCI
+    UCI --> Provider --> Generator
+```
 
 ---
 
-## 2. Architektura Systemu
+## 3. Documentation
 
-System składa się z trzech głównych modułów:
+Detailed guides for developers and users:
 
-1.  **Data Ingestion (Rust):** Wydajne pobieranie, filtrowanie i tokenizacja gier (PGN -> UCI -> Parquet).
-2.  **Model Training (Python/PyTorch):** Trening modelu Decoder-only Transformer przy użyciu biblioteki Polars do szybkiego ładowania danych.
-3.  **Inference (Python/Rust):** Generowanie ruchów przez wytrenowany model zgodnie z protokołem UCI.
-
-Szczegółowe informacje o architekturze modelu i potoku danych znajdziesz w [**docs/bot_implementation_plan.md**](docs/bot_implementation_plan.md).
-
----
-
-## 3. Dokumentacja
-
-Dla deweloperów i użytkowników przygotowaliśmy szczegółowe przewodniki:
-
--   [**Installation Guide**](docs/INSTALLATION.md) - Jak skonfigurować środowisko (Python, Rust, uv).
--   [**Contributing Guide**](docs/CONTRIBUTING.md) - Standardy kodu, pre-commit hooki i proces rozwoju projektu.
--   [**Experiment Notes**](docs/EXPERIMENT_NOTES.md) - Krotkie podsumowanie przetestowanych wariantow architektury.
-
-## 4. Oczekiwania
-
-Zespół Google DeepMind osiągnął ELO na poziomie 2025 (+/- 18) dla Transformera o rozmiarze 9M parametrów. Naszym celem jest udowodnienie, że architektura GPT świetnie radzi sobie z logiką szachową bez tradycyjnych funkcji ewaluacyjnych.
+-   [**Installation Guide**](docs/INSTALLATION.md) - How to set up the environment (Python, Rust, uv).
+-   [**Contributing Guide**](docs/CONTRIBUTING.md) - Code standards, pre-commit hooks and development process.
+-   [**Research Notes**](docs/RESEARCH.md) - Summary of tested architecture variants and experiments.
+-   [**Outcome Conditioning (WIP)**](docs/outcome_conditioning.md) - ELO and result tokens for conditioned play.
