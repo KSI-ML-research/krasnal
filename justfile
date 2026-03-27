@@ -50,3 +50,16 @@ pretrain *args:
 # Evaluate trained model on held-out dataset
 evaluate *args:
     PYTHONPATH=src uv run scripts/evaluate.py {{args}} --seed {{SEED}}
+
+# ===== PUZZLES =====
+
+# Download Lichess puzzle database (~1GB)
+download-puzzles:
+    mkdir -p data
+    curl -L --progress-bar \
+        "https://database.lichess.org/lichess_db_puzzle.csv.zst" \
+        -o data/lichess_db_puzzle.csv.zst
+
+# Filter puzzles by rating and export to JSONL
+prepare-puzzles:
+    cargo run --release --bin prepare-puzzles
