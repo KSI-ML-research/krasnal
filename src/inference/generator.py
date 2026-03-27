@@ -6,6 +6,7 @@ import bulletchess
 import torch
 
 from inference.abstracts import BaseGenerator, BaseInferenceSession, BaseSampler
+from inference.utils import get_legal_token_ids
 
 if TYPE_CHECKING:
     from tokenizer import Tokenizer
@@ -40,13 +41,8 @@ class MoveGenerator(BaseGenerator):
         *,
         temperature: float = 1.0,
         top_p: float = 1.0,
-        max_tokens: int = 512,  # noqa: ARG002
     ) -> str:
-        legal_ids = [
-            tokenizer.move_to_id[uci]
-            for m in board.legal_moves()
-            if (uci := m.uci()) in tokenizer.move_to_id
-        ]
+        legal_ids = get_legal_token_ids(board, tokenizer)
         if not legal_ids:
             return "0000"
 

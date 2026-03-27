@@ -8,7 +8,7 @@ from config import (
     MOVES_FILE,
     PRETRAIN_DATASET_PATH,
     RAW_DATA_DIR,
-    ChessGPTConfig,
+    GPTConfig,
 )
 from tokenizer import Tokenizer
 
@@ -58,7 +58,7 @@ def main():
         logger.error(f"Failed to process parquet files in {RAW_DATA_DIR}: {e}")
         return
 
-    max_len = ChessGPTConfig.block_size
+    max_len = GPTConfig.block_size
     oversized_count = df.filter(pl.col("token_ids").list.len() > max_len).height
 
     if oversized_count > 0:

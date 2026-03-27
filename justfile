@@ -63,3 +63,7 @@ download-puzzles:
 # Filter puzzles by rating and export to JSONL
 prepare-puzzles:
     cargo run --release --bin prepare-puzzles
+    
+# Download games for specific chess players from PGN Mentor
+download-player-games *args:
+    cargo run --release --bin download-player-games -- {{args}}

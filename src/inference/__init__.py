@@ -1,4 +1,5 @@
 from inference.abstracts import BaseGenerator, BaseInferenceSession, BaseSampler
+from inference.batch import BatchInferenceSession
 from inference.generator import MoveGenerator
 from inference.sampler import DefaultSampler
 from inference.session import InferenceSession
@@ -8,6 +9,7 @@ __all__ = [
     "BaseGenerator",
     "BaseInferenceSession",
     "BaseSampler",
+    "BatchInferenceSession",
     "DefaultSampler",
     "InferenceSession",
     "MoveGenerator",

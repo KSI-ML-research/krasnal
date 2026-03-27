@@ -1,20 +1,30 @@
 from __future__ import annotations
 
 import logging
+from contextlib import AbstractContextManager, nullcontext
 
 import bulletchess
 import torch
 
-from config import MOVES_FILE, ChessGPTConfig
-from model import GPT, GPTConfig
+from config import MOVES_FILE, GPTConfig
+from model import GPT
 from tokenizer import Tokenizer
 
 logger = logging.getLogger(__name__)
 
 
+def create_amp_context(device: torch.device) -> AbstractContextManager:
+    """Create AMP autocast context for CUDA devices."""
+    return (
+        torch.amp.autocast(device_type="cuda", dtype=torch.bfloat16)
+        if device.type == "cuda"
+        else nullcontext()
+    )
+
+
 def load_model(model_path: str, device: torch.device) -> tuple[GPT, Tokenizer]:
     """Load a trained chess model and its tokenizer from a checkpoint."""
-    mconf = ChessGPTConfig()
+    mconf = GPTConfig()
     tokenizer = Tokenizer(MOVES_FILE)
     vocab_size = tokenizer.get_vocab_size()
 
