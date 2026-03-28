@@ -4,9 +4,9 @@ import math
 from datetime import datetime
 
 import torch
-import wandb
 from torch.utils.data import DataLoader
 
+import wandb
 from config import (
     ARTIFACTS_DIR,
     EVAL_DATASET_PATH,
@@ -77,7 +77,7 @@ def main():
 
     device, device_type, dtype, ctx, scaler = setup_runtime()
 
-    params_M = round(model.get_num_params() / 1_000_000)
+    params_M = model.get_num_params() / 1_000_000
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     artifact_dir = ARTIFACTS_DIR / "pretrain" / timestamp
     artifact_dir.mkdir(parents=True, exist_ok=True)
@@ -111,7 +111,7 @@ def main():
 
     print(
         f"{'=' * 60}\n"
-        f"  Pretrain  |  {params_M:.2f}M params  |  {len(train_dataset):,} games\n"
+        f"  Pretrain  |  {params_M:.0f}M params  |  {len(train_dataset):,} games\n"
         f"  layers={mconf.n_layer}, heads={mconf.n_head}, embd={mconf.n_embd}, "
         f"context={mconf.block_size}, vocab={vocab_size}\n"
         f"  Device: {device}  |  dtype: {dtype}  |  compile: {tconf.compile}\n"

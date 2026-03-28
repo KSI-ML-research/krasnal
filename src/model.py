@@ -13,6 +13,7 @@ import math
 
 import torch
 import torch.nn as nn
+from mamba_ssm import Mamba3
 from torch.nn import functional as F
 
 
@@ -89,7 +90,9 @@ class CausalSelfAttention(nn.Module):
         self.n_head = config.n_head
         self.n_embd = config.n_embd
         self.dropout = config.dropout
-        self.rope = RoPE(config.n_embd // config.n_head, config.block_size)
+        self.use_rope = getattr(config, "use_rope", True)
+        if self.use_rope:
+            self.rope = RoPE(config.n_embd // config.n_head, config.block_size)
         # flash attention make GPU go brrrrr but support is only in PyTorch >= 2.0
         self.flash = hasattr(torch.nn.functional, "scaled_dot_product_attention")
         if not self.flash:
@@ -111,7 +114,8 @@ class CausalSelfAttention(nn.Module):
         v = v.view(B, T, self.n_head, C // self.n_head).transpose(1, 2)  # (B, nh, T, hs)
 
         # apply RoPE per head
-        q, k = self.rope(q, k)
+        if self.use_rope:
+            q, k = self.rope(q, k)
 
         # causal self-attention; Self-attend: (B, nh, T, hs) x (B, nh, hs, T) -> (B, nh, T, T)
         if self.flash:
@@ -155,16 +159,39 @@ class MLP(nn.Module):
 
 
 class Block(nn.Module):
-    def __init__(self, config):
+    def __init__(self, config, is_mamba: bool = False):
         super().__init__()
+        self.is_mamba = is_mamba
         self.ln_1 = nn.RMSNorm(config.n_embd)
-        self.attn = CausalSelfAttention(config)
+        if is_mamba:
+            self.attn = Mamba3(
+                d_model=config.n_embd,
+                d_state=getattr(config, "mamba_d_state", 128),
+                d_conv=getattr(config, "mamba_d_conv", 4),
+                expand=getattr(config, "mamba_expand", 2),
+                headdim=getattr(config, "mamba_headdim", 64),
+                is_mimo=getattr(config, "mamba_is_mimo", True),
+                mimo_rank=getattr(config, "mamba_mimo_rank", 4),
+                chunk_size=getattr(config, "mamba_chunk_size", 16),
+                is_outproj_norm=getattr(config, "mamba_is_outproj_norm", False),
+                dropout=config.dropout,
+            )
+        else:
+            self.attn = CausalSelfAttention(config)
         self.ln_2 = nn.RMSNorm(config.n_embd)
         self.mlp = MLP(config)
 
     def forward(self, x):
+        orig_len = x.shape[1]
+        if self.is_mamba:
+            chunk_size = self.attn.chunk_size
+            if orig_len % chunk_size != 0:
+                pad_len = chunk_size - (orig_len % chunk_size)
+                x = F.pad(x, (0, 0, 0, pad_len))
         x = x + self.attn(self.ln_1(x))
         x = x + self.mlp(self.ln_2(x))
+        if self.is_mamba and orig_len % self.attn.chunk_size != 0:
+            x = x[:, :orig_len, :]
         return x
 
 
@@ -175,15 +202,23 @@ class GPT(nn.Module):
         assert config.block_size is not None
         self.config = config
 
+        mamba_layers = getattr(config, "mamba_layers", [])
+        use_hybrid = len(mamba_layers) > 0
+        has_mamba = any(0 <= i < config.n_layer for i in mamba_layers)
+
         self.transformer = nn.ModuleDict(
             dict(
                 wte=nn.Embedding(config.vocab_size, config.n_embd),
                 drop=nn.Dropout(config.dropout),
-                h=nn.ModuleList([Block(config) for _ in range(config.n_layer)]),
+                h=nn.ModuleList(
+                    [Block(config, is_mamba=(i in mamba_layers)) for i in range(config.n_layer)]
+                ),
                 ln_f=nn.RMSNorm(config.n_embd),
             )
         )
         self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
+
+        self.use_hybrid = use_hybrid and has_mamba
 
         # https://paperswithcode.com/method/weight-tying
         self.transformer.wte.weight = self.lm_head.weight

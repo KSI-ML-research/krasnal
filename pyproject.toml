@@ -8,6 +8,7 @@ dependencies = [
     "bulletchess>=0.4.0",
     "chess>=1.11.2",
     "datasets>=4.5.0",
+    "mamba-ssm",
     "nbqa>=1.9.1",
     "notebook>=7.5.3",
     "numpy>=2.4.2",
@@ -17,7 +18,7 @@ dependencies = [
     "pytest>=7.0.0",
     "ruff>=0.15.1",
     "tiktoken>=0.12.0",
-    "torch>=2.10.0",
+    "torch==2.10.0",
     "tqdm>=4.67.3",
     "transformers>=5.1.0",
     "wandb>=0.25.0",
@@ -39,6 +40,9 @@ extend-include = ["*.ipynb"]
 #syntax and runtime errors; logical errors; bug-risk; warnings; imports; pyupgrade; unused arguments
 select = ["E", "F", "B", "W", "I", "UP", "ARG"]
 fixable = ["ALL"]
+
+[tool.uv.sources]
+mamba-ssm = { git = "https://github.com/state-spaces/mamba.git" }
 
 [dependency-groups]
 dev = [
