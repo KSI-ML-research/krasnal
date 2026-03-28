@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 DATA_DIR = Path("data")
@@ -37,4 +37,6 @@ class TrainConfig:
     compile_mode: str = "default"  # "default", "reduce-overhead", "max-autotune"
     compile_dynamic: bool = False  # False since we use explicit padding buckets
     compile_fullgraph: bool = True  # captures the entire model into a single graph if True
-    padding_bucket_sizes: tuple[int, ...] = (64, 128, 192, 256, 384, 512, 768, 1024)
+    padding_bucket_sizes: tuple[int, ...] = field(
+        default_factory=lambda: (64, 128, 192, 256, 512, GPTConfig.block_size)
+    )

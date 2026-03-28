@@ -9,6 +9,7 @@ from config import (
     PRETRAIN_DATASET_PATH,
     RAW_DATA_DIR,
     GPTConfig,
+    TrainConfig,
 )
 from tokenizer import Tokenizer
 
@@ -66,6 +67,21 @@ def main():
             f"Found {oversized_count} games longer than {max_len} tokens! "
             "They might be truncated during training."
         )
+
+    bucket_sizes = TrainConfig().padding_bucket_sizes
+    token_counts = df.select(pl.col("token_ids").list.len().alias("len"))
+    total_games = df.height
+
+    cumulative = 0
+    for bucket in bucket_sizes:
+        count = token_counts.filter(pl.col("len") <= bucket).height - cumulative
+        cumulative += count
+        pct = count / total_games * 100
+        logger.info(f"  <= {bucket:4d} tokens: {count:6d} games ({pct:5.1f}%)")
+    remaining = total_games - cumulative
+    if remaining > 0:
+        pct = remaining / total_games * 100
+        logger.info(f"  > {bucket_sizes[-1]:4d} tokens: {remaining:6d} games ({pct:5.1f}%)")
 
     if df.height < 2:
         logger.error("Need at least 2 games to build train/eval split.")
