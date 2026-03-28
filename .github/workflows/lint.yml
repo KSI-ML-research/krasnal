@@ -27,6 +27,22 @@ jobs:
       - name: Apply autofix
         run: cargo clippy --fix --allow-dirty --all-targets --all-features
 
+  line-endings:
+    name: Check Line Endings
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Check for mixed line endings
+        run: |
+          found=$(git ls-files | xargs -I{} file "{}" | grep CRLF || true)
+          if [ -n "$found" ]; then
+            echo "ERROR: Files with CRLF line endings found:"
+            echo "$found"
+            exit 1
+          fi
+
   python-lint:
     name: Python Ruff Lint
     runs-on: ubuntu-latest

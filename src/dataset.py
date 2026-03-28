@@ -6,7 +6,8 @@ from datasets import Dataset as HFDataset
 from torch.nn.utils.rnn import pad_sequence
 from torch.utils.data import Dataset
 
-from config import PAD_ID, TrainConfig
+from config import TrainConfig
+from tokenizer import PAD_ID
 
 PADDING_BUCKET_SIZES = TrainConfig.padding_bucket_sizes
 

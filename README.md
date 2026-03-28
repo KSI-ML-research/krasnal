@@ -92,3 +92,4 @@ Detailed guides for developers and users:
 -   [**Contributing Guide**](docs/CONTRIBUTING.md) - Code standards, pre-commit hooks and development process.
 -   [**Research Notes**](docs/RESEARCH.md) - Summary of tested architecture variants and experiments.
 -   [**Outcome Conditioning (WIP)**](docs/outcome_conditioning.md) - ELO and result tokens for conditioned play.
+-   [**Chain-Of-Thought (WIP)**](docs/cot.md)
