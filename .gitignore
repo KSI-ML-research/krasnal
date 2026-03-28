@@ -227,3 +227,4 @@ artifacts/
 data/
 !data/download_links.txt
 wandb
+.hf_home/

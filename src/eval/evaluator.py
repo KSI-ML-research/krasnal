@@ -5,10 +5,9 @@ from typing import Any
 import bulletchess
 import torch
 
-from config import DRAW_ID, EOS_ID, SOS_ID, WIN_BLACK_ID, WIN_WHITE_ID
 from dataset import ChessDataset
 from inference import BatchInferenceSession, get_legal_token_ids
-from tokenizer import Tokenizer
+from tokenizer import DRAW_ID, EOS_ID, SOS_ID, WIN_BLACK_ID, WIN_WHITE_ID, Tokenizer
 from utils import set_seed
 
 from .metrics import DEFAULT_METRICS, METRIC_REGISTRY

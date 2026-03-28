@@ -27,7 +27,7 @@ class TrainConfig:
     min_lr: float = 5e-5  # cosine annealing minimum LR
     epochs: float = 0.1
     warmup_iters: int = 100
-    batch_size: int = 32
+    batch_size: int = 64
     num_workers: int = 4
     weight_decay: float = 0.1
     beta1: float = 0.9
@@ -38,11 +38,3 @@ class TrainConfig:
     compile_dynamic: bool = False  # False since we use explicit padding buckets
     compile_fullgraph: bool = True  # captures the entire model into a single graph if True
     padding_bucket_sizes: tuple[int, ...] = (64, 128, 192, 256, 384, 512, 768, 1024)
-
-
-SOS_ID = 0
-EOS_ID = 1
-PAD_ID = 2
-WIN_WHITE_ID = 3
-WIN_BLACK_ID = 4
-DRAW_ID = 5

@@ -4,14 +4,13 @@ import math
 from datetime import datetime
 
 import torch
-import wandb
 from torch.utils.data import DataLoader
 
+import wandb
 from config import (
     ARTIFACTS_DIR,
     EVAL_DATASET_PATH,
     MOVES_FILE,
-    PAD_ID,
     PRETRAIN_DATASET_PATH,
     GPTConfig,
     TrainConfig,
@@ -20,7 +19,7 @@ from dataset import ChessDataset, collate_fn
 from eval import ChessEvaluator, EvalConfig, get_stockfish_client
 from eval.metrics import DEFAULT_METRICS
 from model import GPT
-from tokenizer import Tokenizer
+from tokenizer import PAD_ID, Tokenizer
 from trainer import (
     cosine_warmup_lr,
     run_supervised_training,

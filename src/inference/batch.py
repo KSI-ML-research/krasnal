@@ -6,9 +6,9 @@ from typing import TYPE_CHECKING
 
 import torch
 
-from config import PAD_ID
 from inference.abstracts import BaseInferenceSession
 from inference.utils import create_amp_context
+from tokenizer import PAD_ID
 
 if TYPE_CHECKING:
     from model import GPT
