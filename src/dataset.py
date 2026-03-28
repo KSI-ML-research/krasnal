@@ -9,7 +9,7 @@ from torch.utils.data import Dataset
 from config import TrainConfig
 from tokenizer import PAD_ID
 
-PADDING_BUCKET_SIZES = TrainConfig.padding_bucket_sizes
+PADDING_BUCKET_SIZES = TrainConfig().padding_bucket_sizes
 
 
 def _get_bucket_size(seq_len: int) -> int:

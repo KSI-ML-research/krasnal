@@ -76,7 +76,7 @@ def main():
 
     device, device_type, dtype, ctx, scaler = setup_runtime()
 
-    params_M = round(model.get_num_params() / 1_000_000)
+    params_M = model.get_num_params() / 1_000_000
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     artifact_dir = ARTIFACTS_DIR / "pretrain" / timestamp
     artifact_dir.mkdir(parents=True, exist_ok=True)
