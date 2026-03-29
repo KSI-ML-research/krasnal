@@ -7,11 +7,18 @@ from utils import set_seed
 
 from config import ARTIFACTS_DIR, EVAL_DATASET_PATH, MOVES_FILE, PAD_ID, ChessGPTConfig
 from dataset import ChessDataset, collate_fn
+from inference import InferenceSession
 from model import GPT, GPTConfig
 from tokenizer import Tokenizer
 
 
-def evaluate(model_path: Path, dataset_path: Path, batch_size: int, num_workers: int) -> float:
+def evaluate(
+    model_path: Path,
+    dataset_path: Path,
+    batch_size: int,
+    num_workers: int,
+    use_kv_cache: bool,
+) -> float:
     if not dataset_path.exists():
         raise FileNotFoundError(f"Eval dataset not found at {dataset_path}")
     if not model_path.exists():
@@ -61,11 +68,31 @@ def evaluate(model_path: Path, dataset_path: Path, batch_size: int, num_workers:
         for x, y in loader:
             x = x.to(device, non_blocking=True)
             y = y.to(device, non_blocking=True)
-            _, loss = model(x, y, ignore_index=PAD_ID)
 
-            valid_tokens = (y != PAD_ID).sum().item()
-            total_loss += loss.item() * valid_tokens
-            total_tokens += valid_tokens
+            if use_kv_cache:
+                batch_size_current, seq_len = x.shape
+                for sample_idx in range(batch_size_current):
+                    outcome_token = int(x[sample_idx, 0].item())
+                    session = InferenceSession(
+                        model,
+                        device,
+                        outcome_token=outcome_token,
+                        use_kv_cache=True,
+                    )
+                    for t in range(seq_len):
+                        target_id = int(y[sample_idx, t].item())
+                        if target_id == PAD_ID:
+                            break
+                        probs = session.get_probs()
+                        token_prob = probs[target_id].clamp_min(1e-12)
+                        total_loss += -torch.log(token_prob).item()
+                        total_tokens += 1
+                        session.feed(target_id)
+            else:
+                _, loss = model(x, y, ignore_index=PAD_ID)
+                valid_tokens = (y != PAD_ID).sum().item()
+                total_loss += loss.item() * valid_tokens
+                total_tokens += valid_tokens
 
     if total_tokens == 0:
         raise ValueError("Eval dataset has no valid tokens")
@@ -105,6 +132,12 @@ def main() -> None:
     parser.add_argument("--dataset-path", type=Path, default=EVAL_DATASET_PATH)
     parser.add_argument("--batch-size", type=int, default=32)
     parser.add_argument("--num-workers", type=int, default=4)
+    parser.add_argument(
+        "--no-cache",
+        action="store_true",
+        help="Evaluate token-by-token without KV cache",
+        default=False
+    )
     args = parser.parse_args()
 
     if args.latest and args.model is not None:
@@ -121,7 +154,14 @@ def main() -> None:
     else:
         model_path = resolve_latest_model_path()
 
-    eval_loss = evaluate(model_path, args.dataset_path, args.batch_size, args.num_workers)
+    args.use_kv_cache = not args.no_cache
+    eval_loss = evaluate(
+        model_path,
+        args.dataset_path,
+        args.batch_size,
+        args.num_workers,
+        args.use_kv_cache,
+    )
     print(f"eval_loss={eval_loss:.6f}")
 
 
