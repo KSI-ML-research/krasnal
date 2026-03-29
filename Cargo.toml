@@ -17,13 +17,9 @@ zip = "8"
 csv = "1.3"
 
 [[bin]]
-name = "download-games"
-path = "scripts/download_games.rs"
-
-[[bin]]
 name = "download-player-games"
-path = "scripts/download_player_games.rs"
+path = "src/bin/download_player_games.rs"
 
 [[bin]]
 name = "prepare-puzzles"
-path = "src/prepare_puzzles.rs"
+path = "src/bin/prepare_puzzles.rs"

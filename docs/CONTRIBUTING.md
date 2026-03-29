@@ -4,8 +4,8 @@ Contributions to **Krasnal** are welcome! Please follow these standards to ensur
 
 ## Tech Stack
 
-- **Python**: Model training, UCI implementation, script CLI.
-- **Rust**: High-performance data ingestion, parsing PGN/UCI, fast simulation.
+- **Python**: Model training, UCI implementation, data processing, training pipeline.
+- **DuckDB + Aix extension**: Data filtering and querying from Lichess database.
 - **uv**: Project and dependency management.
 
 ## Code Quality Standards
@@ -16,15 +16,10 @@ We use `pre-commit` hooks to maintain high standards for all contributions.
 - **Linter & Formatter**: [Ruff](https://github.com/astral-sh/ruff) (enforced via pre-commit).
 - **Style**: Adhere to PEP 8, but prioritize Ruff's configuration.
 
-### Rust Requirements
-- **Formatter**: `cargo fmt`.
-- **Linter**: `cargo clippy`.
-
 ## Pre-commit Hooks
 
-Before committing, the following checks are run automatically on the files you’ve changed:
+Before committing, the following checks are run automatically on the files you've changed:
 - Ruff check and format (Python).
-- Cargo fmt, clippy, and test (Rust, when Rust files are changed).
 - Gitleaks (Secret detection).
 - Python tests (Pytest).
 

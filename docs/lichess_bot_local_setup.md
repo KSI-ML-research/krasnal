@@ -2,7 +2,7 @@
 
 You can run our bot from your machine.
 
-Lichess recipes are maintained in a dedicated file (`lichess.just`) and imported by the root `justfile`, so commands below stay the same.
+Lichess recipes are defined directly in the root `justfile`.
 
 Read docs/bot_implementation_plan.md for architecture details.
 

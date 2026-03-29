@@ -11,7 +11,7 @@
 ```
 artifacts/pretrain/YYYYMMDD_HHMMSS/
   model.pt
-  model_tokenizer.json
+  model_vocab.json
   config.json
   wandb_run_link.txt
 ```

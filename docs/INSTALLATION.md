@@ -1,12 +1,10 @@
 # Installation Guide
 
-To set up the **Krasnal** chess engine for development, you need both Python (managed by `uv`) and Rust.
+To set up the **Krasnal** chess engine for development, you need Python (managed by `uv`).
 
 ## Prerequisites
 
-1. **Rust**: Install via [rustup](https://rustup.rs/).
-   - Required for the data ingestion pipeline and high-performance components.
-2. **uv**: Install via [astral.sh/uv](https://astral.sh/uv).
+1. **uv**: Install via [astral.sh/uv](https://astral.sh/uv).
    - Used for Python dependency management and running scripts.
 
 ## Setup Steps
@@ -27,5 +25,4 @@ To set up the **Krasnal** chess engine for development, you need both Python (ma
 Run the basic test suite to ensure everything is set up correctly:
 ```bash
 uv run pytest
-cargo test
 ```

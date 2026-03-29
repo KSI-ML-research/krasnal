@@ -1,13 +1,22 @@
+[build-system]
+requires = ["uv_build>=0.11.6,<0.12"]
+build-backend = "uv_build"
+
 [project]
 name = "krasnal"
 version = "0.1.0"
-description = "Add your description here"
+description = "Transformer-based chess engine: Python training and UCI inference, Rust Lichess data ingestion."
 readme = "README.md"
-requires-python = ">=3.14"
+requires-python = ">=3.13,<3.14"
 dependencies = [
     "bulletchess>=0.4.0",
     "chess>=1.11.2",
     "datasets>=4.5.0",
+    "duckdb>=1.5.1",
+    "hf-transfer>=0.1.9",
+    "huggingface-hub>=1.9.1",
+    "hydra-core>=1.3.2",
+    "loguru>=0.7.3",
     "nbqa>=1.9.1",
     "notebook>=7.5.3",
     "numpy>=2.4.2",
@@ -33,17 +42,27 @@ norecursedirs = ["lichess-bot", ".venv", ".git"]
 
 [tool.ruff]
 line-length = 100
-cache-dir = "~/.cache/ruff"
+cache-dir = ".ruff_cache"
 extend-include = ["*.ipynb"]
 exclude = ["lichess-bot"]
 
-
 [tool.ruff.lint]
-#syntax and runtime errors; logical errors; bug-risk; warnings; imports; pyupgrade; unused arguments
-select = ["E", "F", "B", "W", "I", "UP", "ARG"]
+# E, F: default errors/flakes
+# B: bugbear (common bugs)
+# W: warnings
+# I: isort (imports)
+# UP: pyupgrade (modern syntax)
+# ARG: unused arguments
+# SIM: simplify (cleaner logic)
+# PT: pytest-style
+# RUF: ruff-specific rules
+select = ["E", "F", "B", "W", "I", "UP", "ARG", "SIM", "PT", "RUF"]
 fixable = ["ALL"]
 
 [dependency-groups]
 dev = [
     "pre-commit>=4.5.1",
+    "pytest-asyncio>=1.3.0",
+    "pytest-cov>=4.1.0",
+    "ty>=0.0.31",
 ]
