@@ -78,6 +78,14 @@ class TestTokenizerEncodeDecode:
         encoded = tokenizer.encode("<think> e2e4 </think>")
         assert encoded == [THINK_START_ID, tokenizer.move_to_id["e2e4"], THINK_END_ID]
 
+    def test_encode_without_spaces(self, tokenizer):
+        encoded = tokenizer.encode("e2e4")
+        assert encoded == [tokenizer.move_to_id["e2e4"]]
+
+    def test_encode_multiple_moves_with_spaces(self, tokenizer):
+        encoded = tokenizer.encode("e2e4 e7e5")
+        assert encoded == [tokenizer.move_to_id["e2e4"], tokenizer.move_to_id["e7e5"]]
+
     def test_encode_with_branch(self, tokenizer):
         encoded = tokenizer.encode("<branch>")
         assert encoded == [STEP_BACK_ID]
