@@ -1,0 +1,30 @@
+defaults:
+  - model: small
+  - _self_
+
+seed: 42
+
+# Stockfish / generation controls
+stockfish_path: null
+depth: 2
+multipv_min: 3
+multipv_max: 3
+
+# Sequence / batching controls
+max_len: null          # if null, uses model.block_size
+num_producers: 1
+shard_size: 8192
+batch_size: 32
+queue_max_rows: null
+
+# Termination
+num_rows: null
+indefinitely: false
+
+# Output
+output_dir: data/2_tokenized/sft_cot_shards
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null

@@ -1,36 +1,58 @@
 # load .env variables for every command
 set dotenv-load := true
-import 'lichess.just'
 
 SEED := "42"
-export PYTHONPATH := "."
 export UV_CACHE_DIR := ".uv_cache"
+export HF_HUB_ENABLE_HF_TRANSFER := "1"
+LICHESS_BOT_REPO := "https://github.com/lichess-bot-devs/lichess-bot.git"
+# pinned lichess bot commit so that the setup is deterministic
+LICHESS_BOT_REF := "96a8f74d87a42db8039e847548fec0d9528bb079"
+
+
+# Print common project commands
+@help:
+    @echo "Usage:"
+    @echo "  just setup                            - install deps, hooks"
+    @echo "  just lint [args]                      - run Ruff and Clippy"
+    @echo "  just format [args]                    - format Python and Rust code"
+    @echo "  just test [args]                      - run Python and Rust tests"
+    @echo "  just pre-commit                       - run all pre-commit hooks"
+    @echo "  just pipeline                         - run full training pipeline"
+    @echo "  just download-games [target=10000000] - download & filter Aix DB (DuckDB)"
+    @echo "  just preprocess [args]                - tokenize Aix-filtered games for training"
+    @echo "  just pretrain model=large train=cuda  - run pretraining stage"
+    @echo "  just generate-sft-cot [args]          - generate CoT shards"
+    @echo "  just train-sft-cot [args]             - train offline SFT on CoT shards"
+    @echo "  just download-puzzles                 - download Lichess puzzle database"
+    @echo "  just prepare-puzzles                  - filter/export puzzles to JSONL"
+    @echo "  just download-player-games [args]     - download player games"
 
 # Install dependencies and setup pre-commit hooks
 setup:
     uv sync
     uv run pre-commit install
-    cargo build
 
 
-# Run linters for Python and Rust code
+# Run linters for Python code
 lint *args:
     uv run ruff check . {{args}}
-    cargo clippy {{args}}
 
-# Format code with ruff and rustfmt
+# Format Python code
 format *args:
     uv run ruff format . {{args}}
-    cargo fmt {{args}}
 
-# Run tests for Python and Rust code
+# Run Python tests
 test *args:
-    PYTHONPATH=src uv run pytest {{args}}
-    cargo test {{args}}
+    uv run pytest {{args}}
+
+# Run tests with coverage for Python code
+test-cov *args:
+    uv run pytest --cov=src/krasnal --cov-report=term-missing --cov-report=xml {{args}}
 
 # Run all pre-commit hooks
 pre-commit:
     uv run pre-commit run --all-files
+
 
 # Run full training pipeline: download games, preprocess, pretrain, evaluate
 pipeline:
@@ -38,25 +60,32 @@ pipeline:
     just download-games
     just preprocess
     just pretrain
-    just evaluate --latest
+    just generate-sft-cot --depth 10
+    just train-sft-cot
 
-# Download chess games from Lichess
-download-games:
-    cargo run --release --bin download-games
+
+# Download & filter Aix Lichess database for high-quality games with evals
+# Uses DuckDB + Aix extension for fast SQL-based filtering
+# Uses cached files first, downloads missing ones automatically
+# Target: ~10M games by default (configurable)
+download-games *args:
+    uv run scripts/data/download_games.py {{args}}
 
 # Preprocess downloaded games into training dataset
 preprocess *args:
-    PYTHONPATH=src uv run scripts/preprocess.py {{args}} --seed {{SEED}}
+    uv run scripts/data/preprocess.py {{args}} seed={{SEED}}
 
 # Stage 1: Pretrain model on large dataset of chess games
 pretrain *args:
-    PYTHONPATH=src uv run scripts/pretrain.py {{args}} --seed {{SEED}}
+    uv run scripts/training/pretrain.py {{args}} seed={{SEED}}
 
-# Evaluate trained model on held-out dataset
-evaluate *args:
-    PYTHONPATH=src uv run scripts/evaluate.py {{args}} --seed {{SEED}}
+# Stage 2a: Generate CoT shards for offline training
+generate-sft-cot *args:
+    uv run scripts/training/sft_generate.py {{args}} stockfish_path="$(which stockfish)" seed={{SEED}}
 
-# ===== PUZZLES =====
+# Stage 2b: Consume generated shards in an offline SFT pass
+train-sft-cot *args:
+    uv run scripts/training/sft_train.py {{args}} seed={{SEED}} latest_pretrain=true
 
 # Download Lichess puzzle database (~1GB)
 download-puzzles:
@@ -72,3 +101,38 @@ prepare-puzzles:
 # Download games for specific chess players from PGN Mentor
 download-player-games *args:
     cargo run --release --bin download-player-games -- {{args}}
+
+# Download and setup lichess-bot client
+bot-setup:
+    @if [ ! -d "lichess-bot" ]; then \
+        echo "Cloning lichess-bot..."; \
+        git clone {{LICHESS_BOT_REPO}}; \
+    fi
+    @echo "Pinning lichess-bot to {{LICHESS_BOT_REF}}..."
+    @cd lichess-bot && git fetch --depth 1 origin {{LICHESS_BOT_REF}} && git checkout --detach FETCH_HEAD
+    @echo "Creating isolated virtual environment for lichess-bot..."
+    @cd lichess-bot && uv venv .venv
+    @echo "Installing lichess-bot dependencies into lichess-bot/.venv..."
+    @cd lichess-bot && uv pip install --python .venv/bin/python -r requirements.txt
+
+# Run the bot locally (requires .env with LICHESS_BOT_TOKEN)
+bot-run:
+    @if [ ! -x "lichess-bot/.venv/bin/python" ]; then \
+        echo "Missing lichess-bot venv. Run: just bot-setup"; \
+        exit 1; \
+    fi
+    @if [ ! -x ".venv/bin/python" ]; then \
+        echo "Missing project venv for engine. Run: just setup"; \
+        exit 1; \
+    fi
+    @echo "Preparing configuration..."
+    @cp config/config.yml.example lichess-bot/config.yml
+    @sed -i '' "s|TOKEN_PLACEHOLDER|${LICHESS_BOT_TOKEN}|g" lichess-bot/config.yml
+    @sed -i '' "s|ENGINE_INTERPRETER_PLACEHOLDER|../.venv/bin/python|g" lichess-bot/config.yml
+    @echo "Starting bot..."
+    @cd lichess-bot && .venv/bin/python lichess-bot.py
+
+# Remove everything related to local lichess-bot setup
+bot-clean:
+    @echo "Cleaning lichess-bot runtime artifacts and repository..."
+    @rm -rf lichess-bot

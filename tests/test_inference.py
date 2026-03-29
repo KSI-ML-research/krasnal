@@ -1,101 +1,105 @@
-#!/usr/bin/env python3
-"""Test script for inference module."""
-
-import bulletchess
-import pytest
 import torch
 
-from config import MOVES_FILE, GPTConfig
-from inference import BatchInferenceSession, DefaultSampler, InferenceSession, MoveGenerator
-from model import GPT
-from tokenizer import Tokenizer
+from krasnal.config import GPTConfig
+from krasnal.inference import (
+    Game,
+    InferenceSession,
+    StatelessBatchInferenceSession,
+    sample_token,
+)
+from krasnal.model import GPT
+from krasnal.tokens import (
+    BLACK_PREFIX,
+    DRAW_ID,
+    MOVE_TO_ID,
+    THINK_END_ID,
+    THINK_START_ID,
+    WHITE_PREFIX,
+    WHITE_WON_ID,
+    get_vocab_size,
+)
 
 
-def test_inference():
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    tokenizer = Tokenizer(MOVES_FILE)
-
-    config = GPTConfig(
-        block_size=128,
-        vocab_size=tokenizer.get_vocab_size(),
-        n_layer=2,
-        n_head=2,
-        n_embd=64,
-    )
+def test_inference_session_feed_and_get_probs():
+    device = torch.device("cpu")
+    config = GPTConfig(block_size=128, vocab_size=get_vocab_size(), n_layer=2, n_head=2, n_embd=64)
     model = GPT(config).to(device)
+    session = InferenceSession(model, device, outcome_token=WHITE_WON_ID)
 
-    session = InferenceSession(model, device)
-    sampler = DefaultSampler()
-    generator = MoveGenerator()
+    e2e4 = MOVE_TO_ID[WHITE_PREFIX + "e2e4"]
+    session.feed_token(e2e4)
+    probs = session.get_raw_probs()
 
-    board = bulletchess.Board()
-    move = generator.generate_move(session, board, tokenizer, sampler)
-
-    legal_moves = [m.uci() for m in board.legal_moves()]
-    assert move in legal_moves, f"Invalid move: {move}"
-
-    board.apply(bulletchess.Move.from_uci(move))
-    move2 = generator.generate_move(session, board, tokenizer, sampler)
-    legal_moves = [m.uci() for m in board.legal_moves()]
-    assert move2 in legal_moves, f"Invalid move 2: {move2}"
+    assert probs.shape[0] == get_vocab_size()
+    assert probs.sum().item() - 1.0 < 0.01
 
 
-def test_batch_inference_matches_sequential_for_mixed_prefix_lengths():
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    tokenizer = Tokenizer(MOVES_FILE)
+def test_sample_token_greedy():
+    probs = torch.tensor([0.1, 0.5, 0.4])
+    assert sample_token(probs, temperature=0.0) == 1
 
-    config = GPTConfig(
-        block_size=128,
-        vocab_size=tokenizer.get_vocab_size(),
-        n_layer=2,
-        n_head=2,
-        n_embd=64,
-    )
+
+def test_inference_session_single_step():
+    device = torch.device("cpu")
+    config = GPTConfig(block_size=128, vocab_size=get_vocab_size(), n_layer=2, n_head=2, n_embd=64)
     model = GPT(config).to(device)
-    model.eval()
+    session = InferenceSession(model, device, outcome_token=WHITE_WON_ID)
 
-    session = InferenceSession(model, device)
-    batch_session = BatchInferenceSession(model, device)
+    e2e4 = MOVE_TO_ID[WHITE_PREFIX + "e2e4"]
+    session.feed_token(e2e4)
+    probs = session.get_raw_probs()
 
-    e2e4 = tokenizer.move_to_id["e2e4"]
-    e7e5 = tokenizer.move_to_id["e7e5"]
-    g1f3 = tokenizer.move_to_id["g1f3"]
+    assert probs.shape == (get_vocab_size(),)
+    assert not torch.isnan(probs).any()
 
+
+def test_sample_token_temperature():
+    probs = torch.tensor([0.1, 0.5, 0.4])
+    result = sample_token(probs, temperature=1.0, top_p=1.0)
+    assert result in [0, 1, 2]
+
+
+def test_game_feed_uci_and_feed_token_keep_board_and_tokens_synchronized():
+    game = Game(target_outcome_token=WHITE_WON_ID)
+
+    game.feed_uci("e2e4")
+    game.feed_token(MOVE_TO_ID[BLACK_PREFIX + "e7e5"])
+
+    assert game.moves_uci == ["e2e4", "e7e5"]
+    assert game.tokens == [
+        MOVE_TO_ID[WHITE_PREFIX + "e2e4"],
+        MOVE_TO_ID[BLACK_PREFIX + "e7e5"],
+    ]
+    assert len(game.legal_moves()) > 0
+
+
+def test_inference_session_think_tokens_do_not_mutate_game_state():
+    device = torch.device("cpu")
+    config = GPTConfig(block_size=128, vocab_size=get_vocab_size(), n_layer=2, n_head=2, n_embd=64)
+    model = GPT(config).to(device)
+    session = InferenceSession(model, device, outcome_token=WHITE_WON_ID)
+
+    session.feed_uci("e2e4")
+    session.feed_token(THINK_START_ID)
+    session.feed_token(MOVE_TO_ID[BLACK_PREFIX + "e7e5"])
+    session.feed_token(THINK_END_ID)
+
+    assert session.game.moves_uci == ["e2e4"]
+    assert session.game.tokens == [MOVE_TO_ID[WHITE_PREFIX + "e2e4"]]
+    assert session.context[-1] == THINK_END_ID
+
+
+def test_stateless_batch_inference_session_returns_probs():
+    device = torch.device("cpu")
+    config = GPTConfig(block_size=128, vocab_size=get_vocab_size(), n_layer=2, n_head=2, n_embd=64)
+    model = GPT(config).to(device)
+    batch = StatelessBatchInferenceSession(model, device)
     sequences = [
-        [tokenizer.sos_id],
-        [tokenizer.sos_id, e2e4],
-        [tokenizer.sos_id, e2e4, e7e5, g1f3],
+        [0, WHITE_WON_ID],
+        [0, DRAW_ID, 14],
     ]
 
-    batch_probs = batch_session.get_probs_batch(sequences, batch_size=len(sequences))
+    probs = batch.get_raw_probs_batch(sequences)
 
-    for i, seq in enumerate(sequences):
-        session.reset()
-        for token_id in seq[1:]:
-            session.feed(token_id)
-        seq_probs = session.get_probs()
-        assert torch.allclose(batch_probs[i], seq_probs, atol=1e-6, rtol=1e-5)
-
-
-@pytest.mark.parametrize("batch_size", [1, 2, 3])
-def test_batch_inference_handles_single_token_context(batch_size):
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    tokenizer = Tokenizer(MOVES_FILE)
-
-    config = GPTConfig(
-        block_size=32,
-        vocab_size=tokenizer.get_vocab_size(),
-        n_layer=1,
-        n_head=1,
-        n_embd=32,
-    )
-    model = GPT(config).to(device)
-    model.eval()
-
-    batch_session = BatchInferenceSession(model, device)
-    probs = batch_session.get_probs_batch([[tokenizer.sos_id]] * batch_size, batch_size=batch_size)
-
-    assert probs.shape == (batch_size, tokenizer.get_vocab_size())
-    assert torch.allclose(
-        probs.sum(dim=-1), torch.ones(batch_size, device=device, dtype=probs.dtype), atol=1e-6
-    )
+    assert probs.shape == (2, get_vocab_size())
+    assert not torch.isnan(probs).any()

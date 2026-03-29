@@ -43,7 +43,7 @@ repos:
       - id: pytest
         name: Run Python tests
         entry: bash
-        args: [ "-c", "PYTHONPATH=src uv run pytest" ]
+        args: [ "-c", "uv run pytest" ]
         language: system
         always_run: true
         pass_filenames: false
