@@ -122,21 +122,19 @@ class CausalSelfAttention(nn.Module):
         v = v.view(B, T, self.n_head, C // self.n_head).transpose(1, 2)  # (B, nh, T, hs)
 
         past_len = 0
-        cached_k = None
-        cached_v = None
         if past_kv is not None:
             if layer_idx is None:
                 raise ValueError("layer_idx must be provided when using past_kv")
-            cached_k, cached_v = past_kv.get_layer_cache(layer_idx)
-            past_len = cached_k.shape[2]
+            past_len = past_kv.get_seq_len()
 
         # apply RoPE per head
         q, k = self.rope(q, k, position_offset=past_len)
 
         if past_kv is not None:
-            k_full = torch.cat((cached_k, k), dim=2)
-            v_full = torch.cat((cached_v, v), dim=2)
             past_kv.append_layer(layer_idx, k, v)
+            # Get full k and v directly from cache tensors after append
+            k_full = past_kv.key_cache[layer_idx, :, :, :past_len + T, :]
+            v_full = past_kv.value_cache[layer_idx, :, :, :past_len + T, :]
         else:
             k_full = k
             v_full = v

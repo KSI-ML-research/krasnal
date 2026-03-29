@@ -15,16 +15,10 @@ from model import GPT
 class InferenceSession(BaseInferenceSession):
     """Concrete inference session that runs a full forward pass per `get_probs()`.
 
-    Tokens are accumulated in `self.context` and the entire sequence is re-passed
-    through the model on each call. This is the baseline implementation.
+        Uses a KV cache to avoid redundant computation when the model supports it.
 
-        KV-cache integration status:
-                - This class can own/reset a `KVCache` object.
-                - If model forward supports cache inputs/outputs, the session can enable
-                    cache-aware execution.
-                - With the current model API, `get_probs()` still uses full forward pass.
-
-        CoT awareness: a future session variant may store structured reasoning
+        Future optimizations:
+        - CoT awareness: a future session variant may store structured reasoning
         state alongside the raw token sequence.
     """
 
@@ -49,7 +43,7 @@ class InferenceSession(BaseInferenceSession):
 
     def _build_kv_cache(self) -> KVCache:
         config = self.model.config
-        dtype = next(self.model.parameters()).dtype
+        dtype = torch.bfloat16 if self.device.type == "cuda" else torch.float32
         return KVCache(
             batch_size=1,
             num_layers=config.n_layer,
@@ -69,9 +63,12 @@ class InferenceSession(BaseInferenceSession):
         else:
             self.kv_cache = None
 
-    def feed(self, token_id: int) -> None:
-        """Append a token to the context."""
-        self.context.append(token_id)
+    def feed(self, token_id: int | list[int]) -> None:
+        """Append one or more tokens to the context."""
+        if isinstance(token_id, list):
+            self.context.extend(token_id)
+        else:
+            self.context.append(token_id)
 
     def get_probs(self) -> torch.Tensor:
         """Return probability distribution over the next token."""
