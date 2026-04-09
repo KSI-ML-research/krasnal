@@ -26,10 +26,8 @@ def _result_token_expr(tokenizer: Tokenizer) -> pl.Expr:
 
 
 def _elo_token_expr(column: str, tokenizer: Tokenizer) -> pl.Expr:
-    ELO_BREAKS = [999, 1499, 1999, 2499, 2999]
-
-    # `cut` creates right-closed intervals, so subtracting one from the breakpoints
-    # makes the buckets line up with [1000, 1500), [1500, 2000), etc.
+    ELO_BREAKS = [999, 1499, 1999, 2499, 2999] 
+    # pl.cut creates (] intervals, so breakpoints-1 to make them [)
     labels = [
         str(tokenizer.elo_bellow_1000_id),
         str(tokenizer.elo_1000_1499_id),
