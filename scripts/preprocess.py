@@ -29,7 +29,7 @@ def _elo_token_expr(column: str, tokenizer: Tokenizer) -> pl.Expr:
     ELO_BREAKS = [999, 1499, 1999, 2499, 2999] 
     # pl.cut creates (] intervals, so breakpoints-1 to make them [)
     labels = [
-        str(tokenizer.elo_bellow_1000_id),
+        str(tokenizer.elo_below_1000_id),
         str(tokenizer.elo_1000_1499_id),
         str(tokenizer.elo_1500_1999_id),
         str(tokenizer.elo_2000_2499_id),

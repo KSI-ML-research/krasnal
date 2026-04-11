@@ -9,6 +9,7 @@ EVAL_DATASET_PATH = DATA_DIR / "processed/eval.parquet"
 MODEL_DIR = Path("models")
 MODEL_PATH = MODEL_DIR / "chess_model.pt"
 PIECES_DIR = Path("assets/pieces")
+PAD_ID = 2
 
 
 @dataclass
