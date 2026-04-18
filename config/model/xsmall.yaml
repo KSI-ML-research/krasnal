@@ -2,6 +2,6 @@ name: xsmall
 block_size: 512
 n_layer: 2
 n_head: 2
-n_embd: 128
+n_embd: 64
 dropout: 0.1
 bias: false
