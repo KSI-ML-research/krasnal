@@ -26,7 +26,7 @@ flowchart LR
     end
 
     subgraph Krasnal["System: Krasnal"]
-        DataIngestion[Data Ingestion]
+        DataIngestion[DuckDB + Aix<br/>Data Ingestion]
         Training[Training Pipeline]
         Inference[UCI Engine]
         Model[Transformer Model]
@@ -88,7 +88,7 @@ flowchart TD
 
 Detailed guides for developers and users:
 
--   [**Installation Guide**](docs/INSTALLATION.md) - How to set up the environment (Python, Rust, uv).
+-   [**Installation Guide**](docs/INSTALLATION.md) - How to set up the environment (Python, uv).
 -   [**Contributing Guide**](docs/CONTRIBUTING.md) - Code standards, pre-commit hooks and development process.
 -   [**Research Notes**](docs/RESEARCH.md) - Summary of tested architecture variants and experiments.
 -   [**Outcome conditioning**](docs/outcome_conditioning.md) - Prefix with a win/loss token so the model can be steered toward playing for White or Black.

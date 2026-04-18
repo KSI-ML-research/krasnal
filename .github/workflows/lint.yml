@@ -6,27 +6,6 @@ on:
   pull_request:
 
 jobs:
-  rust-lint:
-    name: Rust Clippy Lint
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v3
-
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy
-
-      - name: Cache Rust
-        uses: Swatinem/rust-cache@v2
-
-      - name: Run Clippy
-        run: cargo clippy --all-targets --all-features -- -D warnings
-
-      - name: Apply autofix
-        run: cargo clippy --fix --allow-dirty --all-targets --all-features
-
   line-endings:
     name: Check Line Endings
     runs-on: ubuntu-latest

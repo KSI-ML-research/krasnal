@@ -47,25 +47,3 @@ repos:
         language: system
         always_run: true
         pass_filenames: false
-
-      - id: cargo-fmt
-        name: Rust Format (cargo fmt)
-        entry: cargo fmt --
-        language: system
-        types: [rust]
-        pass_filenames: false
-
-      - id: cargo-clippy
-        name: Rust Lint (cargo clippy)
-        entry: cargo clippy --
-        language: system
-        types: [rust]
-        pass_filenames: false
-
-      - id: cargo-test
-        name: Run Rust tests
-        entry: cargo test
-        language: system
-        types: [rust]
-        pass_filenames: false
-        stages: [manual]
