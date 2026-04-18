@@ -44,6 +44,9 @@ jobs:
       - name: Install dependencies
         run: uv sync
 
+      - name: Log ruff version
+        run: uv run ruff --version
+
       - name: Run Ruff Check
         run: uv run ruff check .
 
