@@ -13,9 +13,9 @@ LICHESS_BOT_REF := "96a8f74d87a42db8039e847548fec0d9528bb079"
 @help:
     @echo "Usage:"
     @echo "  just setup                            - install deps, hooks"
-    @echo "  just lint [args]                      - run Ruff and Clippy"
-    @echo "  just format [args]                    - format Python and Rust code"
-    @echo "  just test [args]                      - run Python and Rust tests"
+    @echo "  just lint [args]                      - run Ruff"
+    @echo "  just format [args]                    - format Python code"
+    @echo "  just test [args]                      - run Python tests"
     @echo "  just pre-commit                       - run all pre-commit hooks"
     @echo "  just pipeline                         - run full training pipeline"
     @echo "  just download-games [target=10000000] - download & filter Aix DB (DuckDB)"
@@ -23,9 +23,6 @@ LICHESS_BOT_REF := "96a8f74d87a42db8039e847548fec0d9528bb079"
     @echo "  just pretrain model=large train=cuda  - run pretraining stage"
     @echo "  just generate-sft-cot [args]          - generate CoT shards"
     @echo "  just train-sft-cot [args]             - train offline SFT on CoT shards"
-    @echo "  just download-puzzles                 - download Lichess puzzle database"
-    @echo "  just prepare-puzzles                  - filter/export puzzles to JSONL"
-    @echo "  just download-player-games [args]     - download player games"
 
 # Install dependencies and setup pre-commit hooks
 setup:
@@ -86,21 +83,6 @@ generate-sft-cot *args:
 # Stage 2b: Consume generated shards in an offline SFT pass
 train-sft-cot *args:
     uv run scripts/training/sft_train.py {{args}} seed={{SEED}} latest_pretrain=true
-
-# Download Lichess puzzle database (~1GB)
-download-puzzles:
-    mkdir -p data
-    curl -L --progress-bar \
-        "https://database.lichess.org/lichess_db_puzzle.csv.zst" \
-        -o data/lichess_db_puzzle.csv.zst
-
-# Filter puzzles by rating and export to JSONL
-prepare-puzzles:
-    cargo run --release --bin prepare-puzzles
-
-# Download games for specific chess players from PGN Mentor
-download-player-games *args:
-    cargo run --release --bin download-player-games -- {{args}}
 
 # Download and setup lichess-bot client
 bot-setup:
