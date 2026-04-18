@@ -4,7 +4,7 @@ url: "https://lichess.org/"
 engine:
   protocol: "uci"
   interpreter: "ENGINE_INTERPRETER_PLACEHOLDER"
-  name: "src/krasnal/engine/run.py"
+  name: "src/krasnal/uci_engine/run.py"
   dir: ".."
 
 challenge:

@@ -96,6 +96,8 @@ bot-setup:
     @cd lichess-bot && uv venv .venv
     @echo "Installing lichess-bot dependencies into lichess-bot/.venv..."
     @cd lichess-bot && uv pip install --python .venv/bin/python -r requirements.txt
+    @echo "Upgrading account to bot..."
+    @curl -s -X POST https://lichess.org/api/bot/account/upgrade -H "Authorization: Bearer ${LICHESS_BOT_TOKEN}" || echo "Account may already be a bot or token is invalid"
 
 # Run the bot locally (requires .env with LICHESS_BOT_TOKEN)
 bot-run:
@@ -107,12 +109,17 @@ bot-run:
         echo "Missing project venv for engine. Run: just setup"; \
         exit 1; \
     fi
-    @echo "Preparing configuration..."
-    @cp config/config.yml.example lichess-bot/config.yml
-    @sed -i '' "s|TOKEN_PLACEHOLDER|${LICHESS_BOT_TOKEN}|g" lichess-bot/config.yml
-    @sed -i '' "s|ENGINE_INTERPRETER_PLACEHOLDER|../.venv/bin/python|g" lichess-bot/config.yml
+    @if [ "$(uname)" = "Darwin" ]; then \
+        cp config/config.yml.example lichess-bot/config.yml && \
+        sed -i '' "s|TOKEN_PLACEHOLDER|${LICHESS_BOT_TOKEN}|g" lichess-bot/config.yml && \
+        sed -i '' "s|ENGINE_INTERPRETER_PLACEHOLDER|../.venv/bin/python|g" lichess-bot/config.yml; \
+    else \
+        cp config/config.yml.example lichess-bot/config.yml && \
+        sed -i "s|TOKEN_PLACEHOLDER|${LICHESS_BOT_TOKEN}|g" lichess-bot/config.yml && \
+        sed -i "s|ENGINE_INTERPRETER_PLACEHOLDER|../.venv/bin/python|g" lichess-bot/config.yml; \
+    fi
     @echo "Starting bot..."
-    @cd lichess-bot && .venv/bin/python lichess-bot.py
+    @cd lichess-bot && LICHESS_BOT_TOKEN=${LICHESS_BOT_TOKEN} KRASNAL_ENGINE_PROVIDER=mock .venv/bin/python lichess-bot.py
 
 # Remove everything related to local lichess-bot setup
 bot-clean:
