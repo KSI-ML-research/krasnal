@@ -1,6 +1,7 @@
 #!/usr/bin/env -S uv run python
 
 import os
+import sys
 from pathlib import Path
 
 from loguru import logger
@@ -18,20 +19,20 @@ def build_provider():
 
     artifact_dir_env = os.environ.get("KRASNAL_MODEL_ARTIFACT_DIR")
     if not artifact_dir_env:
-        raise ValueError(
-            "KRASNAL_MODEL_ARTIFACT_DIR must be set when using model provider, "
-            "or set KRASNAL_ENGINE_PROVIDER=mock"
-        )
+        raise ValueError("Either set KRASNAL_ENGINE_PROVIDER=mock or KRASNAL_MODEL_ARTIFACT_DIR")
     artifact_dir = Path(artifact_dir_env)
+    if not artifact_dir.exists():
+        raise ValueError(f"Model artifact directory not found: {artifact_dir}")
     provider = ModelProvider.from_artifact_dir(artifact_dir)
     return provider, provider.engine_name
 
 
 def main():
-    """
-    Entrypoint tailored for Lichess-bot.
-    Connects a specific engine implementation with the UCI loop.
-    """
+    if os.environ.get("KRASNAL_ENGINE_PROVIDER") == "mock":
+        print("\n" + "=" * 60, file=sys.stderr)
+        print("⚠️  WARNING: Running in MOCK mode (random moves)", file=sys.stderr)
+        print("=" * 60 + "\n", file=sys.stderr)
+
     logger.info("Starting Krasnal UCI Engine")
 
     provider, engine_name = build_provider()

@@ -100,7 +100,13 @@ bot-setup:
     @curl -s -X POST https://lichess.org/api/bot/account/upgrade -H "Authorization: Bearer ${LICHESS_BOT_TOKEN}" || echo "Account may already be a bot or token is invalid"
 
 # Run the bot locally (requires .env with LICHESS_BOT_TOKEN)
-bot-run:
+# Usage:
+#   just bot-run                       # uses mock (random moves), prints WARNING
+#   just bot-run artifacts/pretrain/... # uses model from artifact directory
+# Notes:
+#   - model_path must be a directory containing model.pt and config.json
+#   - path is resolved relative to project root, then passed as absolute path
+bot-run +model_path='':
     @if [ ! -x "lichess-bot/.venv/bin/python" ]; then \
         echo "Missing lichess-bot venv. Run: just bot-setup"; \
         exit 1; \
@@ -119,7 +125,12 @@ bot-run:
         sed -i "s|ENGINE_INTERPRETER_PLACEHOLDER|../.venv/bin/python|g" lichess-bot/config.yml; \
     fi
     @echo "Starting bot..."
-    @cd lichess-bot && LICHESS_BOT_TOKEN=${LICHESS_BOT_TOKEN} KRASNAL_ENGINE_PROVIDER=mock .venv/bin/python lichess-bot.py
+    @if [ "{{model_path}}" = "" ]; then \
+        cd lichess-bot && LICHESS_BOT_TOKEN=${LICHESS_BOT_TOKEN} KRASNAL_ENGINE_PROVIDER=mock .venv/bin/python lichess-bot.py; \
+    else \
+        bot_model_path=$(realpath {{model_path}}) && \
+        cd lichess-bot && LICHESS_BOT_TOKEN=${LICHESS_BOT_TOKEN} KRASNAL_MODEL_ARTIFACT_DIR=${bot_model_path} KRASNAL_ENGINE_PROVIDER=model .venv/bin/python lichess-bot.py; \
+    fi
 
 # Remove everything related to local lichess-bot setup
 bot-clean:
