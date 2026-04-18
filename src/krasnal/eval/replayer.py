@@ -3,7 +3,7 @@ import bulletchess
 from krasnal.eval.metrics.context import EvalContext
 from krasnal.eval.parsers import GameTokens
 from krasnal.inference.utils import get_legal_token_ids
-from krasnal.tokens import ID_TO_MOVE
+from krasnal.tokens import to_uci
 
 PIECE_TYPE_TO_INT = {pt: i + 1 for i, pt in enumerate(bulletchess.PIECE_TYPES)}
 
@@ -24,10 +24,9 @@ def replay_game_tokens(game_tokens: GameTokens) -> list[EvalContext]:
         in_check = board in bulletchess.CHECK
         phase = get_game_phase(move_idx)
 
-        uci_move = ID_TO_MOVE.get(move_token)
+        uci_move = to_uci(move_token)
         if not uci_move:
             break
-        uci_move = uci_move[1:]  # strip prefix
 
         try:
             move = bulletchess.Move.from_uci(uci_move)

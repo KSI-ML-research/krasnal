@@ -11,9 +11,9 @@ from krasnal.eval.replayer import replay_games
 from krasnal.inference import InferenceSession, StatelessBatchInferenceSession
 from krasnal.tokens import (
     GAME_END_ID,
-    ID_TO_MOVE,
     THINK_END_ID,
     get_moves_only,
+    to_uci,
 )
 from krasnal.utils import set_seed
 
@@ -135,9 +135,8 @@ class ChessEvaluator:
 
         legal_probs = [(tid, ctx.probs[tid].item()) for tid in ctx.legal_ids]
         top1_token = max(legal_probs, key=lambda x: x[1])[0]
-        uci_move = ID_TO_MOVE.get(top1_token)
-        if uci_move:
-            uci_move_raw = uci_move[1:]
+        uci_move_raw = to_uci(top1_token)
+        if uci_move_raw:
             ctx.top1_move_uci = uci_move_raw
             try:
                 board = bulletchess.Board.from_fen(ctx.fen)
@@ -145,7 +144,9 @@ class ChessEvaluator:
                 board.apply(top1_move)
                 ctx.top1_fen = board.fen()
             except Exception as e:
-                logger.warning(f"Failed to compute top1_fen: {uci_move} on {ctx.fen[:30]}...: {e}")
+                logger.warning(
+                    f"Failed to compute top1_fen: {uci_move_raw} on {ctx.fen[:30]}...: {e}"
+                )
 
     def _aggregate_results(self, results: dict[str, list[float]]) -> dict[str, float]:
         final_results: dict[str, float] = {}
