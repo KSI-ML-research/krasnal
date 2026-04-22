@@ -11,7 +11,10 @@ from krasnal.eval.replayer import replay_games
 from krasnal.inference import InferenceSession, StatelessBatchInferenceSession
 from krasnal.tokens import (
     GAME_END_ID,
+    IS_CHECK_ID,
+    NO_CHECK_ID,
     THINK_END_ID,
+    YES_CHECK_ID,
     get_moves_only,
     to_uci,
 )
@@ -125,7 +128,92 @@ class ChessEvaluator:
                 for k, v in result.items():
                     results[k].append(v)
 
-        return self._aggregate_results(results)
+        final = self._aggregate_results(results)
+        final.update(self._evaluate_is_check_probe(contexts, model, device))
+        return final
+
+    def _evaluate_is_check_probe(
+        self,
+        contexts: list[EvalContext],
+        model: torch.nn.Module,
+        device: torch.device,
+    ) -> dict[str, float]:
+        probe_sequences: list[list[int]] = []
+        labels: list[int] = []
+        block_size = model.config.block_size
+
+        for ctx in contexts:
+            if ctx.sequence is None or ctx.actual_token is None or ctx.gives_check is None:
+                continue
+            probe = [*ctx.sequence, ctx.actual_token, IS_CHECK_ID]
+            if len(probe) > block_size:
+                continue
+            probe_sequences.append(probe)
+            labels.append(1 if ctx.gives_check else 0)
+
+        if not probe_sequences:
+            return {
+                "check_tp": 0.0,
+                "check_fp": 0.0,
+                "check_tn": 0.0,
+                "check_fn": 0.0,
+                "check_precision": 0.0,
+                "check_recall": 0.0,
+                "check_f1": 0.0,
+                "check_macro_f1": 0.0,
+                "check_f1_always_no": 0.0,
+            }
+
+        batch_session = StatelessBatchInferenceSession(model, device)
+        probs = batch_session.get_raw_probs_batch(probe_sequences)
+        preds: list[int] = []
+        for prob in probs:
+            preds.append(1 if prob[YES_CHECK_ID] >= prob[NO_CHECK_ID] else 0)
+
+        tp = sum(1 for pred, label in zip(preds, labels, strict=True) if pred == 1 and label == 1)
+        fp = sum(1 for pred, label in zip(preds, labels, strict=True) if pred == 1 and label == 0)
+        tn = sum(1 for pred, label in zip(preds, labels, strict=True) if pred == 0 and label == 0)
+        fn = sum(1 for pred, label in zip(preds, labels, strict=True) if pred == 0 and label == 1)
+
+        metrics = self._compute_binary_f1_metrics(tp=tp, fp=fp, tn=tn, fn=fn)
+        fn_always_no = sum(1 for label in labels if label == 1)
+        tn_always_no = sum(1 for label in labels if label == 0)
+        baseline = self._compute_binary_f1_metrics(tp=0, fp=0, tn=tn_always_no, fn=fn_always_no)
+        metrics["check_f1_always_no"] = baseline["check_f1"]
+        return metrics
+
+    @staticmethod
+    def _compute_binary_f1_metrics(
+        *,
+        tp: int,
+        fp: int,
+        tn: int,
+        fn: int,
+    ) -> dict[str, float]:
+        precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
+        recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0
+        check_f1 = (
+            2.0 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0.0
+        )
+
+        no_precision = tn / (tn + fn) if (tn + fn) > 0 else 0.0
+        no_recall = tn / (tn + fp) if (tn + fp) > 0 else 0.0
+        no_f1 = (
+            2.0 * no_precision * no_recall / (no_precision + no_recall)
+            if (no_precision + no_recall) > 0
+            else 0.0
+        )
+
+        return {
+            "check_tp": float(tp),
+            "check_fp": float(fp),
+            "check_tn": float(tn),
+            "check_fn": float(fn),
+            "check_precision": precision,
+            "check_recall": recall,
+            "check_f1": check_f1,
+            "check_macro_f1": (check_f1 + no_f1) / 2.0,
+        }
 
     def _compute_top1_fen(self, ctx: EvalContext) -> None:
         import bulletchess

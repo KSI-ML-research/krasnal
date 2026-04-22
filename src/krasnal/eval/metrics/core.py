@@ -3,8 +3,6 @@ from typing import Any
 
 import torch
 
-from krasnal.tokens import CHECK_ID
-
 from .base import Metric
 from .context import EvalContext
 
@@ -76,17 +74,3 @@ class MRRCore(CoreMetric):
         if rank.numel() == 0:
             return 0.0
         return 1.0 / (rank.item() + 1)
-
-
-class CheckTokenPredictionCore(CoreMetric):
-    """Check if model predicts <CHECK> token when actual move gives check."""
-
-    name = "check_token_pred"
-
-    def compute_value(self, ctx: EvalContext) -> float | None:
-        if ctx.probs is None:
-            return None
-        if ctx.gives_check is not True:
-            return None
-        top1 = torch.argmax(ctx.probs).item()
-        return 1.0 if top1 == CHECK_ID else 0.0

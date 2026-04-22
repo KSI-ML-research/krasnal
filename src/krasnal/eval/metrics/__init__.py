@@ -4,7 +4,7 @@ from .acpl import ACPLMetric
 from .base import Metric
 from .blunder_rate import BlunderRateMetric
 from .context import EvalContext
-from .core import AccuracyCore, CheckTokenPredictionCore, IllegalMassCore, MRRCore, Top1LegalCore
+from .core import AccuracyCore, IllegalMassCore, MRRCore, Top1LegalCore
 from .cot import (
     CotFormatValidMetric,
     CotPostThinkMRRMetric,
@@ -35,10 +35,6 @@ def _create_illegal_mass(**_: Any) -> Metric:
 
 def _create_mrr(**_: Any) -> Metric:
     return MRRCore()
-
-
-def _create_check_token_pred(**_: Any) -> Metric:
-    return CheckTokenPredictionCore()
 
 
 def _create_top1_legal_when_in_check(**_: Any) -> Metric:
@@ -125,7 +121,6 @@ METRIC_REGISTRY: dict[str, Any] = {
     "acc": _create_accuracy,
     "illegal_mass": _create_illegal_mass,
     "mrr": _create_mrr,
-    "check_token_pred": _create_check_token_pred,
     # Condition variants
     "top1_legal_when_in_check": _create_top1_legal_when_in_check,
     "acc_when_in_check": _create_accuracy_when_in_check,

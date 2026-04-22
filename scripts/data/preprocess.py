@@ -1,4 +1,5 @@
 import shutil
+from hashlib import blake2b
 from pathlib import Path
 
 import hydra
@@ -13,12 +14,26 @@ from krasnal.config import (
 )
 from krasnal.tokens import (
     BLACK_PREFIX,
-    CHECK_ID,
+    BLACK_WON_ID,
+    DRAW_ID,
+    ELO_1000_1499_ID,
+    ELO_1500_1999_ID,
+    ELO_2000_2499_ID,
+    ELO_2500_2999_ID,
+    ELO_ABOVE_3000_ID,
+    ELO_BELOW_1000_ID,
+    ELO_UNKNOWN_ID,
     GAME_END_ID,
     GAME_START_ID,
+    IS_CHECK_ID,
     MOVE_TO_ID,
+    NO_CHECK_ID,
     PAD_ID,
+    SPECIAL_TOKENS,
+    UNKNOWN_RESULT_ID,
     WHITE_PREFIX,
+    WHITE_WON_ID,
+    YES_CHECK_ID,
     get_elo_bucket,
     result_to_token_id,
 )
@@ -32,6 +47,16 @@ def get_moves_dict() -> dict[str, int]:
     }
 
 
+def _sample_bool(seed: int, game_key: str, ply: int, probability: float) -> bool:
+    if probability <= 0.0:
+        return False
+    if probability >= 1.0:
+        return True
+    digest = blake2b(f"{seed}|{game_key}|{ply}".encode(), digest_size=8).digest()
+    value = int.from_bytes(digest, byteorder="big") / 2**64
+    return value < probability
+
+
 def _build_game_tokens(
     uci_moves: str,
     is_check: list[bool],
@@ -39,6 +64,8 @@ def _build_game_tokens(
     white_rating: int,
     black_rating: int,
     moves_dict: dict[str, int],
+    seed: int,
+    p_no: float,
 ) -> list[int]:
     if not uci_moves:
         return []
@@ -52,8 +79,11 @@ def _build_game_tokens(
         move_id = moves_dict.get(prefixed_move, PAD_ID)
         result_tokens.append(move_id)
 
-        if ply > 0 and ply - 1 < len(is_check) and is_check[ply - 1]:
-            result_tokens.append(CHECK_ID)
+        gives_check = ply < len(is_check) and bool(is_check[ply])
+        if gives_check:
+            result_tokens.extend([IS_CHECK_ID, YES_CHECK_ID])
+        elif _sample_bool(seed=seed, game_key=uci_moves, ply=ply, probability=p_no):
+            result_tokens.extend([IS_CHECK_ID, NO_CHECK_ID])
 
     white_elo = get_elo_bucket(white_rating)
     black_elo = get_elo_bucket(black_rating)
@@ -73,6 +103,32 @@ def process_file_streaming(
     output_path: Path,
 ) -> int:
     moves_dict = get_moves_dict()
+    lf = pl.scan_parquet(parquet_path)
+
+    count_stats = (
+        lf.select(
+            pl.col("is_check")
+            .list.eval(pl.element().cast(pl.UInt32), parallel=True)
+            .list.sum()
+            .sum()
+            .alias("check_count"),
+            pl.col("is_check").list.len().sum().alias("ply_count"),
+        )
+        .collect()
+        .row(0)
+    )
+    check_count = int(count_stats[0] or 0)
+    ply_count = int(count_stats[1] or 0)
+    no_check_count = max(0, ply_count - check_count)
+    p_no = (check_count / no_check_count) if no_check_count > 0 else 0.0
+    p_no = min(max(p_no, 0.0), 1.0)
+    logger.info(
+        "{}: check plies={}, no-check plies={}, p_yes=1.0, p_no={:.6f}",
+        parquet_path.name,
+        check_count,
+        no_check_count,
+        p_no,
+    )
 
     def build_tokens_batch(batch: pl.DataFrame) -> pl.DataFrame:
         token_ids_list = []
@@ -84,14 +140,14 @@ def process_file_streaming(
                 white_rating=batch["white_rating"][i],
                 black_rating=batch["black_rating"][i],
                 moves_dict=moves_dict,
+                seed=seed,
+                p_no=p_no,
             )
             token_ids_list.append(token_ids)
 
         return batch.select("split_bucket").with_columns(
             pl.Series("token_ids", token_ids_list, dtype=pl.List(pl.UInt16))
         )
-
-    lf = pl.scan_parquet(parquet_path)
 
     lf = lf.with_columns(
         [(pl.col("uci_moves").hash(seed=seed) % 1000).alias("split_bucket")],
@@ -130,6 +186,88 @@ def compute_stats(tokenized_lf: pl.LazyFrame) -> dict[str, float]:
         "p99": stats.item(0, "p99"),
         "p999": stats.item(0, "p999"),
         "over_256": stats.item(0, "over_256"),
+    }
+
+
+def compute_token_mix_stats(tokenized_lf: pl.LazyFrame) -> dict[str, float]:
+    result_ids = [WHITE_WON_ID, BLACK_WON_ID, DRAW_ID, UNKNOWN_RESULT_ID]
+    elo_ids = [
+        ELO_BELOW_1000_ID,
+        ELO_1000_1499_ID,
+        ELO_1500_1999_ID,
+        ELO_2000_2499_ID,
+        ELO_2500_2999_ID,
+        ELO_ABOVE_3000_ID,
+        ELO_UNKNOWN_ID,
+    ]
+    special_ids = list(SPECIAL_TOKENS.values())
+
+    stats = (
+        tokenized_lf.select(
+            pl.col("token_ids").list.len().sum().alias("total_tokens"),
+            pl.col("token_ids")
+            .list.eval((pl.element() == IS_CHECK_ID).cast(pl.UInt32), parallel=True)
+            .list.sum()
+            .sum()
+            .alias("is_check_count"),
+            pl.col("token_ids")
+            .list.eval((pl.element() == YES_CHECK_ID).cast(pl.UInt32), parallel=True)
+            .list.sum()
+            .sum()
+            .alias("yes_check_count"),
+            pl.col("token_ids")
+            .list.eval((pl.element() == NO_CHECK_ID).cast(pl.UInt32), parallel=True)
+            .list.sum()
+            .sum()
+            .alias("no_check_count"),
+            pl.col("token_ids")
+            .list.eval(pl.element().is_in(result_ids).cast(pl.UInt32), parallel=True)
+            .list.sum()
+            .sum()
+            .alias("result_count"),
+            pl.col("token_ids")
+            .list.eval(pl.element().is_in(elo_ids).cast(pl.UInt32), parallel=True)
+            .list.sum()
+            .sum()
+            .alias("elo_count"),
+            pl.col("token_ids")
+            .list.eval(pl.element().is_in(special_ids).cast(pl.UInt32), parallel=True)
+            .list.sum()
+            .sum()
+            .alias("special_count"),
+        )
+        .collect()
+        .row(0)
+    )
+
+    total_tokens = int(stats[0] or 0)
+    is_check_count = int(stats[1] or 0)
+    yes_check_count = int(stats[2] or 0)
+    no_check_count = int(stats[3] or 0)
+    result_count = int(stats[4] or 0)
+    elo_count = int(stats[5] or 0)
+    special_count = int(stats[6] or 0)
+
+    check_qa_count = is_check_count + yes_check_count + no_check_count
+    outcome_prefix_count = result_count + elo_count
+    uci_move_count = max(0, total_tokens - special_count)
+
+    def pct(count: int) -> float:
+        return (count / total_tokens * 100.0) if total_tokens > 0 else 0.0
+
+    return {
+        "total_tokens": total_tokens,
+        "uci_move_count": uci_move_count,
+        "check_qa_count": check_qa_count,
+        "outcome_prefix_count": outcome_prefix_count,
+        "is_check_count": is_check_count,
+        "yes_check_count": yes_check_count,
+        "no_check_count": no_check_count,
+        "result_count": result_count,
+        "elo_count": elo_count,
+        "uci_move_pct": pct(uci_move_count),
+        "check_qa_pct": pct(check_qa_count),
+        "outcome_prefix_pct": pct(outcome_prefix_count),
     }
 
 
@@ -201,6 +339,28 @@ def main(cfg: DictConfig) -> None:
     )
 
     filtered_lf = combined_lf.filter(pl.col("token_ids").list.len() <= max_tokens)
+
+    token_mix = compute_token_mix_stats(filtered_lf.select("token_ids"))
+    logger.info(
+        "Token mix after >256 filtering: UCI moves={} ({:.2f}%), "
+        "check QA={} ({:.2f}%), outcome prefix={} ({:.2f}%)",
+        token_mix["uci_move_count"],
+        token_mix["uci_move_pct"],
+        token_mix["check_qa_count"],
+        token_mix["check_qa_pct"],
+        token_mix["outcome_prefix_count"],
+        token_mix["outcome_prefix_pct"],
+    )
+    logger.info(
+        "Token mix details: <is_check>={}, <yes_check>={}, <no_check>={}, "
+        "result_tokens={}, elo_tokens={}, total_tokens={}",
+        token_mix["is_check_count"],
+        token_mix["yes_check_count"],
+        token_mix["no_check_count"],
+        token_mix["result_count"],
+        token_mix["elo_count"],
+        token_mix["total_tokens"],
+    )
 
     train_lf = one_row_one_game(
         filtered_lf.filter(pl.col("split_bucket") != 0).select("token_ids"),

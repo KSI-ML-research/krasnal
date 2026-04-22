@@ -27,7 +27,19 @@ Black: `b:e7e5`, `b:d7d5`, ...
 
 Annotation tokens help the model learn chess rules and board representation during the training.
 
-`<check>` — mark check moves (future: `<capture>`, `<promotion>`, `<en-passant>`)
+`<is_check>` asks if the just-played move gives check.
+
+`<yes_check>`, `<no_check>` are answer tokens.
+
+Training format around a move can be:
+
+`... w:h5f7 <is_check> <yes_check> ...`
+
+or
+
+`... b:a7a6 <is_check> <no_check> ...`
+
+Question tokens are loss-masked, so model learns answers and chess continuation, not question timing.
 
 ## CoT Tokens (future)
 

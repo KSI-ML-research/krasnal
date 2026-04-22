@@ -5,6 +5,8 @@ import pytest
 import torch
 from torch.utils.data import DataLoader, TensorDataset
 
+from krasnal.dataset import make_collate_fn
+from krasnal.tokens import IS_CHECK_ID
 from krasnal.trainer import cosine_warmup_lr, run_supervised_training
 
 
@@ -112,3 +114,11 @@ def test_run_training_smoke():
     )
 
     assert result is not None
+
+
+def test_collate_masks_is_check_targets():
+    collate = make_collate_fn()
+    x, y = collate([torch.tensor([10, IS_CHECK_ID, 11], dtype=torch.long)])
+
+    assert x.tolist() == [[10, IS_CHECK_ID]]
+    assert y.tolist() == [[-100, 11]]
