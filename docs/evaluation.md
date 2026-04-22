@@ -105,6 +105,13 @@ final = {name: sum(values)/len(values) for name, values in results.items()}
 | `acpl` | Average centipawn loss (needs Stockfish) |
 | `blunder_rate` | % of moves that are blunders |
 
+Check QA probe metrics are also reported from a dedicated probe pass:
+
+- `check_tp`, `check_fp`, `check_tn`, `check_fn` (confusion matrix counts)
+- `check_precision`, `check_recall`, `check_f1`
+- `check_macro_f1` (average of check/no-check class F1)
+- `check_f1_always_no` baseline
+
 ---
 
 ## CoT Evaluation

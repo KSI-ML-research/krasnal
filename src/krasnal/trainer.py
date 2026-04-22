@@ -8,9 +8,9 @@ import torch
 from tqdm.auto import tqdm
 
 from krasnal.config import ARTIFACTS_DIR, GPTConfig, TrainConfig
-from krasnal.dataset import ChessDataset, make_collate_fn
+from krasnal.dataset import LOSS_IGNORE_INDEX, ChessDataset, make_collate_fn
 from krasnal.model import GPT
-from krasnal.tokens import PAD_ID, get_vocab_size, save_to_json
+from krasnal.tokens import get_vocab_size, save_to_json
 
 
 def build_model(model_config: GPTConfig) -> GPT:
@@ -71,8 +71,8 @@ def evaluate_loss(
         for x, y in loader:
             x = x.to(device, non_blocking=True)
             y = y.to(device, non_blocking=True)
-            _, loss = model(x, y, ignore_index=PAD_ID)
-            valid_tokens = (y != PAD_ID).sum().item()
+            _, loss = model(x, y, ignore_index=LOSS_IGNORE_INDEX)
+            valid_tokens = (y != LOSS_IGNORE_INDEX).sum().item()
             total_loss += float(loss.item()) * valid_tokens
             total_tokens += valid_tokens
     model.train()
@@ -215,7 +215,7 @@ def run_supervised_training(
             y = y.to(device, non_blocking=True)
 
             with ctx:
-                _, loss = model(x, y, ignore_index=PAD_ID)
+                _, loss = model(x, y, ignore_index=LOSS_IGNORE_INDEX)
             last_loss_value = float(loss.item())
 
             scaler.scale(loss).backward()
@@ -249,7 +249,7 @@ def run_supervised_training(
                     for x_val, y_val in val_loader:
                         x_val = x_val.to(device, non_blocking=True)
                         y_val = y_val.to(device, non_blocking=True)
-                        _, loss = raw_model(x_val, y_val, ignore_index=PAD_ID)
+                        _, loss = raw_model(x_val, y_val, ignore_index=LOSS_IGNORE_INDEX)
                         val_loss_sum += loss.item()
                         val_batches += 1
                 raw_model.train()

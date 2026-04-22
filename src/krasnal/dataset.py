@@ -8,7 +8,9 @@ from datasets import Dataset as HFDataset
 from torch.nn.utils.rnn import pad_sequence
 from torch.utils.data import Dataset
 
-from krasnal.tokens import PAD_ID
+from krasnal.tokens import IS_CHECK_ID, PAD_ID
+
+LOSS_IGNORE_INDEX = -100
 
 
 def resolve_hf_datasets_cache_dir() -> str:
@@ -84,6 +86,9 @@ def make_collate_fn(bucket_sizes: tuple[int, ...] = ()) -> Callable:
                 pad_size = target_total_len - padded.size(1)
                 padded = F.pad(padded, (0, pad_size), value=PAD_ID)
 
-        return padded[:, :-1], padded[:, 1:]
+        x = padded[:, :-1]
+        y = padded[:, 1:].clone()
+        y[y == IS_CHECK_ID] = LOSS_IGNORE_INDEX
+        return x, y
 
     return _collate_fn

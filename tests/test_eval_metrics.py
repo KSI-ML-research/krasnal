@@ -4,7 +4,6 @@ import torch
 from krasnal.eval.metrics import EvalContext
 from krasnal.eval.metrics.core import (
     AccuracyCore,
-    CheckTokenPredictionCore,
     IllegalMassCore,
     MRRCore,
     Top1LegalCore,
@@ -163,32 +162,3 @@ def test_per_piece_skips_unknown_piece_types():
     metric = PerPieceMetric(Top1LegalCore())
     metric.compute(EvalContext(piece_type=99, probs=torch.zeros(5), legal_ids=[0]))
     assert all(len(buf) == 0 for buf in metric.buffers.values())
-
-
-def test_check_token_pred_returns_1_when_top_is_check():
-    from krasnal.tokens import CHECK_ID
-
-    probs = torch.zeros(20)
-    probs[CHECK_ID] = 0.9
-    ctx = EvalContext(probs=probs, gives_check=True)
-    result = CheckTokenPredictionCore().compute(ctx)
-    assert result["check_token_pred"] == 1.0
-
-
-def test_check_token_pred_returns_0_when_top_is_not_check():
-    from krasnal.tokens import CHECK_ID
-
-    probs = torch.zeros(20)
-    probs[CHECK_ID] = 0.1
-    probs[0] = 0.9
-    ctx = EvalContext(probs=probs, gives_check=True)
-    result = CheckTokenPredictionCore().compute(ctx)
-    assert result["check_token_pred"] == 0.0
-
-
-def test_check_token_pred_returns_empty_when_not_gives_check():
-    probs = torch.zeros(20)
-    probs[15] = 0.9
-    ctx = EvalContext(probs=probs, gives_check=False)
-    result = CheckTokenPredictionCore().compute(ctx)
-    assert result == {}

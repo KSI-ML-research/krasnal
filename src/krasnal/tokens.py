@@ -27,10 +27,12 @@ ELO_2500_2999_ID = 13
 ELO_ABOVE_3000_ID = 14
 ELO_UNKNOWN_ID = 15
 
-CHECK_ID = 16
-CAPTURE_ID = 17
-PROMOTION_ID = 18
-EN_PASSANT_ID = 19
+IS_CHECK_ID = 16
+YES_CHECK_ID = 17
+NO_CHECK_ID = 18
+CAPTURE_ID = 19
+PROMOTION_ID = 20
+EN_PASSANT_ID = 21
 
 WHITE_PREFIX = "w:"
 BLACK_PREFIX = "b:"
@@ -58,7 +60,9 @@ THINKING_TOKENS = {
 }
 
 MOVE_ANNOTATION_TOKENS = {
-    "<check>": CHECK_ID,
+    "<is_check>": IS_CHECK_ID,
+    "<yes_check>": YES_CHECK_ID,
+    "<no_check>": NO_CHECK_ID,
     "<capture>": CAPTURE_ID,
     "<promotion>": PROMOTION_ID,
     "<en_passant>": EN_PASSANT_ID,

@@ -1,6 +1,5 @@
 from krasnal.tokens import (
     BLACK_WON_ID,
-    CHECK_ID,
     DRAW_ID,
     ELO_1000_1499_ID,
     ELO_1500_1999_ID,
@@ -12,12 +11,15 @@ from krasnal.tokens import (
     ELO_UNKNOWN_ID,
     GAME_END_ID,
     GAME_START_ID,
+    IS_CHECK_ID,
     MOVE_TO_ID,
+    NO_CHECK_ID,
     PAD_ID,
     SPECIAL_TOKENS,
     THINK_END_ID,
     THINK_START_ID,
     WHITE_WON_ID,
+    YES_CHECK_ID,
     get_elo_bucket,
     get_moves_only,
 )
@@ -32,7 +34,9 @@ def test_special_tokens_exist():
     assert DRAW_ID in SPECIAL_TOKENS.values()
     assert THINK_START_ID in SPECIAL_TOKENS.values()
     assert THINK_END_ID in SPECIAL_TOKENS.values()
-    assert CHECK_ID in SPECIAL_TOKENS.values()
+    assert IS_CHECK_ID in SPECIAL_TOKENS.values()
+    assert YES_CHECK_ID in SPECIAL_TOKENS.values()
+    assert NO_CHECK_ID in SPECIAL_TOKENS.values()
 
 
 def test_special_tokens_in_vocab():

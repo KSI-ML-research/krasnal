@@ -4,6 +4,19 @@
 
 Switched Rust data pipeline to DuckDB + Aix. Enables processing more data (evals, fens, checks, captures). Added <check> token to pretrain data - model initially struggled (0.5% accuracy). Solution: doubled vocabulary size and differentiated white/black moves, improving <check> token prediction to 30% accuracy.
 
+## 2026-04-22
+
+Replaced single `<check>` annotation with auxiliary QA tokens in pretraining:
+
+- Question token: `<is_check>`
+- Answer tokens: `<yes_check>`, `<no_check>`
+
+All check plies are asked (`p_yes=1.0`). Non-check plies are sampled with `p_no=N_yes/N_no` to target global ~50/50 answer balance.
+
+Question-token targets are loss-masked (`-100`) so model is not trained to predict random question placement; it is trained to predict answers and chess continuation.
+
+Token mix: UCI=73.13%, check QA=21.36%, outcome=3.31%. Details: `<is_check>=50.4M`, `<yes_check>=25.1M`, `<no_check>=25.3M`, result=5.2M, elo=10.4M, total=472M. Speed: 4.20ms/token (RTX 5070 Ti).
+
 ## 2026-04-07
 
 We have two major ways to process the data:
