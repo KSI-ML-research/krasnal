@@ -7,7 +7,7 @@ import torch
 
 from krasnal.config import GPTConfig
 from krasnal.model import GPT
-from krasnal.tokens import BLACK_PREFIX, MOVE_TO_ID, WHITE_PREFIX, get_vocab_size
+from krasnal.tokens import get_vocab_size, move_token_id_for_turn
 
 
 def create_amp_context(device: torch.device) -> AbstractContextManager:
@@ -34,10 +34,9 @@ def load_model(model_path: str, device: torch.device, config: GPTConfig) -> GPT:
 
 
 def get_legal_token_ids(board: bulletchess.Board) -> list[int]:
-    """Map legal UCI moves on the board to token IDs with color prefix."""
-    prefix = WHITE_PREFIX if str(board.turn) == "White" else BLACK_PREFIX
+    """Map legal UCI moves on the board to token IDs."""
     return [
-        MOVE_TO_ID[prefix + uci]
+        token_id
         for m in board.legal_moves()
-        if (uci := m.uci()) and (prefix + uci) in MOVE_TO_ID
+        if (uci := m.uci()) and (token_id := move_token_id_for_turn(uci, board.turn)) is not None
     ]

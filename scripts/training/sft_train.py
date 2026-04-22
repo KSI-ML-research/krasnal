@@ -29,7 +29,7 @@ from krasnal.sft.train import (
     resolve_shard_paths,
     split_shard_paths,
 )
-from krasnal.tokens import get_vocab_size
+from krasnal.tokens import get_vocab_size, set_side_prefixed_moves
 from krasnal.trainer import (
     build_model,
     cosine_warmup_lr,
@@ -63,6 +63,7 @@ def mixed_batch_generator(
 
 @hydra.main(version_base=None, config_path="../../config", config_name="sft_train")
 def main(cfg: DictConfig) -> None:
+    set_side_prefixed_moves(bool(cfg.get("side_prefixed_moves", True)))
     set_seed(cfg.seed)
 
     shard_paths = resolve_shard_paths(SFT_COT_SHARDS_DIR)

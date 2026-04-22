@@ -18,10 +18,14 @@ ELO tokens control model difficulty level.
 
 ## UCI Move Tokens
 
-UCI moves use format `w:e2e4` for white and `b:e7e5` for black.
+By default, UCI moves use format `w:e2e4` for white and `b:e7e5` for black.
 
 White: `w:e2e4`, `w:d2d4`, ...
 Black: `b:e7e5`, `b:d7d5`, ...
+
+For ablations, `side_prefixed_moves: false` switches to a shared move vocabulary without side prefix:
+
+`e2e4`, `e7e5`, ...
 
 ## Annotation Tokens
 

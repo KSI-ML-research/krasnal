@@ -2,8 +2,11 @@
 set dotenv-load := true
 
 SEED := "42"
+PREPROCESS_WORKERS := "0"
+# 0 lets preprocess auto-pick worker count (capped in script)
 export UV_CACHE_DIR := ".uv_cache"
 export HF_HUB_ENABLE_HF_TRANSFER := "1"
+export POLARS_MAX_THREADS := "2"
 LICHESS_BOT_REPO := "https://github.com/lichess-bot-devs/lichess-bot.git"
 # pinned lichess bot commit so that the setup is deterministic
 LICHESS_BOT_REF := "96a8f74d87a42db8039e847548fec0d9528bb079"
@@ -70,7 +73,7 @@ download-games *args:
 
 # Preprocess downloaded games into training dataset
 preprocess *args:
-    uv run scripts/data/preprocess.py {{args}} seed={{SEED}}
+    uv run scripts/data/preprocess.py {{args}} seed={{SEED}} preprocess_workers={{PREPROCESS_WORKERS}}
 
 # Stage 1: Pretrain model on large dataset of chess games
 pretrain *args:

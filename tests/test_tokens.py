@@ -22,6 +22,8 @@ from krasnal.tokens import (
     YES_CHECK_ID,
     get_elo_bucket,
     get_moves_only,
+    move_key_for_ply,
+    set_side_prefixed_moves,
 )
 
 
@@ -106,3 +108,15 @@ def test_get_moves_only_all_special_tokens():
             GAME_END_ID,
         ]
     ) == [100, 101]
+
+
+def test_side_prefixed_moves_toggle_changes_move_keys():
+    set_side_prefixed_moves(True)
+    assert move_key_for_ply("e2e4", 0) == "w:e2e4"
+    assert move_key_for_ply("e7e5", 1) == "b:e7e5"
+    try:
+        set_side_prefixed_moves(False)
+        assert move_key_for_ply("e2e4", 0) == "e2e4"
+        assert move_key_for_ply("e7e5", 1) == "e7e5"
+    finally:
+        set_side_prefixed_moves(True)

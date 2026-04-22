@@ -1,0 +1,13 @@
+defaults:
+  - pipeline
+  - _self_
+
+include_check_qa: true
+
+unknown_elo:
+  normal_prob: 0.97
+  white_unknown_prob: 0.01
+  black_unknown_prob: 0.01
+  both_unknown_prob: 0.01
+
+preprocess_workers: 0

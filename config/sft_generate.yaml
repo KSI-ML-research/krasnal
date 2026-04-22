@@ -1,8 +1,6 @@
 defaults:
-  - model: small
+  - pipeline
   - _self_
-
-seed: 42
 
 # Stockfish / generation controls
 stockfish_path: null
@@ -11,7 +9,7 @@ multipv_min: 3
 multipv_max: 3
 
 # Sequence / batching controls
-max_len: null          # if null, uses model.block_size
+max_len: null  # if null, uses block_size from pipeline
 num_producers: 1
 shard_size: 8192
 batch_size: 32
@@ -23,8 +21,3 @@ indefinitely: false
 
 # Output
 output_dir: data/2_tokenized/sft_cot_shards
-
-hydra:
-  run:
-    dir: .
-  output_subdir: null

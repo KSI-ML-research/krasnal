@@ -1,20 +1,14 @@
 from __future__ import annotations
 
 from krasnal.tokens import (
-    BLACK_PREFIX,
     GAME_END_ID,
     GAME_START_ID,
     MOVE_TO_ID,
     THINK_END_ID,
     THINK_START_ID,
-    WHITE_PREFIX,
+    move_key_for_ply,
     result_to_token_id,
 )
-
-
-def _get_prefixed_move(move: str, ply: int) -> str:
-    prefix = WHITE_PREFIX if ply % 2 == 0 else BLACK_PREFIX
-    return prefix + move
 
 
 def flatten_multipv_moves(pv_lines: list[list[str]], start_ply: int = 0) -> list[int]:
@@ -22,7 +16,7 @@ def flatten_multipv_moves(pv_lines: list[list[str]], start_ply: int = 0) -> list
     token_ids: list[int] = []
     for pv in pv_lines:
         for ply, move in enumerate(pv):
-            token_ids.append(MOVE_TO_ID[_get_prefixed_move(move, start_ply + ply)])
+            token_ids.append(MOVE_TO_ID[move_key_for_ply(move, start_ply + ply)])
     return token_ids
 
 
@@ -38,16 +32,16 @@ def build_cot_sequence(
     token_ids = [GAME_START_ID, result_to_token_id(result)]
     prefix_len = len(prefix_moves)
     token_ids.extend(
-        MOVE_TO_ID[_get_prefixed_move(move, ply)] for ply, move in enumerate(prefix_moves)
+        MOVE_TO_ID[move_key_for_ply(move, ply)] for ply, move in enumerate(prefix_moves)
     )
     token_ids.append(THINK_START_ID)
     pv_start_ply = prefix_len
     token_ids.extend(flatten_multipv_moves(pv_lines, pv_start_ply))
     token_ids.append(THINK_END_ID)
     actual_ply = pv_start_ply + sum(len(pv) for pv in pv_lines)
-    token_ids.append(MOVE_TO_ID[_get_prefixed_move(actual_move, actual_ply)])
+    token_ids.append(MOVE_TO_ID[move_key_for_ply(actual_move, actual_ply)])
     token_ids.extend(
-        MOVE_TO_ID[_get_prefixed_move(move, ply)]
+        MOVE_TO_ID[move_key_for_ply(move, ply)]
         for ply, move in enumerate(suffix_moves, start=actual_ply + 1)
     )
     token_ids.append(GAME_END_ID)
