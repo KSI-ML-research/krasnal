@@ -9,7 +9,6 @@ from krasnal.config import EVAL_DATASET_PATH
 from krasnal.dataset import ChessDataset
 from krasnal.eval import ChessEvaluator, get_stockfish_client
 from krasnal.uci_engine.provider import ModelProvider
-from krasnal.utils import find_latest_model_artifact
 
 
 def parse_args() -> argparse.Namespace:
@@ -19,11 +18,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--artifact-dir",
         type=Path,
-        default=None,
-        help=(
-            "Artifact directory containing model.pt and config.json. "
-            "Defaults to latest runnable artifact."
-        ),
+        required=True,
+        help="Artifact directory containing model.pt and config.json.",
     )
     parser.add_argument(
         "--dataset",
@@ -66,7 +62,7 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
 
-    artifact_dir = args.artifact_dir or find_latest_model_artifact()
+    artifact_dir = args.artifact_dir
     provider = ModelProvider.from_artifact_dir(artifact_dir)
     dataset = ChessDataset(args.dataset)
     stockfish = get_stockfish_client(

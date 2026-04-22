@@ -17,7 +17,7 @@ from krasnal.config import (
 from krasnal.dataset import ChessDataset, make_collate_fn
 from krasnal.eval import ChessEvaluator, get_stockfish_client
 from krasnal.eval.metrics import DEFAULT_METRICS
-from krasnal.tokens import get_vocab_size
+from krasnal.tokens import get_vocab_size, set_side_prefixed_moves
 from krasnal.trainer import (
     build_model,
     cosine_warmup_lr,
@@ -33,6 +33,7 @@ torch.set_float32_matmul_precision("high")
 
 @hydra.main(version_base=None, config_path="../../config", config_name="pretrain")
 def main(cfg: DictConfig) -> None:
+    set_side_prefixed_moves(bool(cfg.get("side_prefixed_moves", True)))
     set_seed(cfg.seed)
 
     if not PRETRAIN_DATASET_PATH.exists():

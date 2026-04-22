@@ -9,6 +9,7 @@ from omegaconf import DictConfig, OmegaConf
 from tqdm.auto import tqdm
 
 from krasnal.sft import CotProducerPool, CotShardWriter, validate_stockfish
+from krasnal.tokens import set_side_prefixed_moves
 from krasnal.utils import set_seed
 
 DEFAULT_SHARD_SIZE = 8192
@@ -26,6 +27,7 @@ def resolve_max_len(cfg: DictConfig) -> int:
 def main(cfg: DictConfig) -> None:
     cfg = OmegaConf.to_container(cfg, resolve=True)
     cfg = DictConfig(cfg)
+    set_side_prefixed_moves(bool(cfg.get("side_prefixed_moves", True)))
 
     if not cfg.indefinitely and (cfg.num_rows is None or int(cfg.num_rows) <= 0):
         raise ValueError("Either num_rows > 0 or indefinitely=true must be specified")

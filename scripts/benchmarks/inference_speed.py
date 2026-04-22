@@ -2,8 +2,7 @@
 
 Usage:
     uv run scripts/benchmarks/inference_speed.py \
-        --checkpoint <path> \
-        --config <path> \
+        --directory <path> \
         --num_games 100 \
         --moves_per_game 20 \
         --device cpu
@@ -13,6 +12,7 @@ Does not include legal move filtering - benchmark measures pure model forward pa
 """
 
 import argparse
+import os
 import time
 
 import torch
@@ -25,10 +25,25 @@ from krasnal.inference.utils import load_model
 from krasnal.tokens import WHITE_WON_ID
 
 
+def find_model_in_directory(directory: str):
+    name = "model.pt"
+    path = os.path.join(directory, name)
+    if os.path.isfile(path):
+        return path
+    raise FileNotFoundError(f"No model.pt found in {directory}")
+
+
+def find_config_in_directory(directory: str):
+    for name in ["config.yaml", "config.json"]:
+        path = os.path.join(directory, name)
+        if os.path.isfile(path):
+            return path
+    raise FileNotFoundError(f"No config.yaml or config.json found in {directory}")
+
+
 def main():
     parser = argparse.ArgumentParser(description="Benchmark inference speed")
-    parser.add_argument("--config", required=True, help="Path to model config YAML")
-    parser.add_argument("--checkpoint", required=True, help="Path to model checkpoint")
+    parser.add_argument("--directory", help="Directory containing model.pt and config.yaml")
     parser.add_argument("--num_games", type=int, default=100, help="Number of games to benchmark")
     parser.add_argument("--moves_per_game", type=int, default=20, help="Moves to generate per game")
     parser.add_argument("--warmup", type=int, default=1, help="Warmup games before benchmarking")
@@ -39,11 +54,18 @@ def main():
     )
     args = parser.parse_args()
 
+    if not args.directory:
+        parser.error("--directory is required")
+
+    checkpoint = find_model_in_directory(args.directory)
+    config = find_config_in_directory(args.directory)
+
     device = torch.device(args.device)
 
     print("Loading model...")
-    cfg = OmegaConf.load(args.config)
+    cfg = OmegaConf.load(config)
     gpt_cfg = GPTConfig(
+        vocab_size=cfg.vocab_size,
         block_size=cfg.block_size,
         n_layer=cfg.n_layer,
         n_head=cfg.n_head,
@@ -51,7 +73,7 @@ def main():
         dropout=cfg.dropout,
         bias=cfg.bias,
     )
-    model = load_model(args.checkpoint, device, gpt_cfg)
+    model = load_model(checkpoint, device, gpt_cfg)
     params_M = model.get_num_params() / 1_000_000
 
     session = InferenceSession(model, device, outcome_token=WHITE_WON_ID)
@@ -68,9 +90,9 @@ def main():
     print()
     print("=== Inference Speed Benchmark ===")
     print(f"Model: {model_name} ({cfg.n_layer} layers, {cfg.n_head} heads, {cfg.n_embd} embed)")
-    print(f"Parameters: {params_M:.1f}M")
-    print(f"Checkpoint: {args.checkpoint}")
-    print(f"Config: {args.config}")
+    print(f"Parameters: {params_M:.1f}M, Vocab: {cfg.vocab_size}")
+    print(f"Checkpoint: {checkpoint}")
+    print(f"Config: {config}")
     print(f"Device: {args.device}")
     print(f"Games: {args.num_games}, Moves/game: {args.moves_per_game}")
     print()

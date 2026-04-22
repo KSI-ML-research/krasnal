@@ -1,18 +1,12 @@
 defaults:
+  - pipeline
   - model: small
   - train: cuda
   - _self_
 
-seed: 42
-wandb_project: krasnal
 model_path: null
 latest_pretrain: false
 normal_dataset: data/2_tokenized/pretrain.parquet
 cot_ratio: 0.5
 cot_eval_shard_fraction: 0.1
 max_iters: null
-
-hydra:
-  run:
-    dir: .
-  output_subdir: null

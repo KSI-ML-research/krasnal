@@ -10,7 +10,7 @@ from tqdm.auto import tqdm
 
 from krasnal.config import RAW_UCI_DIR
 from krasnal.sft.generation.format import build_cot_row
-from krasnal.tokens import BLACK_PREFIX, MOVE_TO_ID, WHITE_PREFIX
+from krasnal.tokens import MOVE_TO_ID, move_key_for_ply, move_key_for_turn
 
 
 def build_board(prefix_moves: list[str]) -> chess.Board | None:
@@ -90,7 +90,7 @@ class OnlineCotDataSource:
             board = build_board(prefix_moves)
 
             ply = move_index - 1
-            actual_prefixed = (WHITE_PREFIX if ply % 2 == 0 else BLACK_PREFIX) + actual_move
+            actual_prefixed = move_key_for_ply(actual_move, ply)
 
             if board is None or actual_prefixed not in MOVE_TO_ID:
                 continue
@@ -106,8 +106,7 @@ class OnlineCotDataSource:
                 raw_pv = info.get("pv", [])
                 if raw_pv:
                     move = raw_pv[0].uci()
-                    pv_prefix = WHITE_PREFIX if board.turn == chess.WHITE else BLACK_PREFIX
-                    prefixed_move = pv_prefix + move
+                    prefixed_move = move_key_for_turn(move, board.turn)
                     if prefixed_move in MOVE_TO_ID:
                         pv_lines.append([move])
                 if top_score_cp is None and "score" in info:

@@ -1,4 +1,6 @@
+import os
 import shutil
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from hashlib import blake2b
 from pathlib import Path
 
@@ -13,7 +15,6 @@ from krasnal.config import (
     RAW_UCI_DIR,
 )
 from krasnal.tokens import (
-    BLACK_PREFIX,
     BLACK_WON_ID,
     DRAW_ID,
     ELO_1000_1499_ID,
@@ -26,25 +27,17 @@ from krasnal.tokens import (
     GAME_END_ID,
     GAME_START_ID,
     IS_CHECK_ID,
-    MOVE_TO_ID,
     NO_CHECK_ID,
     PAD_ID,
     SPECIAL_TOKENS,
     UNKNOWN_RESULT_ID,
-    WHITE_PREFIX,
     WHITE_WON_ID,
     YES_CHECK_ID,
     get_elo_bucket,
+    move_token_id_for_ply,
     result_to_token_id,
+    set_side_prefixed_moves,
 )
-
-
-def get_moves_dict() -> dict[str, int]:
-    return {
-        k: v
-        for k, v in MOVE_TO_ID.items()
-        if k.startswith(WHITE_PREFIX) or k.startswith(BLACK_PREFIX)
-    }
 
 
 def _sample_bool(seed: int, game_key: str, ply: int, probability: float) -> bool:
@@ -63,7 +56,12 @@ def _build_game_tokens(
     result: str,
     white_rating: int,
     black_rating: int,
-    moves_dict: dict[str, int],
+    elo_bucket: int,
+    include_check_qa: bool,
+    normal_prob: float,
+    white_unknown_prob: float,
+    black_unknown_prob: float,
+    both_unknown_prob: float,
     seed: int,
     p_no: float,
 ) -> list[int]:
@@ -74,19 +72,43 @@ def _build_game_tokens(
 
     result_tokens = []
     for ply, move in enumerate(moves_list):
-        prefix = WHITE_PREFIX if ply % 2 == 0 else BLACK_PREFIX
-        prefixed_move = prefix + move
-        move_id = moves_dict.get(prefixed_move, PAD_ID)
+        move_id = move_token_id_for_ply(move, ply)
+        if move_id is None:
+            move_id = PAD_ID
         result_tokens.append(move_id)
 
-        gives_check = ply < len(is_check) and bool(is_check[ply])
-        if gives_check:
-            result_tokens.extend([IS_CHECK_ID, YES_CHECK_ID])
-        elif _sample_bool(seed=seed, game_key=uci_moves, ply=ply, probability=p_no):
-            result_tokens.extend([IS_CHECK_ID, NO_CHECK_ID])
+        if include_check_qa:
+            gives_check = ply < len(is_check) and bool(is_check[ply])
+            if gives_check:
+                result_tokens.extend([IS_CHECK_ID, YES_CHECK_ID])
+            elif _sample_bool(seed=seed, game_key=uci_moves, ply=ply, probability=p_no):
+                result_tokens.extend([IS_CHECK_ID, NO_CHECK_ID])
 
     white_elo = get_elo_bucket(white_rating)
     black_elo = get_elo_bucket(black_rating)
+
+    normal_threshold = round(normal_prob * 1000)
+    white_unknown_threshold = normal_threshold + round(white_unknown_prob * 1000)
+    black_unknown_threshold = white_unknown_threshold + round(black_unknown_prob * 1000)
+    both_unknown_threshold = black_unknown_threshold + round(both_unknown_prob * 1000)
+
+    if not 0 <= elo_bucket < 1000:
+        raise ValueError(f"elo_bucket must be in [0, 1000), got {elo_bucket}")
+    if both_unknown_threshold != 1000:
+        raise ValueError(
+            "Unknown ELO probabilities must sum to 1.0 in 0.001 increments; "
+            f"got total={both_unknown_threshold / 1000:.3f}"
+        )
+
+    if elo_bucket < normal_threshold:
+        pass
+    elif elo_bucket < white_unknown_threshold:
+        white_elo = ELO_UNKNOWN_ID
+    elif elo_bucket < black_unknown_threshold:
+        black_elo = ELO_UNKNOWN_ID
+    elif elo_bucket < both_unknown_threshold:
+        white_elo = ELO_UNKNOWN_ID
+        black_elo = ELO_UNKNOWN_ID
 
     prefix_tokens = [
         GAME_START_ID,
@@ -101,34 +123,36 @@ def process_file_streaming(
     parquet_path: Path,
     seed: int,
     output_path: Path,
+    include_check_qa: bool,
+    unknown_elo: dict[str, float],
 ) -> int:
-    moves_dict = get_moves_dict()
     lf = pl.scan_parquet(parquet_path)
 
-    count_stats = (
-        lf.select(
-            pl.col("is_check")
-            .list.eval(pl.element().cast(pl.UInt32), parallel=True)
-            .list.sum()
-            .sum()
-            .alias("check_count"),
-            pl.col("is_check").list.len().sum().alias("ply_count"),
+    if include_check_qa:
+        count_stats = (
+            lf.select(
+                pl.col("is_check")
+                .list.eval(pl.element().cast(pl.UInt32), parallel=True)
+                .list.sum()
+                .sum()
+                .alias("check_count"),
+                pl.col("is_check").list.len().sum().alias("ply_count"),
+            )
+            .collect()
+            .row(0)
         )
-        .collect()
-        .row(0)
-    )
-    check_count = int(count_stats[0] or 0)
-    ply_count = int(count_stats[1] or 0)
-    no_check_count = max(0, ply_count - check_count)
-    p_no = (check_count / no_check_count) if no_check_count > 0 else 0.0
-    p_no = min(max(p_no, 0.0), 1.0)
-    logger.info(
-        "{}: check plies={}, no-check plies={}, p_yes=1.0, p_no={:.6f}",
-        parquet_path.name,
-        check_count,
-        no_check_count,
-        p_no,
-    )
+        check_count = int(count_stats[0] or 0)
+        ply_count = int(count_stats[1] or 0)
+        no_check_count = max(0, ply_count - check_count)
+        p_no = (check_count / no_check_count) if no_check_count > 0 else 0.0
+        p_no = min(max(p_no, 0.0), 1.0)
+    else:
+        p_no = 1.0
+
+    normal_prob = float(unknown_elo["normal_prob"])
+    white_unknown_prob = float(unknown_elo["white_unknown_prob"])
+    black_unknown_prob = float(unknown_elo["black_unknown_prob"])
+    both_unknown_prob = float(unknown_elo["both_unknown_prob"])
 
     def build_tokens_batch(batch: pl.DataFrame) -> pl.DataFrame:
         token_ids_list = []
@@ -139,7 +163,12 @@ def process_file_streaming(
                 result=batch["result"][i],
                 white_rating=batch["white_rating"][i],
                 black_rating=batch["black_rating"][i],
-                moves_dict=moves_dict,
+                elo_bucket=batch["elo_bucket"][i],
+                include_check_qa=include_check_qa,
+                normal_prob=normal_prob,
+                white_unknown_prob=white_unknown_prob,
+                black_unknown_prob=black_unknown_prob,
+                both_unknown_prob=both_unknown_prob,
                 seed=seed,
                 p_no=p_no,
             )
@@ -150,17 +179,36 @@ def process_file_streaming(
         )
 
     lf = lf.with_columns(
-        [(pl.col("uci_moves").hash(seed=seed) % 1000).alias("split_bucket")],
+        [
+            (pl.col("uci_moves").hash(seed=seed) % 1000).alias("split_bucket"),
+            (pl.col("uci_moves").hash(seed=seed + 1) % 1000).alias("elo_bucket"),
+        ],
     )
 
     row_count = lf.select(pl.len()).collect().item()
     lf.map_batches(
-        build_tokens_batch, schema={"split_bucket": pl.UInt64, "token_ids": pl.List(pl.UInt16)}
+        build_tokens_batch,
+        schema={"split_bucket": pl.UInt64, "token_ids": pl.List(pl.UInt16)},
     ).sink_parquet(output_path)
     return row_count
 
 
-def compute_stats(tokenized_lf: pl.LazyFrame) -> dict[str, float]:
+def _process_one_shard(
+    parquet_path: Path,
+    seed: int,
+    output_path: Path,
+    side_prefixed_moves: bool,
+    include_check_qa: bool,
+    unknown_elo: dict[str, float],
+) -> tuple[str, int, str]:
+    set_side_prefixed_moves(side_prefixed_moves)
+    count = process_file_streaming(
+        parquet_path, seed, output_path, include_check_qa=include_check_qa, unknown_elo=unknown_elo
+    )
+    return parquet_path.name, count, output_path.name
+
+
+def compute_stats(tokenized_lf: pl.LazyFrame, block_size: int) -> dict[str, float]:
     seq_len_lf = tokenized_lf.select(pl.col("token_ids").list.len().alias("len"))
 
     stats = seq_len_lf.select(
@@ -173,7 +221,7 @@ def compute_stats(tokenized_lf: pl.LazyFrame) -> dict[str, float]:
         pl.col("len").quantile(0.95).alias("p95"),
         pl.col("len").quantile(0.99).alias("p99"),
         pl.col("len").quantile(0.999).alias("p999"),
-        (pl.col("len") > 256).sum().alias("over_256"),
+        (pl.col("len") > block_size).sum().alias("over_block_size"),
     ).collect()
     return {
         "total": stats.item(0, "total"),
@@ -185,7 +233,7 @@ def compute_stats(tokenized_lf: pl.LazyFrame) -> dict[str, float]:
         "p95": stats.item(0, "p95"),
         "p99": stats.item(0, "p99"),
         "p999": stats.item(0, "p999"),
-        "over_256": stats.item(0, "over_256"),
+        "over_block_size": stats.item(0, "over_block_size"),
     }
 
 
@@ -276,10 +324,22 @@ def one_row_one_game(lazy_df: pl.LazyFrame, block_size: int) -> pl.LazyFrame:
     return lazy_df.select(pl.col("token_ids").list.slice(0, window_size).alias("token_ids"))
 
 
-@hydra.main(version_base=None, config_path="../../config", config_name="pretrain")
+@hydra.main(version_base=None, config_path="../../config", config_name="preprocess")
 def main(cfg: DictConfig) -> None:
-    block_size = int(cfg.model.block_size)
+    set_side_prefixed_moves(bool(cfg.get("side_prefixed_moves", True)))
+    block_size = int(cfg.block_size)
     seed = int(cfg.seed)
+    include_check_qa = bool(cfg.get("include_check_qa", True))
+    unknown_elo = {
+        "normal_prob": float(cfg.unknown_elo.normal_prob),
+        "white_unknown_prob": float(cfg.unknown_elo.white_unknown_prob),
+        "black_unknown_prob": float(cfg.unknown_elo.black_unknown_prob),
+        "both_unknown_prob": float(cfg.unknown_elo.both_unknown_prob),
+    }
+    if abs(sum(unknown_elo.values()) - 1.0) > 1e-9:
+        raise ValueError(
+            f"unknown_elo probabilities must sum to 1.0, got {sum(unknown_elo.values())}"
+        )
 
     parquet_files = sorted(RAW_UCI_DIR.glob("*.parquet"))
     if not parquet_files:
@@ -291,17 +351,36 @@ def main(cfg: DictConfig) -> None:
     temp_dir.mkdir(parents=True, exist_ok=True)
 
     total_games = 0
+    side_prefixed_moves = bool(cfg.get("side_prefixed_moves", True))
+    workers_cfg = int(cfg.get("preprocess_workers", 0) or 0)
+    max_workers = min(
+        workers_cfg if workers_cfg > 0 else min(len(parquet_files), os.cpu_count() or 1), 8
+    )
+    logger.info("Processing {} shards with {} workers", len(parquet_files), max_workers)
 
-    for idx, pf in enumerate(parquet_files):
-        logger.info(f"Processing {pf.name}...")
-        output_path = temp_dir / f"part_{idx:04d}.parquet"
-        try:
-            count = process_file_streaming(pf, seed, output_path)
-            total_games += count
-            logger.info(f"  {count} games -> {output_path.name}")
-        except Exception as e:
-            logger.error(f"Failed to process {pf.name}: {e}")
-            continue
+    with ProcessPoolExecutor(max_workers=max_workers) as executor:
+        futures = {}
+        for idx, parquet_path in enumerate(parquet_files):
+            output_path = temp_dir / f"part_{idx:04d}.parquet"
+            future = executor.submit(
+                _process_one_shard,
+                parquet_path,
+                seed,
+                output_path,
+                side_prefixed_moves,
+                include_check_qa,
+                unknown_elo,
+            )
+            futures[future] = parquet_path.name
+
+        for future in as_completed(futures):
+            parquet_name = futures[future]
+            try:
+                done_name, count, output_name = future.result()
+                total_games += count
+                logger.info("Processed {}: {} games -> {}", done_name, count, output_name)
+            except Exception as e:
+                logger.error("Failed to process {}: {}", parquet_name, e)
 
     all_parts = list(temp_dir.glob("part_*.parquet"))
     if not all_parts:
@@ -310,7 +389,7 @@ def main(cfg: DictConfig) -> None:
 
     combined_lf = pl.concat(pl.scan_parquet(p) for p in all_parts)
 
-    stats = compute_stats(combined_lf)
+    stats = compute_stats(combined_lf, block_size)
     if stats["total"] == 0:
         logger.error("No games found in raw dataset.")
         return
@@ -329,20 +408,23 @@ def main(cfg: DictConfig) -> None:
         stats["p999"],
     )
 
-    max_tokens = 256
-    over_256_count = stats.get("over_256", 0)
+    max_tokens = block_size
+    over_block_size_count = stats.get("over_block_size", 0)
     total_count = stats["total"]
+    pct = over_block_size_count / total_count * 100
     logger.info(
-        "Games with >256 tokens: {} ({:.2f}%) - filtering out >256",
-        over_256_count,
-        over_256_count / total_count * 100,
+        "Games with >{} tokens: {} ({:.2f}%) - filtering out >{}",
+        max_tokens,
+        over_block_size_count,
+        pct,
+        max_tokens,
     )
 
     filtered_lf = combined_lf.filter(pl.col("token_ids").list.len() <= max_tokens)
 
     token_mix = compute_token_mix_stats(filtered_lf.select("token_ids"))
     logger.info(
-        "Token mix after >256 filtering: UCI moves={} ({:.2f}%), "
+        "Token mix after >block_size filtering: UCI moves={} ({:.2f}%), "
         "check QA={} ({:.2f}%), outcome prefix={} ({:.2f}%)",
         token_mix["uci_move_count"],
         token_mix["uci_move_pct"],

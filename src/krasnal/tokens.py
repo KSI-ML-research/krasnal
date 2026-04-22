@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Final
 
 import bulletchess
 
@@ -31,11 +32,11 @@ IS_CHECK_ID = 16
 YES_CHECK_ID = 17
 NO_CHECK_ID = 18
 CAPTURE_ID = 19
-PROMOTION_ID = 20
-EN_PASSANT_ID = 21
 
 WHITE_PREFIX = "w:"
 BLACK_PREFIX = "b:"
+SIDE_PREFIXED_MOVES_DEFAULT: Final[bool] = True
+SIDE_PREFIXED_MOVES = SIDE_PREFIXED_MOVES_DEFAULT
 
 OUTCOME_TOKENS = {
     "<white_won>": WHITE_WON_ID,
@@ -64,8 +65,6 @@ MOVE_ANNOTATION_TOKENS = {
     "<yes_check>": YES_CHECK_ID,
     "<no_check>": NO_CHECK_ID,
     "<capture>": CAPTURE_ID,
-    "<promotion>": PROMOTION_ID,
-    "<en_passant>": EN_PASSANT_ID,
 }
 
 SPECIAL_TOKENS = {
@@ -79,7 +78,7 @@ SPECIAL_TOKENS = {
 }
 
 
-def _load_vocabulary() -> tuple[dict[str, int], dict[int, str]]:
+def _load_vocabulary(*, side_prefixed_moves: bool) -> tuple[dict[str, int], dict[int, str]]:
     move_to_id = dict(SPECIAL_TOKENS)
 
     with open(MOVES_FILE) as f:
@@ -87,17 +86,31 @@ def _load_vocabulary() -> tuple[dict[str, int], dict[int, str]]:
 
     next_id = max(SPECIAL_TOKENS.values()) + 1
     for move in all_uci_moves:
-        move_to_id[WHITE_PREFIX + move] = next_id
-        next_id += 1
-        move_to_id[BLACK_PREFIX + move] = next_id
+        if side_prefixed_moves:
+            move_to_id[WHITE_PREFIX + move] = next_id
+            next_id += 1
+            move_to_id[BLACK_PREFIX + move] = next_id
+        else:
+            move_to_id[move] = next_id
         next_id += 1
 
     id_to_move = {v: k for k, v in move_to_id.items()}
     return move_to_id, id_to_move
 
 
-MOVE_TO_ID, ID_TO_MOVE = _load_vocabulary()
+MOVE_TO_ID, ID_TO_MOVE = _load_vocabulary(side_prefixed_moves=SIDE_PREFIXED_MOVES)
 VOCAB_SIZE = len(MOVE_TO_ID)
+
+
+def set_side_prefixed_moves(enabled: bool) -> None:
+    global SIDE_PREFIXED_MOVES, VOCAB_SIZE
+    SIDE_PREFIXED_MOVES = bool(enabled)
+    move_to_id, id_to_move = _load_vocabulary(side_prefixed_moves=SIDE_PREFIXED_MOVES)
+    MOVE_TO_ID.clear()
+    MOVE_TO_ID.update(move_to_id)
+    ID_TO_MOVE.clear()
+    ID_TO_MOVE.update(id_to_move)
+    VOCAB_SIZE = len(MOVE_TO_ID)
 
 
 def get_vocab_size() -> int:
@@ -161,6 +174,28 @@ def to_uci(token_id: int) -> str:
     return token
 
 
+def move_key_for_ply(uci: str, ply: int) -> str:
+    if not SIDE_PREFIXED_MOVES:
+        return uci
+    prefix = WHITE_PREFIX if ply % 2 == 0 else BLACK_PREFIX
+    return prefix + uci
+
+
+def move_key_for_turn(uci: str, turn: object) -> str:
+    if not SIDE_PREFIXED_MOVES:
+        return uci
+    prefix = WHITE_PREFIX if str(turn) == "White" else BLACK_PREFIX
+    return prefix + uci
+
+
+def move_token_id_for_ply(uci: str, ply: int) -> int | None:
+    return MOVE_TO_ID.get(move_key_for_ply(uci, ply))
+
+
+def move_token_id_for_turn(uci: str, turn: object) -> int | None:
+    return MOVE_TO_ID.get(move_key_for_turn(uci, turn))
+
+
 def token_to_uci(token_id: int) -> str | None:
     token = ID_TO_MOVE.get(token_id)
     if token is None:
@@ -169,14 +204,12 @@ def token_to_uci(token_id: int) -> str | None:
 
 
 def uci_to_token_id(uci: str, turn: object) -> int | None:
-    prefix = WHITE_PREFIX if str(turn) == "White" else BLACK_PREFIX
-    return MOVE_TO_ID.get(prefix + uci)
+    return move_token_id_for_turn(uci, turn)
 
 
 def legal_token_ids(board: bulletchess.Board) -> list[int]:
-    prefix = WHITE_PREFIX if str(board.turn) == "White" else BLACK_PREFIX
     return [
-        MOVE_TO_ID[prefix + uci]
+        token_id
         for move in board.legal_moves()
-        if (uci := move.uci()) and (prefix + uci) in MOVE_TO_ID
+        if (uci := move.uci()) and (token_id := move_token_id_for_turn(uci, board.turn)) is not None
     ]

@@ -1,12 +1,5 @@
 defaults:
+  - pipeline
   - model: small
   - train: cuda
   - _self_
-
-seed: 42
-wandb_project: krasnal
-
-hydra:
-  run:
-    dir: .
-  output_subdir: null
