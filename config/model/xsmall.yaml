@@ -1,5 +1,5 @@
 name: xsmall
-block_size: 512
+block_size: 256
 n_layer: 2
 n_head: 2
 n_embd: 64

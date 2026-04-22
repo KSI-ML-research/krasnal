@@ -19,4 +19,4 @@ compile: false
 compile_mode: default
 compile_dynamic: false
 compile_fullgraph: false
-padding_bucket_sizes: [64, 128, 192, 256, 512]
+padding_bucket_sizes: [64, 128, 192, 256]
