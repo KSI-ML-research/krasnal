@@ -93,7 +93,7 @@ class StockfishClient:
                     if part == "evaluation":
                         try:
                             return float(parts[i + 1]) * 100
-                        except IndexError, ValueError:
+                        except (IndexError, ValueError):
                             pass
         return None
 
