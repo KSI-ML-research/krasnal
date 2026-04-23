@@ -118,9 +118,14 @@ impl Visitor for PlayerVisitor {
             },
             b"White" => self.current_game.white = val_str.to_string(),
             b"Black" => self.current_game.black = val_str.to_string(),
-            b"Date" | b"UTCDate" if self.current_game.year.is_none() => {
-                let year = val_str.split('.').next().unwrap_or("?");
-                if year != "????" && year != "?" {
+            b"Date" | b"UTCDate"
+                if self.current_game.year.is_none()
+                    && val_str
+                        .split('.')
+                        .next()
+                        .is_some_and(|y| y != "????" && y != "?") =>
+            {
+                if let Some(year) = val_str.split('.').next() {
                     self.current_game.year = Some(year.to_string());
                 }
             }
