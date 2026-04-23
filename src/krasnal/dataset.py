@@ -8,7 +8,7 @@ from datasets import Dataset as HFDataset
 from torch.nn.utils.rnn import pad_sequence
 from torch.utils.data import Dataset
 
-from krasnal.tokens import IS_CHECK_ID, PAD_ID
+from krasnal.tokens import IS_CHECK_ID, PAD_ID, WHAT_PIECE_ID
 
 LOSS_IGNORE_INDEX = -100
 
@@ -89,6 +89,7 @@ def make_collate_fn(bucket_sizes: tuple[int, ...] = ()) -> Callable:
         x = padded[:, :-1]
         y = padded[:, 1:].clone()
         y[y == IS_CHECK_ID] = LOSS_IGNORE_INDEX
+        y[y == WHAT_PIECE_ID] = LOSS_IGNORE_INDEX
         return x, y
 
     return _collate_fn

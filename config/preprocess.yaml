@@ -3,6 +3,10 @@ defaults:
   - _self_
 
 include_check_qa: true
+include_piece_qa: true
+
+piece_qa:
+  king_base_prob: 0.1
 
 unknown_elo:
   normal_prob: 0.97
