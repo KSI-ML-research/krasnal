@@ -146,10 +146,26 @@ Special handling:
 evaluator = ChessEvaluator(metrics=["top1_legal", "acc"])
 results = evaluator.evaluate(
     model=model,
-    tokenizer=tokenizer,
     dataset=dataset,
     num_games=1000,
     device=torch.device("cuda"),
 )
 # {'top1_legal': 0.85, 'acc': 0.72, ...}
+```
+
+Metric sets are configured via Hydra config files (not Python defaults):
+
+```yaml
+# config/eval/default.yaml
+metrics:
+  - top1_legal
+  - acc
+  - illegal_mass
+
+cot_metrics:
+  - cot_format_valid
+  - cot_post_think_top1
+
+enable_check_probe_metrics: true
+enable_piece_probe_metrics: true
 ```

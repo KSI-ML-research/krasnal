@@ -21,7 +21,7 @@ LICHESS_BOT_REF := "96a8f74d87a42db8039e847548fec0d9528bb079"
     @echo "  just test [args]                      - run Python tests"
     @echo "  just pre-commit                       - run all pre-commit hooks"
     @echo "  just pipeline                         - run full training pipeline"
-    @echo "  just download-games [target=10000000] - download & filter Aix DB (DuckDB)"
+    @echo "  just download-games [target=5000000] - download & filter Aix DB (DuckDB)"
     @echo "  just preprocess [args]                - tokenize Aix-filtered games for training"
     @echo "  just pretrain model=large train=cuda  - run pretraining stage"
     @echo "  just generate-sft-cot [args]          - generate CoT shards"
@@ -60,14 +60,14 @@ pipeline:
     just download-games
     just preprocess
     just pretrain
-    just generate-sft-cot --depth 10
-    just train-sft-cot
+    # just generate-sft-cot --depth 10
+    # just train-sft-cot
 
 
 # Download & filter Aix Lichess database for high-quality games with evals
 # Uses DuckDB + Aix extension for fast SQL-based filtering
 # Uses cached files first, downloads missing ones automatically
-# Target: ~10M games by default (configurable)
+# Target: ~5M games by default (configurable)
 download-games *args:
     uv run scripts/data/download_games.py {{args}}
 

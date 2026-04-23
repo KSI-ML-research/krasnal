@@ -16,7 +16,6 @@ from krasnal.config import (
 )
 from krasnal.dataset import ChessDataset, make_collate_fn
 from krasnal.eval import ChessEvaluator, get_stockfish_client
-from krasnal.eval.metrics import DEFAULT_METRICS
 from krasnal.tokens import get_vocab_size, set_side_prefixed_moves
 from krasnal.trainer import (
     build_model,
@@ -70,7 +69,6 @@ def main(cfg: DictConfig) -> None:
         "n_head": mconf.n_head,
         "n_embd": mconf.n_embd,
         "dropout": mconf.dropout,
-        "bias": mconf.bias,
         "epochs": tconf.epochs,
         "batch_size": tconf.batch_size,
         "learning_rate": tconf.learning_rate,
@@ -148,8 +146,16 @@ def main(cfg: DictConfig) -> None:
         collate_fn=collate,
     )
 
-    stockfish = get_stockfish_client(depth=10)
-    evaluator = ChessEvaluator(metrics=DEFAULT_METRICS, stockfish=stockfish, seed=cfg.seed)
+    stockfish = get_stockfish_client(depth=cfg.eval.stockfish_depth)
+    evaluator = ChessEvaluator(
+        metrics=list(cfg.eval.metrics),
+        stockfish=stockfish,
+        seed=cfg.seed,
+        acpl_sample_size=cfg.eval.acpl_sample_size,
+        enable_check_probe_metrics=bool(cfg.eval.enable_check_probe_metrics),
+        enable_piece_probe_metrics=bool(cfg.eval.enable_piece_probe_metrics),
+        enable_piece_confusion_matrix_metrics=bool(cfg.eval.enable_piece_confusion_matrix_metrics),
+    )
     eval_device = torch.device(device)
 
     def eval_fn(model, _iter_num):

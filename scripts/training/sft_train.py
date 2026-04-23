@@ -22,7 +22,6 @@ from krasnal.config import (
 )
 from krasnal.dataset import ChessDataset, make_collate_fn
 from krasnal.eval import ChessEvaluator, get_stockfish_client
-from krasnal.eval.metrics import COT_METRICS, DEFAULT_METRICS
 from krasnal.sft.train import (
     RandomTokenSource,
     compute_batch_sizes,
@@ -181,15 +180,24 @@ def main(cfg: DictConfig) -> None:
         collate_fn=collate,
     )
 
-    stockfish = get_stockfish_client(depth=10)
+    stockfish = get_stockfish_client(depth=cfg.eval.stockfish_depth)
     classical_evaluator = ChessEvaluator(
-        metrics=DEFAULT_METRICS, stockfish=stockfish, seed=cfg.seed
+        metrics=list(cfg.eval.metrics),
+        stockfish=stockfish,
+        seed=cfg.seed,
+        acpl_sample_size=cfg.eval.acpl_sample_size,
+        enable_check_probe_metrics=bool(cfg.eval.enable_check_probe_metrics),
+        enable_piece_probe_metrics=bool(cfg.eval.enable_piece_probe_metrics),
+        enable_piece_confusion_matrix_metrics=bool(cfg.eval.enable_piece_confusion_matrix_metrics),
     )
     cot_evaluator = ChessEvaluator(
-        metrics=COT_METRICS,
+        metrics=list(cfg.eval.cot_metrics),
         cot=True,
         stockfish=stockfish,
         seed=cfg.seed,
+        enable_check_probe_metrics=bool(cfg.eval.enable_check_probe_metrics),
+        enable_piece_probe_metrics=bool(cfg.eval.enable_piece_probe_metrics),
+        enable_piece_confusion_matrix_metrics=bool(cfg.eval.enable_piece_confusion_matrix_metrics),
     )
     eval_device = torch.device(device)
 

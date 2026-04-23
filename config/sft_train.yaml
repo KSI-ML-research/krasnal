@@ -2,6 +2,7 @@ defaults:
   - pipeline
   - model: small
   - train: cuda
+  - eval: default
   - _self_
 
 model_path: null

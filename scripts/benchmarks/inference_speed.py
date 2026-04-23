@@ -71,7 +71,6 @@ def main():
         n_head=cfg.n_head,
         n_embd=cfg.n_embd,
         dropout=cfg.dropout,
-        bias=cfg.bias,
     )
     model = load_model(checkpoint, device, gpt_cfg)
     params_M = model.get_num_params() / 1_000_000

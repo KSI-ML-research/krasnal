@@ -47,7 +47,6 @@ def load_model_from_dir(artifact_dir: Path, device: torch.device):
         n_head=cfg["n_head"],
         n_embd=cfg["n_embd"],
         dropout=cfg["dropout"],
-        bias=cfg["bias"],
     )
 
     model = load_model(str(checkpoint_path), device, gpt_cfg)

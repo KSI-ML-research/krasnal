@@ -1,0 +1,44 @@
+defaults:
+  - _self_
+
+enable_check_probe_metrics: true
+enable_piece_probe_metrics: true
+# Enables 36 extra counters: piece_cm_<true_piece>_<pred_piece>.
+# Keep false for cleaner W&B unless debugging class confusions.
+enable_piece_confusion_matrix_metrics: false
+
+metrics:
+  - acc
+  - acc_endgame
+  - acc_when_gives_check
+  - acc_when_in_check
+  - acc_opening
+  - acc_middlegame
+  - acpl
+  - blunder_rate
+  - illegal_mass_endgame
+  - illegal_mass_middlegame
+  - illegal_mass_opening
+  - illegal_mass_when_gives_check
+  - illegal_mass_when_in_check
+  - illegal_mass
+  - mrr
+  - stockfish_top1
+  # - target_piece_acc
+  # - target_piece_top1_legal
+  - top1_legal_endgame
+  - top1_legal_middlegame
+  - top1_legal_opening
+  - top1_legal_when_gives_check
+  - top1_legal_when_in_check
+  - top1_legal
+
+cot_metrics:
+  - cot_format_valid
+  - cot_post_think_mrr
+  - cot_post_think_top1_legal
+  - cot_post_think_top1
+  - cot_think_token_recall
+
+stockfish_depth: 10
+acpl_sample_size: 100

@@ -113,5 +113,4 @@ def build_gpt_config_from_artifact(artifact_dir: Path, vocab_size: int | None = 
         n_embd=int(config["n_embd"]),
         vocab_size=vocab_size if vocab_size is not None else config.get("vocab_size"),
         dropout=float(config.get("dropout", 0.0)),
-        bias=bool(config.get("bias", False)),
     )
