@@ -1,5 +1,18 @@
 # Changelog
 
+## 2026-04-23
+
+Added auxiliary piece-probing QA tokens in pretraining:
+
+- Question token: `<what_piece>`
+- Answer tokens: `<pawn>`, `<knight>`, `<bishop>`, `<rook>`, `<queen>`, `<king>`
+
+Piece QA is inserted after sampled moves and uses deterministic inverse-frequency sampling with `p_king=0.5` baseline. This targets a more balanced piece-answer distribution while keeping preprocessing reproducible.
+
+Question-token targets are loss-masked (`-100`), so the model is trained to predict piece answers and continuation, not stochastic question placement.
+
+Added piece probe evaluation metrics: `piece_acc`, `piece_macro_f1`, and 6x6 confusion-matrix counters.
+
 ## 2026-04-22
 
 Replaced single `<check>` annotation with auxiliary QA tokens in pretraining:

@@ -10,10 +10,17 @@ from krasnal.eval.parsers import parse_game_tokens
 from krasnal.eval.replayer import replay_games
 from krasnal.inference import InferenceSession, StatelessBatchInferenceSession
 from krasnal.tokens import (
+    BISHOP_ID,
     GAME_END_ID,
     IS_CHECK_ID,
+    KING_ID,
+    KNIGHT_ID,
     NO_CHECK_ID,
+    PAWN_ID,
+    QUEEN_ID,
+    ROOK_ID,
     THINK_END_ID,
+    WHAT_PIECE_ID,
     YES_CHECK_ID,
     get_moves_only,
     to_uci,
@@ -130,7 +137,99 @@ class ChessEvaluator:
 
         final = self._aggregate_results(results)
         final.update(self._evaluate_is_check_probe(contexts, model, device))
+        final.update(self._evaluate_piece_probe(contexts, model, device))
         return final
+
+    def _evaluate_piece_probe(
+        self,
+        contexts: list[EvalContext],
+        model: torch.nn.Module,
+        device: torch.device,
+    ) -> dict[str, float]:
+        piece_type_to_token = {
+            1: PAWN_ID,
+            2: KNIGHT_ID,
+            3: BISHOP_ID,
+            4: ROOK_ID,
+            5: QUEEN_ID,
+            6: KING_ID,
+        }
+        piece_ids = [PAWN_ID, KNIGHT_ID, BISHOP_ID, ROOK_ID, QUEEN_ID, KING_ID]
+        piece_names = {
+            PAWN_ID: "pawn",
+            KNIGHT_ID: "knight",
+            BISHOP_ID: "bishop",
+            ROOK_ID: "rook",
+            QUEEN_ID: "queen",
+            KING_ID: "king",
+        }
+
+        probe_sequences: list[list[int]] = []
+        labels: list[int] = []
+        block_size = model.config.block_size
+
+        for ctx in contexts:
+            if ctx.sequence is None or ctx.actual_token is None or ctx.piece_type is None:
+                continue
+            true_piece_token = piece_type_to_token.get(ctx.piece_type)
+            if true_piece_token is None:
+                continue
+            probe = [*ctx.sequence, ctx.actual_token, WHAT_PIECE_ID]
+            if len(probe) > block_size:
+                continue
+            probe_sequences.append(probe)
+            labels.append(true_piece_token)
+
+        default_metrics: dict[str, float] = {
+            "piece_acc": 0.0,
+            "piece_macro_f1": 0.0,
+        }
+        for true_id in piece_ids:
+            for pred_id in piece_ids:
+                default_metrics[f"piece_cm_{piece_names[true_id]}_{piece_names[pred_id]}"] = 0.0
+
+        if not probe_sequences:
+            return default_metrics
+
+        batch_session = StatelessBatchInferenceSession(model, device)
+        probs = batch_session.get_raw_probs_batch(probe_sequences)
+
+        preds: list[int] = []
+        for prob in probs:
+            pred_piece = max(piece_ids, key=lambda pid: float(prob[pid]))
+            preds.append(pred_piece)
+
+        confusion = {(true_id, pred_id): 0 for true_id in piece_ids for pred_id in piece_ids}
+        for true_id, pred_id in zip(labels, preds, strict=True):
+            confusion[(true_id, pred_id)] += 1
+
+        total = len(labels)
+        correct = sum(confusion[(piece_id, piece_id)] for piece_id in piece_ids)
+        acc = correct / total if total > 0 else 0.0
+
+        f1_sum = 0.0
+        for piece_id in piece_ids:
+            tp = confusion[(piece_id, piece_id)]
+            fp = sum(confusion[(other, piece_id)] for other in piece_ids if other != piece_id)
+            fn = sum(confusion[(piece_id, other)] for other in piece_ids if other != piece_id)
+            precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
+            recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0
+            f1 = (
+                2.0 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0.0
+            )
+            f1_sum += f1
+        macro_f1 = f1_sum / len(piece_ids)
+
+        metrics: dict[str, float] = {
+            "piece_acc": acc,
+            "piece_macro_f1": macro_f1,
+        }
+        for true_id in piece_ids:
+            for pred_id in piece_ids:
+                metrics[f"piece_cm_{piece_names[true_id]}_{piece_names[pred_id]}"] = float(
+                    confusion[(true_id, pred_id)]
+                )
+        return metrics
 
     def _evaluate_is_check_probe(
         self,

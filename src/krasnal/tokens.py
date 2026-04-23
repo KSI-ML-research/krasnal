@@ -32,6 +32,13 @@ IS_CHECK_ID = 16
 YES_CHECK_ID = 17
 NO_CHECK_ID = 18
 CAPTURE_ID = 19
+WHAT_PIECE_ID = 20
+PAWN_ID = 21
+KNIGHT_ID = 22
+BISHOP_ID = 23
+ROOK_ID = 24
+QUEEN_ID = 25
+KING_ID = 26
 
 WHITE_PREFIX = "w:"
 BLACK_PREFIX = "b:"
@@ -65,6 +72,13 @@ MOVE_ANNOTATION_TOKENS = {
     "<yes_check>": YES_CHECK_ID,
     "<no_check>": NO_CHECK_ID,
     "<capture>": CAPTURE_ID,
+    "<what_piece>": WHAT_PIECE_ID,
+    "<pawn>": PAWN_ID,
+    "<knight>": KNIGHT_ID,
+    "<bishop>": BISHOP_ID,
+    "<rook>": ROOK_ID,
+    "<queen>": QUEEN_ID,
+    "<king>": KING_ID,
 }
 
 SPECIAL_TOKENS = {

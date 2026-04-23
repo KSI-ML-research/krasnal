@@ -35,6 +35,10 @@ Annotation tokens help the model learn chess rules and board representation duri
 
 `<yes_check>`, `<no_check>` are answer tokens.
 
+`<what_piece>` asks what piece type just moved.
+
+`<pawn>`, `<knight>`, `<bishop>`, `<rook>`, `<queen>`, `<king>` are answer tokens.
+
 Training format around a move can be:
 
 `... w:h5f7 <is_check> <yes_check> ...`
@@ -42,6 +46,8 @@ Training format around a move can be:
 or
 
 `... b:a7a6 <is_check> <no_check> ...`
+
+`... w:e2e4 <what_piece> <pawn> ...`
 
 Question tokens are loss-masked, so model learns answers and chess continuation, not question timing.
 
