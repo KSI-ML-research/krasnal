@@ -44,12 +44,18 @@ class ChessEvaluator:
 
     def _init_metrics(self) -> dict[str, Any]:
         metrics = {}
+        phase_metric_suffixes = {"_opening", "_middlegame", "_endgame"}
+        
         for name in self.requested_metrics:
             if name in METRIC_REGISTRY:
                 if name == "acpl":
                     metrics[name] = METRIC_REGISTRY[name](
                         stockfish=self.stockfish, sample_size=self.acpl_sample_size
                     )
+                elif any(name.endswith(suffix) for suffix in phase_metric_suffixes):
+                    # Phase-based metrics: extract phase from metric name
+                    phase = name.rsplit("_", 1)[1]
+                    metrics[name] = METRIC_REGISTRY[name](phase=phase)
                 else:
                     metrics[name] = METRIC_REGISTRY[name]()
         return metrics
