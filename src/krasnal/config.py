@@ -4,7 +4,7 @@ from pathlib import Path
 _PACKAGE_ROOT = Path(__file__).resolve().parent
 
 DATA_DIR = Path("data")
-RAW_UCI_DIR = DATA_DIR / "1_filtered_games"
+RAW_UCI_DIR = DATA_DIR / "1_filtered"
 MOVES_FILE = _PACKAGE_ROOT / "uci_moves.txt"
 ARTIFACTS_DIR = Path("artifacts")
 PRETRAIN_DATASET_PATH = DATA_DIR / "2_tokenized/pretrain.parquet"
@@ -20,7 +20,6 @@ class GPTConfig:
     n_embd: int
     vocab_size: int | None = None
     dropout: float = 0.0
-    bias: bool = False
 
 
 @dataclass

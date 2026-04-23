@@ -219,6 +219,10 @@ local_games/
 # Lichess Bot
 lichess-bot/
 
+# Hydra output
+outputs/
+.hydra/
+
 
 *.pt
 *.zip

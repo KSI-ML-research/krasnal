@@ -3,43 +3,38 @@
 Download Aix-compatible Lichess database files and filter them with DuckDB + Aix.
 
 Filters:
-    - Both players >= 1800 Elo
-    - Time control >= 300s base (5+0 and above)
+    - Both players >= min_elo (configured in download.yaml)
+    - Time control >= min_time seconds base (5+0 and above)
     - Games must have Stockfish evals
     - Normal termination only
     - Date range: 2013-01 to 2026-03 (configurable)
 
-Output: Parquet files in data/1_filtered_games/
+Output: Parquet files in data/1_filtered/
 
 Usage:
-    # Filter until ~10M games (default)
-    just filter-aix
-
-    # Filter until exactly 20M games
-    just filter-aix --target-games 20000000
-
-    # Process a specific month only
-    just filter-aix --months 2026-03
+    just download-games
+    just download-games target_games=10000000
+    just download-games min_elo=1800
 """
 
-import argparse
 import os
 import time
 from pathlib import Path
 
 import duckdb
+import hydra
 from huggingface_hub import hf_hub_download
 from loguru import logger
+from omegaconf import DictConfig
 
 # ─── Configuration ───────────────────────────────────────────────────────────
 
 HF_REPO = "thomasd1/aix-lichess-database"
-COMPRESSION = "high"  # "low", "medium", or "high" - high saves bandwidth
+COMPRESSION = "high"
 
 CACHE_DIR = Path("data/0_aix_downloads")
-OUTPUT_DIR = Path("data/1_filtered_games")
+OUTPUT_DIR = Path("data/1_filtered")
 
-# Default: all available months (2013-01 through 2026-03)
 DEFAULT_MONTHS = [
     f"{y}-{m:02d}"
     for y in range(2013, 2027)
@@ -47,9 +42,6 @@ DEFAULT_MONTHS = [
     if (y, m) >= (2013, 1) and (y, m) <= (2026, 3)
 ]
 
-TARGET_GAMES = 10_000_000  # Default target
-
-# Known bad months with eval issues
 SKIP_MONTHS = {"2020-12", "2021-01", "2020-07", "2016-12"}
 
 # ─── DuckDB + Aix Query ─────────────────────────────────────────────────────
@@ -97,33 +89,24 @@ WHERE white_rating >= {min_elo}
 def download_aix_file(month: str, compression: str, cache_dir: Path) -> Path:
     """Download Aix parquet file from HuggingFace."""
     cache_dir.mkdir(parents=True, exist_ok=True)
-
     filename = f"aix_lichess_{month}_{compression}.parquet"
-    subfolder = f"{compression}_compression"
-    cache_path = cache_dir / subfolder / filename
+    downloaded_path = cache_dir / f"{compression}_compression" / filename
+    if downloaded_path.exists():
+        return downloaded_path
 
-    if cache_path.exists():
-        logger.info(f"Using cached file: {cache_path}")
-        return cache_path
-
-    logger.info(f"Downloading {filename} from HF ({subfolder}/)...")
-
-    hf_token = os.environ.get("HF_TOKEN")
-
+    logger.info(f"Downloading {filename}...")
     start = time.time()
+    hf_token = os.environ.get("HF_TOKEN")
     downloaded_path = hf_hub_download(
         repo_id=HF_REPO,
         filename=filename,
-        subfolder=subfolder,
         repo_type="dataset",
-        local_dir=cache_dir,
         token=hf_token,
     )
     elapsed = time.time() - start
     size_mb = Path(downloaded_path).stat().st_size / (1024 * 1024)
     speed = size_mb / elapsed if elapsed > 0 else 0
     logger.info(f"Downloaded {size_mb:.0f} MB in {elapsed:.0f}s ({speed:.1f} MB/s)")
-
     return Path(downloaded_path)
 
 
@@ -132,8 +115,8 @@ def filter_month(
     month: str,
     output_dir: Path,
     con: duckdb.DuckDBPyConnection,
-    min_elo: int = 2000,
-    min_time: int = 300,
+    min_elo: int,
+    min_time: int,
 ) -> int:
     """
     Filter one month of Aix games and save to Parquet.
@@ -141,18 +124,15 @@ def filter_month(
     Returns the number of games that passed filters.
     """
     output_dir.mkdir(parents=True, exist_ok=True)
-    output_path = output_dir / f"eval_games_{month}.parquet"
+    output_path = output_dir / f"filtered_{month}.parquet"
 
     if output_path.exists():
         logger.info(f"Output already exists: {output_path}, skipping")
-        # Return count from existing file
         result = con.execute(f"SELECT COUNT(*) FROM '{output_path}'").fetchone()
         return result[0]
 
-    # Compute date range for this month
     year, mon = month.split("-")
     date_start = f"{year}-{mon}-01"
-    # Next month
     next_mon_int = int(mon) + 1
     if next_mon_int > 12:
         next_year = int(year) + 1
@@ -173,7 +153,6 @@ def filter_month(
     logger.info(f"Filtering {month}...")
     start = time.time()
 
-    # Execute query and write to Parquet
     con.execute(f"""
         COPY (
             {query}
@@ -188,61 +167,31 @@ def filter_month(
     return count
 
 
-def main():
-    parser = argparse.ArgumentParser(
-        description="Filter Aix Lichess database for high-quality games with evals"
-    )
-    parser.add_argument(
-        "--target-games",
-        type=int,
-        default=TARGET_GAMES,
-        help="Target number of games to collect (default: 10M)",
-    )
-    parser.add_argument(
-        "--months",
-        nargs="*",
-        default=None,
-        help="Specific months to process (default: 2013-01 through 2026-03)",
-    )
-    parser.add_argument(
-        "--compression",
-        choices=["low", "medium", "high"],
-        default=COMPRESSION,
-        help="Compression level (default: high)",
-    )
-    parser.add_argument(
-        "--min-elo",
-        type=int,
-        default=1800,
-        help="Minimum Elo for both players (default: 1800)",
-    )
-    parser.add_argument(
-        "--min-time",
-        type=int,
-        default=300,
-        help="Minimum base time in seconds (default: 300)",
-    )
-    args = parser.parse_args()
-
-    months = args.months if args.months else DEFAULT_MONTHS
-    compression = args.compression
-
+@hydra.main(version_base=None, config_path="../../config", config_name="download")
+def main(cfg: DictConfig) -> None:
     logger.info("=" * 60)
     logger.info("Aix Lichess Database Filter")
     logger.info("=" * 60)
-    logger.info(f"Target games: {args.target_games:,}")
-    logger.info(f"Months to process: {', '.join(months)}")
+
+    min_elo = cfg.min_elo
+    min_time = cfg.min_time
+    target_games = cfg.target_games
+    compression = cfg.compression
+
+    months = cfg.months if cfg.months else DEFAULT_MONTHS
+
+    logger.info(f"Target games: {target_games:,}")
+    logger.info(f"Months to process: {len(months)}")
     logger.info(f"Compression: {compression}")
-    logger.info(f"Min Elo: {args.min_elo}")
-    logger.info(f"Min time control: {args.min_time}s")
-    logger.info(f"HF_TOKEN: {'set' if os.environ.get('HF_TOKEN') else 'not set'}")
+    logger.info(f"Min Elo: {min_elo}")
+    logger.info(f"Min time control: {min_time}s")
+
     hf_transfer_status = (
         "enabled" if os.environ.get("HF_HUB_ENABLE_HF_TRANSFER") == "1" else "disabled"
     )
     logger.info(f"hf_transfer: {hf_transfer_status}")
     logger.info("")
 
-    # Create DuckDB connection with Aix extension
     con = duckdb.connect()
     logger.info("Installing Aix DuckDB extension...")
     con.execute("INSTALL aixchess FROM community")
@@ -256,7 +205,7 @@ def main():
             logger.warning(f"Skipping {month} (known eval issues)")
             continue
 
-        if total_games >= args.target_games:
+        if total_games >= target_games:
             logger.info(f"Target reached ({total_games:,} games). Stopping.")
             break
 
@@ -273,7 +222,7 @@ def main():
                 continue
 
         try:
-            count = filter_month(parquet_path, month, OUTPUT_DIR, con, args.min_elo, args.min_time)
+            count = filter_month(parquet_path, month, OUTPUT_DIR, con, min_elo, min_time)
             total_games += count
         except Exception as e:
             logger.error(f"Failed to filter {month}: {e}")

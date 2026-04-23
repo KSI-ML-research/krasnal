@@ -105,16 +105,6 @@ def _create_target_piece_accuracy(**_: Any) -> Metric:
     return PerPieceMetric(AccuracyCore())
 
 
-COT_METRICS = [
-    "cot_format_valid",
-    "cot_post_think_top1",
-    "cot_post_think_mrr",
-    "cot_post_think_top1_legal",
-    "cot_think_token_recall",
-]
-
-EXCLUDED_FROM_DEFAULT = [*COT_METRICS, "target_piece_illegal_mass"]
-
 METRIC_REGISTRY: dict[str, Any] = {
     # Core metrics
     "top1_legal": _create_top1_legal,
@@ -153,11 +143,7 @@ METRIC_REGISTRY: dict[str, Any] = {
     "cot_think_token_recall": CotThinkTokenRecallMetric,
 }
 
-DEFAULT_METRICS = [k for k in METRIC_REGISTRY if k not in EXCLUDED_FROM_DEFAULT]
-
 __all__ = [
-    "COT_METRICS",
-    "DEFAULT_METRICS",
     "METRIC_REGISTRY",
     "EvalContext",
 ]

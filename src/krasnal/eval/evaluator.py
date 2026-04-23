@@ -27,15 +27,13 @@ from krasnal.tokens import (
 )
 from krasnal.utils import set_seed
 
-from .metrics import COT_METRICS, DEFAULT_METRICS, METRIC_REGISTRY
+from .metrics import METRIC_REGISTRY
 from .metrics.context import EvalContext
 from .stockfish import StockfishClient
 
 
 class ChessEvaluator:
     """Evaluates chess model on legal move metrics using batched inference."""
-
-    DEFAULT_METRICS = DEFAULT_METRICS
 
     def __init__(
         self,
@@ -45,13 +43,22 @@ class ChessEvaluator:
         seed: int | None = None,
         stockfish: StockfishClient | None = None,
         acpl_sample_size: int = 100,
+        enable_check_probe_metrics: bool = True,
+        enable_piece_probe_metrics: bool = True,
+        enable_piece_confusion_matrix_metrics: bool = False,
     ):
-        self.requested_metrics = metrics or (COT_METRICS if cot else self.DEFAULT_METRICS)
+        if metrics is None:
+            raise ValueError("ChessEvaluator requires an explicit metrics list")
+
+        self.requested_metrics = metrics
         self.cot = cot
         self.cot_max_tokens = cot_max_tokens
         self.seed = seed
         self.stockfish = stockfish
         self.acpl_sample_size = acpl_sample_size
+        self.enable_check_probe_metrics = enable_check_probe_metrics
+        self.enable_piece_probe_metrics = enable_piece_probe_metrics
+        self.enable_piece_confusion_matrix_metrics = enable_piece_confusion_matrix_metrics
         self.metrics = self._init_metrics()
 
     def _init_metrics(self) -> dict[str, Any]:
@@ -136,8 +143,10 @@ class ChessEvaluator:
                     results[k].append(v)
 
         final = self._aggregate_results(results)
-        final.update(self._evaluate_is_check_probe(contexts, model, device))
-        final.update(self._evaluate_piece_probe(contexts, model, device))
+        if self.enable_check_probe_metrics:
+            final.update(self._evaluate_is_check_probe(contexts, model, device))
+        if self.enable_piece_probe_metrics:
+            final.update(self._evaluate_piece_probe(contexts, model, device))
         return final
 
     def _evaluate_piece_probe(
@@ -184,9 +193,12 @@ class ChessEvaluator:
             "piece_acc": 0.0,
             "piece_macro_f1": 0.0,
         }
-        for true_id in piece_ids:
-            for pred_id in piece_ids:
-                default_metrics[f"piece_cm_{piece_names[true_id]}_{piece_names[pred_id]}"] = 0.0
+        for piece_id in piece_ids:
+            default_metrics[f"piece_f1_{piece_names[piece_id]}"] = 0.0
+        if self.enable_piece_confusion_matrix_metrics:
+            for true_id in piece_ids:
+                for pred_id in piece_ids:
+                    default_metrics[f"piece_cm_{piece_names[true_id]}_{piece_names[pred_id]}"] = 0.0
 
         if not probe_sequences:
             return default_metrics
@@ -208,6 +220,7 @@ class ChessEvaluator:
         acc = correct / total if total > 0 else 0.0
 
         f1_sum = 0.0
+        piece_f1_scores: dict[int, float] = {}
         for piece_id in piece_ids:
             tp = confusion[(piece_id, piece_id)]
             fp = sum(confusion[(other, piece_id)] for other in piece_ids if other != piece_id)
@@ -217,6 +230,7 @@ class ChessEvaluator:
             f1 = (
                 2.0 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0.0
             )
+            piece_f1_scores[piece_id] = f1
             f1_sum += f1
         macro_f1 = f1_sum / len(piece_ids)
 
@@ -224,11 +238,14 @@ class ChessEvaluator:
             "piece_acc": acc,
             "piece_macro_f1": macro_f1,
         }
-        for true_id in piece_ids:
-            for pred_id in piece_ids:
-                metrics[f"piece_cm_{piece_names[true_id]}_{piece_names[pred_id]}"] = float(
-                    confusion[(true_id, pred_id)]
-                )
+        for piece_id in piece_ids:
+            metrics[f"piece_f1_{piece_names[piece_id]}"] = piece_f1_scores[piece_id]
+        if self.enable_piece_confusion_matrix_metrics:
+            for true_id in piece_ids:
+                for pred_id in piece_ids:
+                    metrics[f"piece_cm_{piece_names[true_id]}_{piece_names[pred_id]}"] = float(
+                        confusion[(true_id, pred_id)]
+                    )
         return metrics
 
     def _evaluate_is_check_probe(

@@ -1,0 +1,17 @@
+defaults:
+  - pipeline
+
+# Target number of games to collect
+target_games: 5_000_000
+
+# Minimum Elo for both players
+min_elo: 1500
+
+# Minimum base time in seconds (5+0 = 300)
+min_time: 300
+
+# Compression level: low, medium, or high
+compression: high
+
+# Months to process (null = all available: 2013-01 to 2026-03)
+months: []
