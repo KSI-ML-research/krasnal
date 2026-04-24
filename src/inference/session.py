@@ -43,7 +43,7 @@ class InferenceSession(BaseInferenceSession):
 
     def _build_kv_cache(self) -> KVCache:
         config = self.model.config
-        dtype = torch.bfloat16 if self.device.type == "cuda" else torch.float32
+        dtype = torch.bfloat16 if self.device == "cuda" else torch.float32
         return KVCache(
             batch_size=1,
             num_layers=config.n_layer,
