@@ -99,14 +99,14 @@ def main() -> None:
 
     # Create evaluator with default metrics
     print(f"Using {len(DEFAULT_METRICS)} metrics: {', '.join(DEFAULT_METRICS[:5])}...")
-    evaluator = ChessEvaluator(metrics=DEFAULT_METRICS)
+    _evaluator = ChessEvaluator(metrics=DEFAULT_METRICS)
 
     # Evaluate on puzzles
     # TODO: Implement puzzle-specific evaluation logic
     # For now, we'll use the standard evaluator on puzzle FENs
     print(f"Evaluating model on {len(puzzles)} puzzles...")
 
-    device = torch.device(args.device) if args.device else torch.device(provider.device)
+    _device = torch.device(args.device) if args.device else torch.device(provider.device)
 
     # Results placeholder
     results = {}
