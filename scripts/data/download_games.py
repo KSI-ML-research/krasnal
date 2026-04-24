@@ -17,6 +17,7 @@ Usage:
     just download-games min_elo=1800
 """
 
+import logging
 import os
 import time
 from pathlib import Path
@@ -27,12 +28,13 @@ from huggingface_hub import hf_hub_download
 from loguru import logger
 from omegaconf import DictConfig
 
+logging.getLogger("httpx").setLevel(logging.WARNING)
+
 # ─── Configuration ───────────────────────────────────────────────────────────
 
 HF_REPO = "thomasd1/aix-lichess-database"
 COMPRESSION = "high"
 
-CACHE_DIR = Path("data/0_aix_downloads")
 OUTPUT_DIR = Path("data/1_filtered")
 
 DEFAULT_MONTHS = [
@@ -86,13 +88,13 @@ WHERE white_rating >= {min_elo}
 """
 
 
-def download_aix_file(month: str, compression: str, cache_dir: Path) -> Path:
-    """Download Aix parquet file from HuggingFace."""
-    cache_dir.mkdir(parents=True, exist_ok=True)
-    filename = f"aix_lichess_{month}_{compression}.parquet"
-    downloaded_path = cache_dir / f"{compression}_compression" / filename
-    if downloaded_path.exists():
-        return downloaded_path
+def download_aix_file(month: str, compression: str) -> Path:
+    """
+    Download Aix parquet file from HuggingFace.
+
+    Files are cached in HF's default cache (~/.cache/huggingface/).
+    """
+    filename = f"high_compression/aix_lichess_{month}_{compression}.parquet"
 
     logger.info(f"Downloading {filename}...")
     start = time.time()
@@ -209,17 +211,11 @@ def main(cfg: DictConfig) -> None:
             logger.info(f"Target reached ({total_games:,} games). Stopping.")
             break
 
-        filename = f"aix_lichess_{month}_{compression}.parquet"
-        parquet_path = CACHE_DIR / f"{compression}_compression" / filename
-
-        if parquet_path.exists():
-            logger.info(f"Using cached file: {parquet_path.name}")
-        else:
-            try:
-                parquet_path = download_aix_file(month, compression, CACHE_DIR)
-            except Exception as e:
-                logger.error(f"Failed to download {month}: {e}")
-                continue
+        try:
+            parquet_path = download_aix_file(month, compression)
+        except Exception as e:
+            logger.error(f"Failed to download {month}: {e}")
+            continue
 
         try:
             count = filter_month(parquet_path, month, OUTPUT_DIR, con, min_elo, min_time)

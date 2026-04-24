@@ -139,3 +139,7 @@ bot-run +model_path='':
 bot-clean:
     @echo "Cleaning lichess-bot runtime artifacts and repository..."
     @rm -rf lichess-bot
+
+# Remvoe dataset hf-cache
+hf-cache-clean:
+    hf cache rm dataset/thomasd1/aix-lichess-database -y
