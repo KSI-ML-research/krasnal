@@ -134,5 +134,18 @@ bot-run +model_path='':
 
 # Remove everything related to local lichess-bot setup
 bot-clean:
-    @echo "Cleaning lichess-bot runtime artifacts and repository..."
-    @rm -rf lichess-bot
+     @echo "Cleaning lichess-bot runtime artifacts and repository..."
+     @rm -rf lichess-bot
+
+# ===== PUZZLES =====
+
+# Download Lichess puzzle database (~1GB)
+download-puzzles:
+    mkdir -p data
+    curl -L --progress-bar \
+        "https://database.lichess.org/lichess_db_puzzle.csv.zst" \
+        -o data/lichess_db_puzzle.csv.zst
+
+# Filter puzzles by rating and export to JSONL
+prepare-puzzles:
+    cargo run --release --bin prepare-puzzles
