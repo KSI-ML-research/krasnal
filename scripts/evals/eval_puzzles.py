@@ -22,9 +22,7 @@ from krasnal.utils import find_latest_model_artifact
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description="Evaluate a Krasnal model on Lichess puzzles."
-    )
+    parser = argparse.ArgumentParser(description="Evaluate a Krasnal model on Lichess puzzles.")
     parser.add_argument(
         "--artifact-dir",
         type=Path,
