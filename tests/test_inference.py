@@ -7,6 +7,7 @@ from krasnal.inference import (
     StatelessBatchInferenceSession,
     sample_token,
 )
+from krasnal.inference.kv_cache import KVCache
 from krasnal.model import GPT
 from krasnal.tokens import (
     BLACK_PREFIX,
@@ -33,63 +34,7 @@ def test_inference_session_feed_and_get_probs():
     assert probs.shape[0] == get_vocab_size()
     assert probs.sum().item() - 1.0 < 0.01
 
-def test_kv_single_token():
-    torch.manual_seed(7)
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    tokenizer = Tokenizer(MOVES_FILE)
 
-    config = GPTConfig(
-        block_size=128,
-        vocab_size=tokenizer.get_vocab_size(),
-        n_layer=2,
-        n_head=2,
-        n_embd=64,
-    )
-    model = GPT(config).to(device)
-    model.eval()
-
-    session_no_cache = InferenceSession(model, device, use_kv_cache=False)
-    session_cache = InferenceSession(model, device, use_kv_cache=True)
-
-    # deterministic synthetic token stream within model vocab
-    token_stream = [1, 17, 42, 5, 73, 19]
-
-    for token_id in token_stream:
-        probs_no_cache = session_no_cache.get_probs()
-        probs_cache = session_cache.get_probs()
-        assert torch.allclose(probs_no_cache, probs_cache)
-
-        session_no_cache.feed(token_id)
-        session_cache.feed(token_id)
-
-def test_kv_multi_token():
-    torch.manual_seed(7)
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    tokenizer = Tokenizer(MOVES_FILE)
-
-    config = GPTConfig(
-        block_size=128,
-        vocab_size=tokenizer.get_vocab_size(),
-        n_layer=2,
-        n_head=2,
-        n_embd=64,
-    )
-    model = GPT(config).to(device)
-    model.eval()
-
-    session_no_cache = InferenceSession(model, device, use_kv_cache=False)
-    session_cache = InferenceSession(model, device, use_kv_cache=True)
-
-    # deterministic synthetic token stream within model vocab
-    token_stream = [[1,3], [17, 23], [42, 2], [5, 37], [73, 19]]
-
-    for i in range(len(token_stream)):
-        probs_no_cache = session_no_cache.get_probs()
-        probs_cache = session_cache.get_probs()
-        assert torch.allclose(probs_no_cache, probs_cache)
-
-        session_no_cache.feed(token_stream[i])
-        session_cache.feed(token_stream[i])
 def test_sample_token_greedy():
     probs = torch.tensor([0.1, 0.5, 0.4])
     assert sample_token(probs, temperature=0.0) == 1
@@ -159,3 +104,54 @@ def test_stateless_batch_inference_session_returns_probs():
 
     assert probs.shape == (2, get_vocab_size())
     assert not torch.isnan(probs).any()
+
+
+def _build_test_model(device: torch.device) -> GPT:
+    config = GPTConfig(block_size=128, vocab_size=get_vocab_size(), n_layer=2, n_head=2, n_embd=64)
+    model = GPT(config).to(device)
+    model.eval()
+    return model
+
+
+def _build_kv_cache_for_model(model: GPT, device: torch.device, batch_size: int = 1) -> KVCache:
+    return KVCache(
+        batch_size=batch_size,
+        num_layers=model.config.n_layer,
+        num_heads=model.config.n_head,
+        head_dim=model.config.n_embd // model.config.n_head,
+        max_seq_len=model.config.block_size,
+        device=device,
+        dtype=torch.float32,
+    )
+
+
+def test_kv_cache_single_token_matches_full_prefix_logits():
+    torch.manual_seed(7)
+    device = torch.device("cpu")
+    model = _build_test_model(device)
+
+    sequence = torch.tensor([[0, WHITE_WON_ID, 17, 42, 5, 73, 19]], dtype=torch.long, device=device)
+    kv_cache = _build_kv_cache_for_model(model, device)
+
+    for t in range(1, sequence.size(1) + 1):
+        full_logits, _ = model(sequence[:, :t])
+        cached_logits, _ = model(sequence[:, t - 1:t], past_kv=kv_cache)
+        assert torch.allclose(cached_logits[:, -1, :], full_logits[:, -1, :], atol=1e-5, rtol=1e-4)
+
+
+def test_kv_cache_multi_token_chunks_match_full_prefix_logits():
+    torch.manual_seed(7)
+    device = torch.device("cpu")
+    model = _build_test_model(device)
+
+    sequence = torch.tensor([[0, DRAW_ID, 11, 3, 17, 23, 42, 2]], dtype=torch.long, device=device)
+    kv_cache = _build_kv_cache_for_model(model, device)
+
+    chunk_sizes = [2, 3, 3]
+    start = 0
+    for chunk_size in chunk_sizes:
+        end = start + chunk_size
+        full_logits, _ = model(sequence[:, :end])
+        cached_logits, _ = model(sequence[:, start:end], past_kv=kv_cache)
+        assert torch.allclose(cached_logits[:, -1, :], full_logits[:, -1, :], atol=1e-5, rtol=1e-4)
+        start = end

@@ -19,7 +19,7 @@ import torch.nn as nn
 from torch.nn import functional as F
 
 if TYPE_CHECKING:
-    from inference.kv_cache import KVCache
+    from krasnal.inference.kv_cache import KVCache
 from krasnal.config import GPTConfig
 
 
@@ -132,43 +132,24 @@ class CausalSelfAttention(nn.Module):
             k_full = k
             v_full = v
 
-        # causal self-attention; Self-attend: (B, nh, T, hs) x (B, nh, hs, T) -> (B, nh, T, T)
-        if self.flash:
-            # efficient attention using Flash Attention CUDA kernels
-            attn_mask = None
-            is_causal = True
-            if past_kv is not None:
-                # When using KV cache, we only apply causal masking to the new tokens.
-                # This is an optimization that allows us to use Flash Attention even with KV cache.
-                # If T == 1 then we are only processing a single new token,
-                # so no causal masking is needed since it can't attend to any future tokens.
-                is_causal = False
-                if T > 1:
-                    q_pos = torch.arange(past_len, past_len + T, device=x.device).unsqueeze(-1)
-                    k_pos = torch.arange(0, past_len + T, device=x.device).unsqueeze(0)
-                    attn_mask = k_pos <= q_pos
-
-            y = torch.nn.functional.scaled_dot_product_attention(
-                q,
-                k_full,
-                v_full,
-                attn_mask=attn_mask,
-                dropout_p=self.dropout if self.training else 0,
-                is_causal=is_causal,
-            )
-        else:
-            # manual implementation of attention
-            att = (q @ k_full.transpose(-2, -1)) * (1.0 / math.sqrt(k_full.size(-1)))
-            if past_kv is None:
-                att = att.masked_fill(self.bias[:, :, :T, :T] == 0, float("-inf"))
-            elif T > 1:
+        attn_mask = None
+        is_causal = True
+        if past_kv is not None:
+            # For cached decoding, explicit mask is only needed when T > 1.
+            is_causal = False
+            if T > 1:
                 q_pos = torch.arange(past_len, past_len + T, device=x.device).unsqueeze(-1)
                 k_pos = torch.arange(0, past_len + T, device=x.device).unsqueeze(0)
-                causal_mask = (k_pos <= q_pos).view(1, 1, T, past_len + T)
-                att = att.masked_fill(~causal_mask, float("-inf"))
-            att = F.softmax(att, dim=-1)
-            att = self.attn_dropout(att)
-            y = att @ v_full
+                attn_mask = k_pos <= q_pos
+
+        y = torch.nn.functional.scaled_dot_product_attention(
+            q,
+            k_full,
+            v_full,
+            attn_mask=attn_mask,
+            dropout_p=self.dropout if self.training else 0,
+            is_causal=is_causal,
+        )
 
         y = y.transpose(1, 2).contiguous().view(B, T, C)
         # output projection
