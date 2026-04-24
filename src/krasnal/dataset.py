@@ -65,11 +65,13 @@ def _get_bucket_size(seq_len: int, bucket_sizes: tuple[int, ...]) -> int:
     return seq_len
 
 
-def make_collate_fn(bucket_sizes: tuple[int, ...] = ()) -> Callable:
-    """Build a collate function configured with explicit bucket sizes."""
-    normalized_buckets = tuple(int(b) for b in bucket_sizes if int(b) > 0)
+class CollateFn:
+    """Picklable collate callable for DataLoader worker processes."""
 
-    def _collate_fn(batch):
+    def __init__(self, bucket_sizes: tuple[int, ...] = ()) -> None:
+        self.bucket_sizes = tuple(int(b) for b in bucket_sizes if int(b) > 0)
+
+    def __call__(self, batch):
         """
         Pad sequences and bucket to stable lengths for torch.compile friendliness.
 
@@ -79,8 +81,8 @@ def make_collate_fn(bucket_sizes: tuple[int, ...] = ()) -> Callable:
         padded = pad_sequence(batch, batch_first=True, padding_value=PAD_ID)
 
         seq_len = padded.size(1) - 1
-        if seq_len > 0 and normalized_buckets:
-            target_len = _get_bucket_size(seq_len, normalized_buckets)
+        if seq_len > 0 and self.bucket_sizes:
+            target_len = _get_bucket_size(seq_len, self.bucket_sizes)
             target_total_len = target_len + 1
             if padded.size(1) < target_total_len:
                 pad_size = target_total_len - padded.size(1)
@@ -92,4 +94,7 @@ def make_collate_fn(bucket_sizes: tuple[int, ...] = ()) -> Callable:
         y[y == WHAT_PIECE_ID] = LOSS_IGNORE_INDEX
         return x, y
 
-    return _collate_fn
+
+def make_collate_fn(bucket_sizes: tuple[int, ...] = ()) -> Callable:
+    """Build a collate function configured with explicit bucket sizes."""
+    return CollateFn(bucket_sizes)
