@@ -1,123 +1,147 @@
-"""Benchmark inference speed of chess language model.
+"""Benchmark the production inference path used by the UCI provider.
 
-Usage:
-    uv run scripts/benchmarks/inference_speed.py \
-        --directory <path> \
-        --num_games 100 \
-        --moves_per_game 20 \
-        --device cpu
-
-Measures token generation throughput (ms/token) by generating random tokens.
-Does not include legal move filtering - benchmark measures pure model forward pass.
+Measures end-to-end latency of `ModelProvider.get_best_move()` using the
+same persistent-session inference path as production.
 """
 
-import argparse
-import os
-import time
+from __future__ import annotations
 
+import argparse
+import random
+import time
+from pathlib import Path
+
+import bulletchess
 import torch
-from omegaconf import OmegaConf
 from tqdm import tqdm
 
-from krasnal.config import GPTConfig
-from krasnal.inference.session import InferenceSession
-from krasnal.inference.utils import load_model
+from krasnal.inference.exceptions import NoLegalMovesError
 from krasnal.tokens import WHITE_WON_ID
+from krasnal.uci_engine.provider import ModelProvider
 
 
-def find_model_in_directory(directory: str):
-    name = "model.pt"
-    path = os.path.join(directory, name)
-    if os.path.isfile(path):
-        return path
-    raise FileNotFoundError(f"No model.pt found in {directory}")
+def _sync_device(device: torch.device) -> None:
+    if device.type == "cuda":
+        torch.cuda.synchronize(device=device)
+    elif device.type == "mps":
+        torch.mps.synchronize()
 
 
-def find_config_in_directory(directory: str):
-    for name in ["config.yaml", "config.json"]:
-        path = os.path.join(directory, name)
-        if os.path.isfile(path):
-            return path
-    raise FileNotFoundError(f"No config.yaml or config.json found in {directory}")
+def _print_results(move_times: list[float], plies_completed: int) -> None:
+    avg_time = sum(move_times) / len(move_times) * 1000
+    min_time = min(move_times) * 1000
+    max_time = max(move_times) * 1000
+    total_time = sum(move_times)
+    throughput = plies_completed / total_time if total_time > 0 else 0.0
+
+    print()
+    print("Results:")
+    print(f"  Avg time/move: {avg_time:.2f}ms")
+    print(f"  Min: {min_time:.2f}ms, Max: {max_time:.2f}ms")
+    print(f"  Total benchmark time: {total_time:.2f}s")
+    print(f"  Throughput: {throughput:.2f} moves/s")
 
 
-def main():
-    parser = argparse.ArgumentParser(description="Benchmark inference speed")
-    parser.add_argument("--directory", help="Directory containing model.pt and config.yaml")
+def _run_one_game(
+    provider: ModelProvider,
+    *,
+    moves_per_game: int,
+    measure: bool,
+) -> tuple[list[float], int]:
+    board = bulletchess.Board()
+    uci_moves: list[str] = []
+    move_times: list[float] = []
+    plies_completed = 0
+
+    provider.reset_session(WHITE_WON_ID)
+
+    for _ in range(moves_per_game):
+        if not list(board.legal_moves()):
+            break
+
+        history = " ".join(uci_moves)
+        _sync_device(provider.device)
+        start = time.perf_counter()
+        try:
+            best_move = provider.get_best_move(history)
+        except NoLegalMovesError:
+            break
+        _sync_device(provider.device)
+
+        move = bulletchess.Move.from_uci(best_move)
+        legal_moves = {candidate.uci() for candidate in board.legal_moves()}
+        if best_move not in legal_moves:
+            raise ValueError(
+                f"Provider returned illegal move {best_move} for position {board.fen()}"
+            )
+
+        board.apply(move)
+        uci_moves.append(best_move)
+        plies_completed += 1
+
+        if measure:
+            move_times.append(time.perf_counter() - start)
+
+    return move_times, plies_completed
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Benchmark production inference path")
+    parser.add_argument("--directory", required=True, help="Artifact directory containing model.pt")
     parser.add_argument("--num_games", type=int, default=100, help="Number of games to benchmark")
-    parser.add_argument("--moves_per_game", type=int, default=20, help="Moves to generate per game")
+    parser.add_argument("--moves_per_game", type=int, default=40, help="Maximum plies per game")
     parser.add_argument("--warmup", type=int, default=1, help="Warmup games before benchmarking")
     parser.add_argument(
+        "--seed", type=int, default=42, help="Random seed for deterministic sampling"
+    )
+    parser.add_argument(
         "--device",
-        default="cuda" if torch.cuda.is_available() else "cpu",
+        default="cpu",
         help="Device to run inference on",
     )
     args = parser.parse_args()
 
-    if not args.directory:
-        parser.error("--directory is required")
+    random.seed(args.seed)
+    torch.manual_seed(args.seed)
 
-    checkpoint = find_model_in_directory(args.directory)
-    config = find_config_in_directory(args.directory)
-
+    artifact_dir = Path(args.directory)
     device = torch.device(args.device)
 
     print("Loading model...")
-    cfg = OmegaConf.load(config)
-    gpt_cfg = GPTConfig(
-        vocab_size=cfg.vocab_size,
-        block_size=cfg.block_size,
-        n_layer=cfg.n_layer,
-        n_head=cfg.n_head,
-        n_embd=cfg.n_embd,
-        dropout=cfg.dropout,
-    )
-    model = load_model(checkpoint, device, gpt_cfg)
-    params_M = model.get_num_params() / 1_000_000
+    provider = ModelProvider.from_artifact_dir(artifact_dir, device=device)
+    params_m = provider.model.get_num_params() / 1_000_000
+    cfg = provider.model.config
 
-    session = InferenceSession(model, device, outcome_token=WHITE_WON_ID)
-
-    print("Warming up...")
-    for _ in range(args.warmup):
-        session.reset(WHITE_WON_ID)
-        for _ in range(args.moves_per_game):
-            probs = session.get_raw_probs()
-            token = torch.multinomial(probs, 1).item()
-            session.feed_token(token)
-
-    model_name = cfg.name if hasattr(cfg, "name") else "unknown"
     print()
-    print("=== Inference Speed Benchmark ===")
-    print(f"Model: {model_name} ({cfg.n_layer} layers, {cfg.n_head} heads, {cfg.n_embd} embed)")
-    print(f"Parameters: {params_M:.1f}M, Vocab: {cfg.vocab_size}")
-    print(f"Checkpoint: {checkpoint}")
-    print(f"Config: {config}")
+    print("=== Production Inference Benchmark ===")
+    print(f"Artifact: {artifact_dir}")
+    print(f"Model: {params_m:.1f}M params")
+    print(
+        f"Config: layers={cfg.n_layer}, heads={cfg.n_head},"
+        f" embd={cfg.n_embd}, block={cfg.block_size}"
+    )
     print(f"Device: {args.device}")
     print(f"Games: {args.num_games}, Moves/game: {args.moves_per_game}")
     print()
 
-    print("Benchmarking...")
-    all_times = []
-    for _game_idx in tqdm(range(args.num_games), desc="Games"):
-        session.reset(WHITE_WON_ID)
-        for _ in range(args.moves_per_game):
-            start = time.perf_counter()
-            probs = session.get_raw_probs()
-            end = time.perf_counter()
-            all_times.append(end - start)
-            token = torch.multinomial(probs, 1).item()
-            session.feed_token(token)
+    for _ in range(args.warmup):
+        _run_one_game(provider, moves_per_game=args.moves_per_game, measure=False)
 
-    avg_time = sum(all_times) / len(all_times) * 1000
-    min_time = min(all_times) * 1000
-    max_time = max(all_times) * 1000
-    total_time = sum(all_times)
+    move_times: list[float] = []
+    plies_completed = 0
+    for _ in tqdm(range(args.num_games), desc="Games"):
+        game_times, game_plies = _run_one_game(
+            provider,
+            moves_per_game=args.moves_per_game,
+            measure=True,
+        )
+        move_times.extend(game_times)
+        plies_completed += game_plies
 
-    print()
-    print("Results:")
-    print(f"  Avg time/token: {avg_time:.2f}ms")
-    print(f"  Min: {min_time:.2f}ms, Max: {max_time:.2f}ms")
-    print(f"  Total benchmark time: {total_time:.2f}s")
+    if not move_times:
+        raise RuntimeError("Benchmark completed zero plies")
+
+    _print_results(move_times, plies_completed)
 
 
 if __name__ == "__main__":

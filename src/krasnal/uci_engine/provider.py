@@ -99,6 +99,7 @@ class ModelProvider(ChessModelProvider):
         self.temperature = float(os.environ.get("KRASNAL_TEMPERATURE", "0.0"))
         self.top_p = float(os.environ.get("KRASNAL_TOP_P", "1.0"))
         self.outcome_token: int | None = None
+        self.session: InferenceSession | None = None
 
     @classmethod
     def from_artifact_dir(
@@ -121,23 +122,36 @@ class ModelProvider(ChessModelProvider):
     def reset_session(self, outcome_token: int) -> None:
         """Reset the inference session with outcome token. Called once per game."""
         self.outcome_token = outcome_token
-
-    def get_best_move(self, uci_moves: str) -> str:
-        if self.outcome_token is None:
-            raise ModelProviderError("Session not initialized. Call reset_session first.")
-
-        session = InferenceSession(
+        self.session = InferenceSession(
             self.model,
             self.device,
-            game=Game(target_outcome_token=self.outcome_token),
+            game=Game(target_outcome_token=outcome_token),
         )
 
-        move_list = list(filter(None, uci_moves.split()))
-        for move_str in move_list:
+    def _sync_session_history(self, move_list: list[str]) -> InferenceSession:
+        if self.session is None or self.outcome_token is None:
+            raise ModelProviderError("Session not initialized. Call reset_session first.")
+
+        session = self.session
+        current_moves = session.game.moves_uci
+
+        if move_list[: len(current_moves)] != current_moves:
+            self.reset_session(self.outcome_token)
+            session = self.session
+            assert session is not None
+            current_moves = session.game.moves_uci
+
+        for move_str in move_list[len(current_moves) :]:
             try:
                 session.feed_uci(move_str)
             except ValueError as exc:
                 raise ModelProviderError(f"Invalid move in history: {move_str}") from exc
+
+        return session
+
+    def get_best_move(self, uci_moves: str) -> str:
+        move_list = list(filter(None, uci_moves.split()))
+        session = self._sync_session_history(move_list)
 
         legal_ids = legal_token_ids(session.game.board)
         if not legal_ids:
