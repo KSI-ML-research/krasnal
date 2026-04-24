@@ -149,3 +149,10 @@ download-puzzles:
 # Filter puzzles by rating and export to JSONL
 prepare-puzzles:
     cargo run --release --bin prepare-puzzles
+
+# Evaluate model on prepared puzzles
+# Usage:
+#   just eval-puzzles                    # uses latest model
+#   just eval-puzzles --artifact-dir artifacts/pretrain/... 
+eval-puzzles *args:
+    PYTHONPATH=src uv run scripts/evals/eval_puzzles.py {{args}}
