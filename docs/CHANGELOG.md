@@ -2,6 +2,13 @@
 
 ## 2026-04-25
 
+Added production inference benchmark (CPU, Ryzen 5 2600, 12M model, 100 games × 40 moves):
+
+| Version | Avg time/move | Min    | Max     | Total time | Throughput |
+|---------|---------------|--------|---------|------------|------------|
+| Before  | 9.90ms        | 5.44ms | 154.36ms| 39.60s     | -          |
+| After   | 7.06ms        | 5.97ms | 57.02ms | 28.23s     | 141.7/s    |
+
 Fixed Stockfish-backed eval on terminal positions. When Stockfish returns `bestmove (none)` after a model move ends the game, eval now treats it as a valid terminal analysis instead of crashing pretrain/SFT runs.
 
 ## 2026-04-23
