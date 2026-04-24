@@ -89,6 +89,7 @@ flowchart TD
 Detailed guides for developers and users:
 
 -   [**Installation Guide**](docs/INSTALLATION.md) - How to set up the environment (Python, uv).
+-   [**Training Pipeline**](docs/training_pipeline.md) - Download games, preprocess, and pretrain.
 -   [**Contributing Guide**](docs/CONTRIBUTING.md) - Code standards, pre-commit hooks and development process.
 -   [**Research Notes**](docs/RESEARCH.md) - Summary of tested architecture variants and experiments.
 -   [**Outcome conditioning**](docs/outcome_conditioning.md) - Prefix with a win/loss token so the model can be steered toward playing for White or Black.
