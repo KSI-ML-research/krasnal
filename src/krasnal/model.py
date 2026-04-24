@@ -126,8 +126,8 @@ class CausalSelfAttention(nn.Module):
         if past_kv is not None:
             past_kv.append_layer(layer_idx, k, v)
             # Get full k and v directly from cache tensors after append
-            k_full = past_kv.key_cache[layer_idx, :, :, :past_len + T, :]
-            v_full = past_kv.value_cache[layer_idx, :, :, :past_len + T, :]
+            k_full = past_kv.key_cache[layer_idx, :, :, : past_len + T, :]
+            v_full = past_kv.value_cache[layer_idx, :, :, : past_len + T, :]
         else:
             k_full = k
             v_full = v

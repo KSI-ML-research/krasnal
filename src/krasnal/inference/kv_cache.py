@@ -19,10 +19,12 @@ class KVCache:
         self.max_seq_len = max_seq_len
 
         # Initialize the cache for keys and values
-        self.key_cache = torch.zeros(num_layers, batch_size, num_heads, max_seq_len,
-                                     head_dim, device=device, dtype=dtype)
-        self.value_cache = torch.zeros(num_layers, batch_size, num_heads, max_seq_len,
-                                       head_dim, device=device, dtype=dtype)
+        self.key_cache = torch.zeros(
+            num_layers, batch_size, num_heads, max_seq_len, head_dim, device=device, dtype=dtype
+        )
+        self.value_cache = torch.zeros(
+            num_layers, batch_size, num_heads, max_seq_len, head_dim, device=device, dtype=dtype
+        )
         self.cache_seqlen = torch.zeros(batch_size, dtype=torch.long, device=device)
 
     def reset(self):
@@ -58,9 +60,7 @@ class KVCache:
         start = self.get_seq_len()
         end = start + t_new
         if end > self.max_seq_len:
-            raise ValueError(
-                f"Sequence length exceeded max_seq_len: {end} > {self.max_seq_len}"
-            )
+            raise ValueError(f"Sequence length exceeded max_seq_len: {end} > {self.max_seq_len}")
 
         self.key_cache[layer_idx, :, :, start:end, :] = new_keys
         self.value_cache[layer_idx, :, :, start:end, :] = new_values

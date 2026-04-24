@@ -135,7 +135,7 @@ def test_kv_cache_single_token_matches_full_prefix_logits():
 
     for t in range(1, sequence.size(1) + 1):
         full_logits, _ = model(sequence[:, :t])
-        cached_logits, _ = model(sequence[:, t - 1:t], past_kv=kv_cache)
+        cached_logits, _ = model(sequence[:, t - 1 : t], past_kv=kv_cache)
         assert torch.allclose(cached_logits[:, -1, :], full_logits[:, -1, :], atol=1e-5, rtol=1e-4)
 
 
