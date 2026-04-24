@@ -33,6 +33,7 @@ dependencies = [
 ]
 
 [tool.pytest.ini_options]
+pythonpath = ["src"]
 # Suppress chess library deprecation warning for Python 3.16 compatibility
 filterwarnings = [
     "ignore:'asyncio.DefaultEventLoopPolicy' is deprecated:DeprecationWarning",
