@@ -94,11 +94,8 @@ ipython_config.py
 #   install all needed dependencies.
 #Pipfile.lock
 
-# UV
-#   Similar to Pipfile.lock, it is generally recommended to include uv.lock in version control.
-#   This is especially recommended for binary packages to ensure reproducibility, and is more
-#   commonly ignored for libraries.
-uv.lock
+# UV — uv.lock is committed for reproducible installs; local cache (see justfile UV_CACHE_DIR).
+.uv_cache/
 
 # poetry
 #   Similar to Pipfile.lock, it is generally recommended to include poetry.lock in version control.
@@ -162,6 +159,9 @@ dmypy.json
 # Pyre type checker
 .pyre/
 
+# players games
+data/players/
+
 # pytype static type analyzer
 .pytype/
 
@@ -216,8 +216,25 @@ __marimo__/
 # Local Games
 local_games/
 
+# Lichess Bot
+lichess-bot/
 
-artifacts/
-data/
-!data/download_links.txt
+
+*.pt
+*.zip
+*.parquet
+*.pgn
+*.zst
+manifest.json
+*.meta.json
+
 wandb
+artifacts/
+
+.hf_home/
+.hf_cache/
+
+.cursor
+.codex
+AGENTS.md
+.qwen

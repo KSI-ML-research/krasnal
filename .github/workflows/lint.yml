@@ -6,26 +6,21 @@ on:
   pull_request:
 
 jobs:
-  rust-lint:
-    name: Rust Clippy Lint
+  line-endings:
+    name: Check Line Endings
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
 
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy
-
-      - name: Cache Rust
-        uses: Swatinem/rust-cache@v2
-
-      - name: Run Clippy
-        run: cargo clippy --all-targets --all-features -- -D warnings
-
-      - name: Apply autofix
-        run: cargo clippy --fix --allow-dirty --all-targets --all-features
+      - name: Check for mixed line endings
+        run: |
+          found=$(git ls-files | xargs -I{} file "{}" | grep CRLF || true)
+          if [ -n "$found" ]; then
+            echo "ERROR: Files with CRLF line endings found:"
+            echo "$found"
+            exit 1
+          fi
 
   python-lint:
     name: Python Ruff Lint
@@ -37,7 +32,7 @@ jobs:
       - name: Setup Python
         uses: actions/setup-python@v4
         with:
-          python-version: "3.14"
+          python-version: "3.13"
       - run: pip install uv
 
       - name: Cache uv deps
@@ -49,17 +44,14 @@ jobs:
       - name: Install dependencies
         run: uv sync
 
-      - name: Cache Ruff
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/ruff
-          key: ruff-${{ hashFiles('pyproject.toml') }}
+      - name: Log ruff version
+        run: uv run ruff --version
 
-      - name: Run Ruff
-        run: uv run ruff check . --fix
+      - name: Run Ruff Check
+        run: uv run ruff check .
 
-      - name: Run Ruff Format
-        run: uv run ruff format .
+      - name: Run Ruff Format Check
+        run: uv run ruff format --check .
 
   python-test:
     name: Python Pytest
@@ -71,7 +63,7 @@ jobs:
       - name: Setup Python
         uses: actions/setup-python@v4
         with:
-          python-version: "3.14"
+          python-version: "3.13"
       - run: pip install uv
 
       - name: Cache uv deps
@@ -85,5 +77,9 @@ jobs:
 
       - name: Run Pytest
         run: uv run pytest
-        env:
-          PYTHONPATH: src
+
+      - name: Upload coverage reports to Codecov
+        uses: codecov/codecov-action@v5
+        with:
+          files: ./coverage.xml
+          fail_ci_if_error: false

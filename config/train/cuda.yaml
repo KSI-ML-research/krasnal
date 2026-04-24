@@ -1,0 +1,7 @@
+defaults:
+  - base
+
+batch_size: 128
+pin_memory: true
+compile: true
+compile_fullgraph: true

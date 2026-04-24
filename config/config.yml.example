@@ -1,0 +1,20 @@
+token: "TOKEN_PLACEHOLDER"
+url: "https://lichess.org/"
+
+engine:
+  protocol: "uci"
+  interpreter: "ENGINE_INTERPRETER_PLACEHOLDER"
+  name: "src/krasnal/uci_engine/run.py"
+  dir: ".."
+
+challenge:
+  concurrency: 1
+  variants:
+    - standard
+  time_controls:
+    - blitz
+    - rapid
+    - bullet
+  modes:
+    - casual
+    - rated

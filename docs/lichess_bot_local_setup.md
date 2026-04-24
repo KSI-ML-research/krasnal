@@ -1,0 +1,29 @@
+# Lichess bot local setup
+
+You can run our bot from your machine.
+
+Lichess recipes are defined directly in the root `justfile`.
+
+Read docs/bot_implementation_plan.md for architecture details.
+
+### Bot account setup:
+Lichess requires a few steps to set up a bot account.
+- [step 1 - create the account & API key](https://github.com/lichess-bot-devs/lichess-bot/wiki/How-to-create-a-Lichess-OAuth-token)
+- [step 2 - upgrade to bot account](https://lichess.org/api#tag/bot/POST/api/bot/account/upgrade)
+
+### Setup:
+1. run setup from docs/INSTALLATION.md
+2. Create a .env file by copying the .env.example file. Update the LICHESS_BOT_TOKEN in .env file with the actual token from lichess.
+3. setup lichess-bot (code responsible for integration with lichess api)
+```bash
+   just bot-setup
+   ```
+4. run the actual bot. As long as this process is running, you can play the bot on lichess
+```bash
+   just bot-run
+   ```
+
+5. optionally clean up the local setup
+```bash
+   just bot-clean
+   ```
