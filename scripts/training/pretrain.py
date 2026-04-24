@@ -3,10 +3,10 @@ from datetime import datetime
 
 import hydra
 import torch
+import wandb
 from omegaconf import DictConfig, OmegaConf
 from torch.utils.data import DataLoader
 
-import wandb
 from krasnal.config import (
     ARTIFACTS_DIR,
     EVAL_DATASET_PATH,
