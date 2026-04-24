@@ -8,13 +8,18 @@ Differences from the original NanoGPT implementation:
 - Replaced ReLU activation with GeLU which is smoother and performs better in practice.
 """
 
+from __future__ import annotations
+
 import inspect
 import math
+from typing import TYPE_CHECKING
 
 import torch
 import torch.nn as nn
 from torch.nn import functional as F
 
+if TYPE_CHECKING:
+    from krasnal.inference.kv_cache import KVCache
 from krasnal.config import GPTConfig
 
 
@@ -42,7 +47,7 @@ class RoPE(nn.Module):
         d_2 = self.head_dim // 2
         return torch.cat([-x[..., d_2:], x[..., :d_2]], dim=-1)
 
-    def forward(self, q, k):
+    def forward(self, q, k, position_offset: int = 0):
         """
         Applies Rotary Position Embedding (RoPE) to queries and keys.
 
@@ -63,10 +68,14 @@ class RoPE(nn.Module):
         """
         # q, k: (B, nh, T, hs)
         T = q.shape[2]
+        if position_offset < 0:
+            raise ValueError("position_offset must be non-negative")
+        end = position_offset + T
+        if end > self.cos_cached.shape[2]:
+            raise ValueError("position_offset + T exceeds max_seq_len")
 
-        # Ensure RoPE caches match the dtype and device of q/k to avoid upcasting
-        cos = self.cos_cached[:, :, :T].to(device=q.device, dtype=q.dtype)
-        sin = self.sin_cached[:, :, :T].to(device=q.device, dtype=q.dtype)
+        cos = self.cos_cached[:, :, position_offset:end].to(device=q.device, dtype=q.dtype)
+        sin = self.sin_cached[:, :, position_offset:end].to(device=q.device, dtype=q.dtype)
 
         neg_half_q = self._neg_half(q)
         q_rope = (q * cos) + (neg_half_q * sin)
@@ -96,7 +105,7 @@ class CausalSelfAttention(nn.Module):
         if not hasattr(torch.nn.functional, "scaled_dot_product_attention"):
             raise ImportError("PyTorch >= 2.0 required for scaled_dot_product_attention")
 
-    def forward(self, x):
+    def forward(self, x, past_kv: KVCache | None = None, layer_idx: int | None = None):
         B, T, C = x.size()  # batch size, sequence length, embedding dimensionality (n_embd)
 
         # calculate Q, K, V for all heads in batch and move heads forward to be the batch dim
@@ -105,17 +114,41 @@ class CausalSelfAttention(nn.Module):
         q = q.view(B, T, self.n_head, C // self.n_head).transpose(1, 2)  # (B, nh, T, hs)
         v = v.view(B, T, self.n_head, C // self.n_head).transpose(1, 2)  # (B, nh, T, hs)
 
-        # apply RoPE per head
-        q, k = self.rope(q, k)
+        past_len = 0
+        if past_kv is not None:
+            if layer_idx is None:
+                raise ValueError("layer_idx must be provided when using past_kv")
+            past_len = past_kv.get_seq_len()
 
-        # causal self-attention using Flash Attention / SDPA
+        # apply RoPE per head
+        q, k = self.rope(q, k, position_offset=past_len)
+
+        if past_kv is not None:
+            past_kv.append_layer(layer_idx, k, v)
+            # Get full k and v directly from cache tensors after append
+            k_full = past_kv.key_cache[layer_idx, :, :, : past_len + T, :]
+            v_full = past_kv.value_cache[layer_idx, :, :, : past_len + T, :]
+        else:
+            k_full = k
+            v_full = v
+
+        attn_mask = None
+        is_causal = True
+        if past_kv is not None:
+            # For cached decoding, explicit mask is only needed when T > 1.
+            is_causal = False
+            if T > 1:
+                q_pos = torch.arange(past_len, past_len + T, device=x.device).unsqueeze(-1)
+                k_pos = torch.arange(0, past_len + T, device=x.device).unsqueeze(0)
+                attn_mask = k_pos <= q_pos
+
         y = torch.nn.functional.scaled_dot_product_attention(
             q,
-            k,
-            v,
-            attn_mask=None,
+            k_full,
+            v_full,
+            attn_mask=attn_mask,
             dropout_p=self.dropout if self.training else 0,
-            is_causal=True,
+            is_causal=is_causal,
         )
 
         y = y.transpose(1, 2).contiguous().view(B, T, C)
@@ -148,8 +181,8 @@ class Block(nn.Module):
         self.ln_2 = nn.RMSNorm(config.n_embd)
         self.mlp = MLP(config)
 
-    def forward(self, x):
-        x = x + self.attn(self.ln_1(x))
+    def forward(self, x, past_kv: KVCache | None = None, layer_idx: int | None = None):
+        x = x + self.attn(self.ln_1(x), past_kv=past_kv, layer_idx=layer_idx)
         x = x + self.mlp(self.ln_2(x))
         return x
 
@@ -195,16 +228,20 @@ class GPT(nn.Module):
         elif isinstance(module, nn.Embedding):
             torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
 
-    def forward(self, idx, targets=None, ignore_index=-1):
+    def forward(self, idx, targets=None, ignore_index=-1, past_kv: KVCache | None = None):
         _b, t = idx.size()
         assert t <= self.config.block_size, (
             f"Cannot forward sequence of length {t}, block size is only {self.config.block_size}"
         )
+        if past_kv is not None and targets is not None:
+            raise ValueError("KV-cache mode is inference-only and does not support targets")
 
         tok_emb = self.transformer.wte(idx)  # token embeddings (b, t, n_embd)
         x = self.transformer.drop(tok_emb)
-        for block in self.transformer.h:
-            x = block(x)
+        for layer_idx, block in enumerate(self.transformer.h):
+            x = block(x, past_kv=past_kv, layer_idx=layer_idx)
+        if past_kv is not None:
+            past_kv.advance(t)
         x = self.transformer.ln_f(x)
 
         if targets is not None:
