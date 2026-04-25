@@ -1,12 +1,17 @@
 from __future__ import annotations
 
 import json
+import math
 from pathlib import Path
 from typing import Final
 
 import bulletchess
 
-from krasnal.config import MOVES_FILE
+from krasnal.config import (
+    LOSS_IGNORE_INDEX,
+    MOVES_FILE,
+    SF_EVAL_BUCKETS,
+)
 
 GAME_START_ID = 0
 GAME_END_ID = 1
@@ -143,6 +148,26 @@ def get_elo_bucket(elo: int) -> int:
     if elo < 3000:
         return ELO_2500_2999_ID
     return ELO_ABOVE_3000_ID
+
+
+def stockfish_centipawns_to_bucket(cp: int | None) -> int:
+    """
+    Convert a Stockfish evaluation in centipawns to a discrete bucket index.
+
+    The continuous centipawn value is mapped to one of SF_EVAL_BUCKETS
+    using a scaled sigmoid function. This provides higher resolution near 0.0
+    and compresses extreme advantages/disadvantages into the outer buckets.
+    """
+    if cp is None:
+        return LOSS_IGNORE_INDEX
+
+    val = 1 / (1 + math.exp(-cp / 400.0))
+    bucket = int(val * SF_EVAL_BUCKETS)
+    if bucket >= SF_EVAL_BUCKETS:
+        bucket = SF_EVAL_BUCKETS - 1
+    if bucket < 0:
+        bucket = 0
+    return bucket
 
 
 def result_to_token_id(result: str | int) -> int:

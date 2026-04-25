@@ -8,9 +8,8 @@ from datasets import Dataset as HFDataset
 from torch.nn.utils.rnn import pad_sequence
 from torch.utils.data import Dataset
 
+from krasnal.config import LOSS_IGNORE_INDEX
 from krasnal.tokens import IS_CHECK_ID, PAD_ID, WHAT_PIECE_ID
-
-LOSS_IGNORE_INDEX = -100
 
 
 def resolve_hf_datasets_cache_dir() -> str:
@@ -45,16 +44,20 @@ class ChessDataset(Dataset[torch.Tensor]):
         cache_dir = Path(resolve_hf_datasets_cache_dir())
         cache_dir.mkdir(parents=True, exist_ok=True)
         self.dataset = HFDataset.from_parquet(paths, cache_dir=str(cache_dir))
-        self.dataset.set_format(type="torch", columns=["token_ids"])
+        self.dataset.set_format(type="torch", columns=["token_ids", "stockfish_evals"])
 
     def __len__(self):
         return len(self.dataset)
 
     def __getitem__(self, idx: int):
-        tokens = self.dataset[idx]["token_ids"].to(torch.long)
+        item = self.dataset[idx]
+        tokens = item["token_ids"].to(torch.long)
+        stockfish_evals = item["stockfish_evals"].to(torch.long)
+
         if tokens.min() < 0:
             raise ValueError(f"Invalid negative tokens found at index {idx}: {tokens[tokens < 0]}")
-        return tokens
+
+        return {"token_ids": tokens, "stockfish_evals": stockfish_evals}
 
 
 def _get_bucket_size(seq_len: int, bucket_sizes: tuple[int, ...]) -> int:
@@ -75,24 +78,40 @@ class CollateFn:
         """
         Pad sequences and bucket to stable lengths for torch.compile friendliness.
 
-        The model receives x=padded[:, :-1], y=padded[:, 1:], so we pad to
-        (bucket_size + 1) to keep model sequence length exactly bucket_size.
-        """
-        padded = pad_sequence(batch, batch_first=True, padding_value=PAD_ID)
+        The model receives x=padded[:, :-1] and targets shifted accordingly:
+        - y_tokens=padded_tokens[:, 1:] (predicting the next token)
+        - y_stockfish_evals=padded_evals[:, :-1] (evaluating the state encoded by x)
 
-        seq_len = padded.size(1) - 1
+        Therefore, we pad to (bucket_size + 1) to keep the model's sequence length
+        exactly equal to bucket_size.
+        """
+        token_ids = [item["token_ids"] for item in batch]
+        stockfish_evals = [item["stockfish_evals"] for item in batch]
+
+        padded_tokens = pad_sequence(token_ids, batch_first=True, padding_value=PAD_ID)
+        padded_stockfish_evals = pad_sequence(
+            stockfish_evals, batch_first=True, padding_value=LOSS_IGNORE_INDEX
+        )
+
+        seq_len = padded_tokens.size(1) - 1
         if seq_len > 0 and self.bucket_sizes:
             target_len = _get_bucket_size(seq_len, self.bucket_sizes)
             target_total_len = target_len + 1
-            if padded.size(1) < target_total_len:
-                pad_size = target_total_len - padded.size(1)
-                padded = F.pad(padded, (0, pad_size), value=PAD_ID)
+            if padded_tokens.size(1) < target_total_len:
+                pad_size = target_total_len - padded_tokens.size(1)
+                padded_tokens = F.pad(padded_tokens, (0, pad_size), value=PAD_ID)
+                padded_stockfish_evals = F.pad(
+                    padded_stockfish_evals, (0, pad_size), value=LOSS_IGNORE_INDEX
+                )
 
-        x = padded[:, :-1]
-        y = padded[:, 1:].clone()
-        y[y == IS_CHECK_ID] = LOSS_IGNORE_INDEX
-        y[y == WHAT_PIECE_ID] = LOSS_IGNORE_INDEX
-        return x, y
+        x = padded_tokens[:, :-1]
+        y_tokens = padded_tokens[:, 1:].clone()
+        y_tokens[y_tokens == IS_CHECK_ID] = LOSS_IGNORE_INDEX
+        y_tokens[y_tokens == WHAT_PIECE_ID] = LOSS_IGNORE_INDEX
+
+        y_stockfish_evals = padded_stockfish_evals[:, :-1]
+
+        return x, y_tokens, y_stockfish_evals
 
 
 def make_collate_fn(bucket_sizes: tuple[int, ...] = ()) -> Callable:

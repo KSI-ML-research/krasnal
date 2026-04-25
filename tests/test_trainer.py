@@ -118,7 +118,15 @@ def test_run_training_smoke():
 
 def test_collate_masks_is_check_targets():
     collate = make_collate_fn()
-    x, y = collate([torch.tensor([10, IS_CHECK_ID, 11], dtype=torch.long)])
+    batch = [
+        {
+            "token_ids": torch.tensor([10, IS_CHECK_ID, 11], dtype=torch.long),
+            "stockfish_evals": torch.tensor([5, 6, 7], dtype=torch.long),
+        }
+    ]
+    x, y_tokens, y_evals = collate(batch)
 
     assert x.tolist() == [[10, IS_CHECK_ID]]
-    assert y.tolist() == [[-100, 11]]
+    assert y_tokens.tolist() == [[-100, 11]]
+    assert y_evals.shape == x.shape
+    assert y_evals.tolist() == [[5, 6]]

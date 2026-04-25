@@ -11,6 +11,7 @@ from omegaconf import DictConfig
 
 from krasnal.config import (
     EVAL_DATASET_PATH,
+    LOSS_IGNORE_INDEX,
     PRETRAIN_DATASET_PATH,
     RAW_UCI_DIR,
 )
@@ -44,6 +45,7 @@ from krasnal.tokens import (
     move_token_id_for_ply,
     result_to_token_id,
     set_side_prefixed_moves,
+    stockfish_centipawns_to_bucket,
 )
 
 PIECE_ROLE_ALIASES: dict[str, tuple[str, ...]] = {
@@ -129,6 +131,7 @@ def _build_game_tokens(
     uci_moves: str,
     is_check: list[bool],
     piece_moved: list[str],
+    stockfish_centipawns: list[int | None],
     result: str,
     white_rating: int,
     black_rating: int,
@@ -142,25 +145,32 @@ def _build_game_tokens(
     p_no: float,
     include_piece_qa: bool,
     piece_sampling_probs: dict[str, float],
-) -> list[int]:
+) -> tuple[list[int], list[int]]:
     if not uci_moves:
-        return []
+        return [], []
 
     moves_list = uci_moves.split()
 
     result_tokens = []
+    stockfish_evals = []
+
     for ply, move in enumerate(moves_list):
         move_id = move_token_id_for_ply(move, ply)
         if move_id is None:
             move_id = PAD_ID
         result_tokens.append(move_id)
 
+        cp = stockfish_centipawns[ply] if ply < len(stockfish_centipawns) else None
+        stockfish_evals.append(stockfish_centipawns_to_bucket(cp))
+
         if include_check_qa:
             gives_check = ply < len(is_check) and bool(is_check[ply])
             if gives_check:
                 result_tokens.extend([IS_CHECK_ID, YES_CHECK_ID])
+                stockfish_evals.extend([LOSS_IGNORE_INDEX, LOSS_IGNORE_INDEX])
             elif _sample_bool(seed=seed, game_key=uci_moves, ply=ply, probability=p_no):
                 result_tokens.extend([IS_CHECK_ID, NO_CHECK_ID])
+                stockfish_evals.extend([LOSS_IGNORE_INDEX, LOSS_IGNORE_INDEX])
 
         if include_piece_qa and ply < len(piece_moved):
             piece_role = _normalize_piece_role(piece_moved[ply])
@@ -171,6 +181,7 @@ def _build_game_tokens(
                 ):
                     answer_token = PIECE_ROLE_TO_TOKEN_ID[piece_role]
                     result_tokens.extend([WHAT_PIECE_ID, answer_token])
+                    stockfish_evals.extend([LOSS_IGNORE_INDEX, LOSS_IGNORE_INDEX])
 
     white_elo = get_elo_bucket(white_rating)
     black_elo = get_elo_bucket(black_rating)
@@ -204,7 +215,12 @@ def _build_game_tokens(
         white_elo,
         black_elo,
     ]
-    return prefix_tokens + result_tokens + [GAME_END_ID]
+    prefix_evals = [LOSS_IGNORE_INDEX] * len(prefix_tokens)
+
+    final_tokens = prefix_tokens + result_tokens + [GAME_END_ID]
+    final_stockfish_evals = prefix_evals + stockfish_evals + [LOSS_IGNORE_INDEX]
+
+    return final_tokens, final_stockfish_evals
 
 
 def process_file_streaming(
@@ -252,11 +268,13 @@ def process_file_streaming(
 
     def build_tokens_batch(batch: pl.DataFrame) -> pl.DataFrame:
         token_ids_list = []
+        stockfish_evals_list = []
         for i in range(len(batch)):
-            token_ids = _build_game_tokens(
+            token_ids, stockfish_evals = _build_game_tokens(
                 uci_moves=batch["uci_moves"][i],
                 is_check=batch["is_check"][i],
                 piece_moved=batch["piece_moved"][i],
+                stockfish_centipawns=batch["evals_cp"][i],
                 result=batch["result"][i],
                 white_rating=batch["white_rating"][i],
                 black_rating=batch["black_rating"][i],
@@ -272,9 +290,11 @@ def process_file_streaming(
                 piece_sampling_probs=piece_sampling_probs,
             )
             token_ids_list.append(token_ids)
+            stockfish_evals_list.append(stockfish_evals)
 
         return batch.select("split_bucket").with_columns(
-            pl.Series("token_ids", token_ids_list, dtype=pl.List(pl.UInt16))
+            pl.Series("token_ids", token_ids_list, dtype=pl.List(pl.UInt16)),
+            pl.Series("stockfish_evals", stockfish_evals_list, dtype=pl.List(pl.Int16)),
         )
 
     lf = lf.with_columns(
@@ -287,7 +307,11 @@ def process_file_streaming(
     row_count = lf.select(pl.len()).collect().item()
     lf.map_batches(
         build_tokens_batch,
-        schema={"split_bucket": pl.UInt64, "token_ids": pl.List(pl.UInt16)},
+        schema={
+            "split_bucket": pl.UInt64,
+            "token_ids": pl.List(pl.UInt16),
+            "stockfish_evals": pl.List(pl.Int16),
+        },
     ).sink_parquet(output_path)
     return row_count
 
@@ -484,7 +508,10 @@ def compute_token_mix_stats(tokenized_lf: pl.LazyFrame) -> dict[str, float]:
 
 def one_row_one_game(lazy_df: pl.LazyFrame, block_size: int) -> pl.LazyFrame:
     window_size = block_size + 1
-    return lazy_df.select(pl.col("token_ids").list.slice(0, window_size).alias("token_ids"))
+    return lazy_df.select(
+        pl.col("token_ids").list.slice(0, window_size).alias("token_ids"),
+        pl.col("stockfish_evals").list.slice(0, window_size).alias("stockfish_evals"),
+    )
 
 
 @hydra.main(version_base=None, config_path="../../config", config_name="preprocess")
@@ -636,11 +663,11 @@ def main(cfg: DictConfig) -> None:
         )
 
     train_lf = one_row_one_game(
-        filtered_lf.filter(pl.col("split_bucket") != 0).select("token_ids"),
+        filtered_lf.filter(pl.col("split_bucket") != 0).select("token_ids", "stockfish_evals"),
         block_size=block_size,
     )
     eval_lf = one_row_one_game(
-        filtered_lf.filter(pl.col("split_bucket") == 0).select("token_ids"),
+        filtered_lf.filter(pl.col("split_bucket") == 0).select("token_ids", "stockfish_evals"),
         block_size=block_size,
     )
 

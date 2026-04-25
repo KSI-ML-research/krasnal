@@ -11,6 +11,9 @@ PRETRAIN_DATASET_PATH = DATA_DIR / "2_tokenized/pretrain.parquet"
 SFT_COT_SHARDS_DIR = DATA_DIR / "2_tokenized" / "sft_cot_shards"
 EVAL_DATASET_PATH = DATA_DIR / "2_tokenized/eval.parquet"
 
+SF_EVAL_BUCKETS = 128
+LOSS_IGNORE_INDEX = -100
+
 
 @dataclass
 class GPTConfig:
