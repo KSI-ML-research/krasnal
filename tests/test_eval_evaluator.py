@@ -121,13 +121,8 @@ def test_extract_generated_think_tokens_handles_multiple_think_blocks():
 
 
 def test_compute_binary_f1_metrics_returns_expected_values():
-    result = ChessEvaluator._compute_binary_f1_metrics(tp=3, fp=1, tn=4, fn=2)
+    result = ChessEvaluator._compute_binary_f1_metrics(tp=3, fp=1, fn=2)
 
-    assert result["check_tp"] == 3.0
-    assert result["check_fp"] == 1.0
-    assert result["check_tn"] == 4.0
-    assert result["check_fn"] == 2.0
     assert result["check_precision"] == 0.75
     assert result["check_recall"] == 0.6
     assert result["check_f1"] == 2 * 0.75 * 0.6 / (0.75 + 0.6)
-    assert result["check_macro_f1"] > 0.0

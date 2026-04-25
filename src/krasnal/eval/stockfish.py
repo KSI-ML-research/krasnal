@@ -6,7 +6,7 @@ from dataclasses import dataclass
 
 @dataclass
 class StockfishAnalysis:
-    bestmove: str
+    bestmove: str | None
     score_cp: float | None
 
 
@@ -31,7 +31,7 @@ class StockfishClient:
         analysis = self.analyze(fen)
         return analysis.score_cp
 
-    def get_best_move(self, fen: str) -> str:
+    def get_best_move(self, fen: str) -> str | None:
         analysis = self.analyze(fen)
         return analysis.bestmove
 
@@ -111,12 +111,12 @@ class StockfishClient:
                 if len(parts) >= 2 and parts[1] != "(none)":
                     bestmove = parts[1]
 
-        if bestmove is None:
-            raise RuntimeError(f"Stockfish output did not contain a bestmove. stdout:\n{stdout}")
-
         if mate_score is not None:
             score_cp = 1000.0 - mate_score * 10 if mate_score > 0 else -1000.0 - mate_score * 10
             return StockfishAnalysis(bestmove=bestmove, score_cp=score_cp)
+
+        if bestmove is None:
+            return StockfishAnalysis(bestmove=None, score_cp=cp_score)
 
         return StockfishAnalysis(bestmove=bestmove, score_cp=cp_score)
 
