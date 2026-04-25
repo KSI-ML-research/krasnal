@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-04-25
+
+Fixed Stockfish-backed eval on terminal positions. When Stockfish returns `bestmove (none)` after a model move ends the game, eval now treats it as a valid terminal analysis instead of crashing pretrain/SFT runs.
+
 ## 2026-04-23
 
 Added auxiliary piece-probing QA tokens in pretraining:

@@ -42,10 +42,8 @@ class StockfishTop1AgreementMetric(Metric):
                 skipped += 1
                 continue
 
-            try:
-                bestmove = self.stockfish.get_best_move(ctx.fen)
-            except (TimeoutError, RuntimeError) as e:
-                logger.warning("Stockfish top-1: failed for %s: %s", ctx.fen, e)
+            bestmove = self.stockfish.get_best_move(ctx.fen)
+            if bestmove is None:
                 skipped += 1
                 continue
 

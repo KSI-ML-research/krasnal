@@ -45,6 +45,7 @@ class ChessEvaluator:
         acpl_sample_size: int = 100,
         enable_check_probe_metrics: bool = True,
         enable_piece_probe_metrics: bool = True,
+        enable_check_confusion_matrix_metrics: bool = False,
         enable_piece_confusion_matrix_metrics: bool = False,
     ):
         if metrics is None:
@@ -58,6 +59,7 @@ class ChessEvaluator:
         self.acpl_sample_size = acpl_sample_size
         self.enable_check_probe_metrics = enable_check_probe_metrics
         self.enable_piece_probe_metrics = enable_piece_probe_metrics
+        self.enable_check_confusion_matrix_metrics = enable_check_confusion_matrix_metrics
         self.enable_piece_confusion_matrix_metrics = enable_piece_confusion_matrix_metrics
         self.metrics = self._init_metrics()
 
@@ -269,15 +271,9 @@ class ChessEvaluator:
 
         if not probe_sequences:
             return {
-                "check_tp": 0.0,
-                "check_fp": 0.0,
-                "check_tn": 0.0,
-                "check_fn": 0.0,
                 "check_precision": 0.0,
                 "check_recall": 0.0,
                 "check_f1": 0.0,
-                "check_macro_f1": 0.0,
-                "check_f1_always_no": 0.0,
             }
 
         batch_session = StatelessBatchInferenceSession(model, device)
@@ -291,11 +287,12 @@ class ChessEvaluator:
         tn = sum(1 for pred, label in zip(preds, labels, strict=True) if pred == 0 and label == 0)
         fn = sum(1 for pred, label in zip(preds, labels, strict=True) if pred == 0 and label == 1)
 
-        metrics = self._compute_binary_f1_metrics(tp=tp, fp=fp, tn=tn, fn=fn)
-        fn_always_no = sum(1 for label in labels if label == 1)
-        tn_always_no = sum(1 for label in labels if label == 0)
-        baseline = self._compute_binary_f1_metrics(tp=0, fp=0, tn=tn_always_no, fn=fn_always_no)
-        metrics["check_f1_always_no"] = baseline["check_f1"]
+        metrics = self._compute_binary_f1_metrics(tp=tp, fp=fp, fn=fn)
+        if self.enable_check_confusion_matrix_metrics:
+            metrics["check_tp"] = float(tp)
+            metrics["check_fp"] = float(fp)
+            metrics["check_tn"] = float(tn)
+            metrics["check_fn"] = float(fn)
         return metrics
 
     @staticmethod
@@ -303,7 +300,6 @@ class ChessEvaluator:
         *,
         tp: int,
         fp: int,
-        tn: int,
         fn: int,
     ) -> dict[str, float]:
         precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
@@ -312,23 +308,10 @@ class ChessEvaluator:
             2.0 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0.0
         )
 
-        no_precision = tn / (tn + fn) if (tn + fn) > 0 else 0.0
-        no_recall = tn / (tn + fp) if (tn + fp) > 0 else 0.0
-        no_f1 = (
-            2.0 * no_precision * no_recall / (no_precision + no_recall)
-            if (no_precision + no_recall) > 0
-            else 0.0
-        )
-
         return {
-            "check_tp": float(tp),
-            "check_fp": float(fp),
-            "check_tn": float(tn),
-            "check_fn": float(fn),
             "check_precision": precision,
             "check_recall": recall,
             "check_f1": check_f1,
-            "check_macro_f1": (check_f1 + no_f1) / 2.0,
         }
 
     def _compute_top1_fen(self, ctx: EvalContext) -> None:

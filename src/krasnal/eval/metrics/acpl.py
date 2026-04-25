@@ -84,13 +84,8 @@ class ACPLMetric(Metric):
                 skipped_illegal += 1
                 continue
 
-            try:
-                cp_before = self.stockfish.get_eval(ctx.fen)
-                cp_after = self.stockfish.get_eval(ctx.top1_fen)
-            except (TimeoutError, RuntimeError) as e:
-                logger.warning("ACPL: stockfish failed for %s: %s", ctx.fen, e)
-                skipped_stockfish += 1
-                continue
+            cp_before = self.stockfish.get_eval(ctx.fen)
+            cp_after = self.stockfish.get_eval(ctx.top1_fen)
 
             if cp_before is None or cp_after is None:
                 skipped_stockfish += 1

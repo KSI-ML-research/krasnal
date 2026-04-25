@@ -154,6 +154,7 @@ def main(cfg: DictConfig) -> None:
         acpl_sample_size=cfg.eval.acpl_sample_size,
         enable_check_probe_metrics=bool(cfg.eval.enable_check_probe_metrics),
         enable_piece_probe_metrics=bool(cfg.eval.enable_piece_probe_metrics),
+        enable_check_confusion_matrix_metrics=bool(cfg.eval.enable_check_confusion_matrix_metrics),
         enable_piece_confusion_matrix_metrics=bool(cfg.eval.enable_piece_confusion_matrix_metrics),
     )
     eval_device = torch.device(device)

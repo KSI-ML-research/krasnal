@@ -3,6 +3,9 @@ defaults:
 
 enable_check_probe_metrics: true
 enable_piece_probe_metrics: true
+# Enables check_tp, check_fp, check_tn, check_fn.
+# Keep false for cleaner W&B unless debugging confusions.
+enable_check_confusion_matrix_metrics: false
 # Enables 36 extra counters: piece_cm_<true_piece>_<pred_piece>.
 # Keep false for cleaner W&B unless debugging class confusions.
 enable_piece_confusion_matrix_metrics: false
