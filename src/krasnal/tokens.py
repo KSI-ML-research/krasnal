@@ -81,6 +81,22 @@ MOVE_ANNOTATION_TOKENS = {
     "<king>": KING_ID,
 }
 
+QA_TOKEN_IDS = frozenset(
+    [
+        IS_CHECK_ID,
+        YES_CHECK_ID,
+        NO_CHECK_ID,
+        CAPTURE_ID,
+        WHAT_PIECE_ID,
+        PAWN_ID,
+        KNIGHT_ID,
+        BISHOP_ID,
+        ROOK_ID,
+        QUEEN_ID,
+        KING_ID,
+    ]
+)
+
 SPECIAL_TOKENS = {
     "<game_start>": GAME_START_ID,
     "<game_end>": GAME_END_ID,
