@@ -12,6 +12,7 @@ from krasnal.model import GPT
 from krasnal.tokens import (
     ELO_UNKNOWN_ID,
     GAME_START_ID,
+    QA_TOKEN_IDS,
     THINK_END_ID,
     THINK_START_ID,
     legal_token_ids,
@@ -162,12 +163,13 @@ class InferenceSession:
         return self._last_logits
 
     def get_legal_logits(self) -> torch.Tensor:
-        """Return next-token logits with illegal moves masked out."""
+        """Return next-token logits with illegal moves and Q&A tokens masked out."""
         logits = self.get_raw_logits()
         legal_ids = legal_token_ids(self.game.board)
         masked = torch.full_like(logits, float("-inf"))
         if legal_ids:
             masked[legal_ids] = logits[legal_ids]
+        masked[list(QA_TOKEN_IDS)] = float("-inf")
         return masked
 
     def get_raw_probs(self) -> torch.Tensor:
