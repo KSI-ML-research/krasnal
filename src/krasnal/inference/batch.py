@@ -8,7 +8,7 @@ import torch
 
 from krasnal.inference.game import Game
 from krasnal.inference.utils import create_amp_context
-from krasnal.tokens import PAD_ID, legal_token_ids
+from krasnal.tokens import PAD_ID, QA_TOKEN_IDS, legal_token_ids
 
 if TYPE_CHECKING:
     from krasnal.model import GPT
@@ -115,6 +115,7 @@ class StatelessBatchInferenceSession:
             legal_ids = legal_token_ids(game.board)
             if legal_ids:
                 masked[idx, legal_ids] = logits[idx, legal_ids]
+        masked[:, list(QA_TOKEN_IDS)] = float("-inf")
         return masked
 
     def get_legal_probs_batch(
