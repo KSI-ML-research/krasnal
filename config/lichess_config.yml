@@ -1,0 +1,32 @@
+##based on https://github.com/lichess-bot-devs/lichess-bot/wiki/Configure-lichess-bot
+token: "TOKEN_PLACEHOLDER"url: "https://lichess.org/"
+
+engine:
+  protocol: "uci"
+  interpreter: "ENGINE_INTERPRETER_PLACEHOLDER"
+  name: "src/krasnal/uci_engine/run.py"
+  dir: ".."
+
+challenge:
+  concurrency: 8
+  variants:
+    - standard
+  time_controls:
+    - blitz
+    - rapid
+    - bullet
+  modes:
+    - casual
+    - rated
+  accept_bot: true
+
+matchmaking:
+  concurrency: 8
+  allow_matchmaking: true
+  allow_during_games: true
+
+  greeting:
+    hello: Hi, {opponent}! I'm {me}. Good luck!
+    goodbye: Good game!
+    hello_spectators: "Hi! I'm {me}. Type !help for a list of commands I can respond to." # Message to send to spectator chat at the start of a game
+    goodbye_spectators: "Thanks for watching!" # Message to send to spectator chat at the end of a game
