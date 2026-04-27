@@ -45,3 +45,9 @@ cot_metrics:
 
 stockfish_depth: 10
 acpl_sample_size: 100
+
+puzzle_eval:
+  enabled: true
+  path: data/puzzles_filtered.jsonl
+  sample_size: null
+  seed: 42
