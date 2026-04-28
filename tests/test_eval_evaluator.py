@@ -1,3 +1,5 @@
+from types import SimpleNamespace
+
 from krasnal.eval.evaluator import ChessEvaluator
 from krasnal.tokens import (
     BLACK_PREFIX,
@@ -123,6 +125,20 @@ def test_extract_generated_think_tokens_handles_multiple_think_blocks():
 def test_compute_binary_f1_metrics_returns_expected_values():
     result = ChessEvaluator._compute_binary_f1_metrics(tp=3, fp=1, fn=2)
 
-    assert result["check_precision"] == 0.75
-    assert result["check_recall"] == 0.6
-    assert result["check_f1"] == 2 * 0.75 * 0.6 / (0.75 + 0.6)
+    assert result["qa_check_precision"] == 0.75
+    assert result["qa_check_recall"] == 0.6
+    assert result["qa_check_f1"] == 2 * 0.75 * 0.6 / (0.75 + 0.6)
+
+
+def test_piece_probe_metrics_can_skip_piece_f1_breakdown():
+    evaluator = ChessEvaluator(
+        metrics=["piece_acc"],
+        enable_piece_probe_metrics=True,
+        enable_piece_f1_breakdown_metrics=False,
+    )
+    model = SimpleNamespace(config=SimpleNamespace(block_size=128))
+
+    result = evaluator._evaluate_piece_probe([], model=model, device=None)
+
+    assert result == {"piece_acc": 0.0, "qa_piece_f1": 0.0}
+    assert not any(key.startswith("piece_f1_") for key in result)

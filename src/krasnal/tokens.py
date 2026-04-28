@@ -49,7 +49,7 @@ OUTCOME_TOKENS = {
     "<white_won>": WHITE_WON_ID,
     "<black_won>": BLACK_WON_ID,
     "<draw>": DRAW_ID,
-    "result_unknown": UNKNOWN_RESULT_ID,
+    "<result_unknown>": UNKNOWN_RESULT_ID,
 }
 
 ELO_TOKENS = {
@@ -67,7 +67,7 @@ THINKING_TOKENS = {
     "<think_end>": THINK_END_ID,
 }
 
-MOVE_ANNOTATION_TOKENS = {
+QA_TOKENS = {
     "<is_check>": IS_CHECK_ID,
     "<yes_check>": YES_CHECK_ID,
     "<no_check>": NO_CHECK_ID,
@@ -81,27 +81,13 @@ MOVE_ANNOTATION_TOKENS = {
     "<king>": KING_ID,
 }
 
-QA_TOKEN_IDS = frozenset(
-    [
-        IS_CHECK_ID,
-        YES_CHECK_ID,
-        NO_CHECK_ID,
-        CAPTURE_ID,
-        WHAT_PIECE_ID,
-        PAWN_ID,
-        KNIGHT_ID,
-        BISHOP_ID,
-        ROOK_ID,
-        QUEEN_ID,
-        KING_ID,
-    ]
-)
+QA_TOKEN_IDS = frozenset(QA_TOKENS.values())
 
 SPECIAL_TOKENS = {
     "<game_start>": GAME_START_ID,
     "<game_end>": GAME_END_ID,
     "<pad>": PAD_ID,
-    **MOVE_ANNOTATION_TOKENS,
+    **QA_TOKENS,
     **OUTCOME_TOKENS,
     **ELO_TOKENS,
     **THINKING_TOKENS,

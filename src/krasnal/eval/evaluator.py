@@ -43,9 +43,10 @@ class ChessEvaluator:
         seed: int | None = None,
         stockfish: StockfishClient | None = None,
         acpl_sample_size: int = 100,
-        enable_check_probe_metrics: bool = True,
+        enable_qa_check_metrics: bool = True,
         enable_piece_probe_metrics: bool = True,
-        enable_check_confusion_matrix_metrics: bool = False,
+        enable_piece_f1_breakdown_metrics: bool = False,
+        enable_qa_check_confusion_matrix_metrics: bool = False,
         enable_piece_confusion_matrix_metrics: bool = False,
     ):
         if metrics is None:
@@ -57,9 +58,10 @@ class ChessEvaluator:
         self.seed = seed
         self.stockfish = stockfish
         self.acpl_sample_size = acpl_sample_size
-        self.enable_check_probe_metrics = enable_check_probe_metrics
+        self.enable_qa_check_metrics = enable_qa_check_metrics
         self.enable_piece_probe_metrics = enable_piece_probe_metrics
-        self.enable_check_confusion_matrix_metrics = enable_check_confusion_matrix_metrics
+        self.enable_piece_f1_breakdown_metrics = enable_piece_f1_breakdown_metrics
+        self.enable_qa_check_confusion_matrix_metrics = enable_qa_check_confusion_matrix_metrics
         self.enable_piece_confusion_matrix_metrics = enable_piece_confusion_matrix_metrics
         self.metrics = self._init_metrics()
 
@@ -145,7 +147,7 @@ class ChessEvaluator:
                     results[k].append(v)
 
         final = self._aggregate_results(results)
-        if self.enable_check_probe_metrics:
+        if self.enable_qa_check_metrics:
             final.update(self._evaluate_is_check_probe(contexts, model, device))
         if self.enable_piece_probe_metrics:
             final.update(self._evaluate_piece_probe(contexts, model, device))
@@ -193,10 +195,11 @@ class ChessEvaluator:
 
         default_metrics: dict[str, float] = {
             "piece_acc": 0.0,
-            "piece_macro_f1": 0.0,
+            "qa_piece_f1": 0.0,
         }
-        for piece_id in piece_ids:
-            default_metrics[f"piece_f1_{piece_names[piece_id]}"] = 0.0
+        if self.enable_piece_f1_breakdown_metrics:
+            for piece_id in piece_ids:
+                default_metrics[f"piece_f1_{piece_names[piece_id]}"] = 0.0
         if self.enable_piece_confusion_matrix_metrics:
             for true_id in piece_ids:
                 for pred_id in piece_ids:
@@ -238,10 +241,11 @@ class ChessEvaluator:
 
         metrics: dict[str, float] = {
             "piece_acc": acc,
-            "piece_macro_f1": macro_f1,
+            "qa_piece_f1": macro_f1,
         }
-        for piece_id in piece_ids:
-            metrics[f"piece_f1_{piece_names[piece_id]}"] = piece_f1_scores[piece_id]
+        if self.enable_piece_f1_breakdown_metrics:
+            for piece_id in piece_ids:
+                metrics[f"piece_f1_{piece_names[piece_id]}"] = piece_f1_scores[piece_id]
         if self.enable_piece_confusion_matrix_metrics:
             for true_id in piece_ids:
                 for pred_id in piece_ids:
@@ -271,9 +275,9 @@ class ChessEvaluator:
 
         if not probe_sequences:
             return {
-                "check_precision": 0.0,
-                "check_recall": 0.0,
-                "check_f1": 0.0,
+                "qa_check_precision": 0.0,
+                "qa_check_recall": 0.0,
+                "qa_check_f1": 0.0,
             }
 
         batch_session = StatelessBatchInferenceSession(model, device)
@@ -288,11 +292,11 @@ class ChessEvaluator:
         fn = sum(1 for pred, label in zip(preds, labels, strict=True) if pred == 0 and label == 1)
 
         metrics = self._compute_binary_f1_metrics(tp=tp, fp=fp, fn=fn)
-        if self.enable_check_confusion_matrix_metrics:
-            metrics["check_tp"] = float(tp)
-            metrics["check_fp"] = float(fp)
-            metrics["check_tn"] = float(tn)
-            metrics["check_fn"] = float(fn)
+        if self.enable_qa_check_confusion_matrix_metrics:
+            metrics["qa_check_tp"] = float(tp)
+            metrics["qa_check_fp"] = float(fp)
+            metrics["qa_check_tn"] = float(tn)
+            metrics["qa_check_fn"] = float(fn)
         return metrics
 
     @staticmethod
@@ -309,9 +313,9 @@ class ChessEvaluator:
         )
 
         return {
-            "check_precision": precision,
-            "check_recall": recall,
-            "check_f1": check_f1,
+            "qa_check_precision": precision,
+            "qa_check_recall": recall,
+            "qa_check_f1": check_f1,
         }
 
     def _compute_top1_fen(self, ctx: EvalContext) -> None:

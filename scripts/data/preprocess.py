@@ -84,7 +84,7 @@ def _compute_piece_sampling_probs(
 ) -> dict[str, float]:
     king_count = piece_counts.get("king", 0)
     if king_count <= 0:
-        logger.warning("No king moves found in shard; piece QA sampling disabled for this shard")
+        logger.warning("No king moves found in shard; piece Q&A sampling disabled for this shard")
         return {role: 0.0 for role in PIECE_ROLES}
 
     probs: dict[str, float] = {}
@@ -125,6 +125,19 @@ def _sample_bool(seed: int, game_key: str, ply: int, probability: float) -> bool
     return value < probability
 
 
+def _compute_check_qa_probs(
+    check_count: int,
+    no_check_count: int,
+    check_qa_prob: float,
+) -> tuple[float, float]:
+    if not 0.0 <= check_qa_prob <= 1.0:
+        raise ValueError(f"check_qa_prob must be in [0, 1], got {check_qa_prob}")
+    if no_check_count <= 0:
+        return check_qa_prob, 0.0
+    p_no = check_qa_prob * (check_count / no_check_count)
+    return check_qa_prob, min(max(p_no, 0.0), 1.0)
+
+
 def _build_game_tokens(
     uci_moves: str,
     is_check: list[bool],
@@ -134,6 +147,7 @@ def _build_game_tokens(
     black_rating: int,
     elo_bucket: int,
     include_check_qa: bool,
+    check_qa_prob: float,
     normal_prob: float,
     white_unknown_prob: float,
     black_unknown_prob: float,
@@ -158,7 +172,8 @@ def _build_game_tokens(
         if include_check_qa:
             gives_check = ply < len(is_check) and bool(is_check[ply])
             if gives_check:
-                result_tokens.extend([IS_CHECK_ID, YES_CHECK_ID])
+                if _sample_bool(seed=seed, game_key=uci_moves, ply=ply, probability=check_qa_prob):
+                    result_tokens.extend([IS_CHECK_ID, YES_CHECK_ID])
             elif _sample_bool(seed=seed, game_key=uci_moves, ply=ply, probability=p_no):
                 result_tokens.extend([IS_CHECK_ID, NO_CHECK_ID])
 
@@ -212,6 +227,7 @@ def process_file_streaming(
     seed: int,
     output_path: Path,
     include_check_qa: bool,
+    check_qa_prob: float,
     include_piece_qa: bool,
     king_base_prob: float,
     unknown_elo: dict[str, float],
@@ -234,8 +250,7 @@ def process_file_streaming(
         check_count = int(count_stats[0] or 0)
         ply_count = int(count_stats[1] or 0)
         no_check_count = max(0, ply_count - check_count)
-        p_no = (check_count / no_check_count) if no_check_count > 0 else 0.0
-        p_no = min(max(p_no, 0.0), 1.0)
+        _, p_no = _compute_check_qa_probs(check_count, no_check_count, check_qa_prob)
     else:
         p_no = 1.0
 
@@ -262,6 +277,7 @@ def process_file_streaming(
                 black_rating=batch["black_rating"][i],
                 elo_bucket=batch["elo_bucket"][i],
                 include_check_qa=include_check_qa,
+                check_qa_prob=check_qa_prob,
                 normal_prob=normal_prob,
                 white_unknown_prob=white_unknown_prob,
                 black_unknown_prob=black_unknown_prob,
@@ -298,6 +314,7 @@ def _process_one_shard(
     output_path: Path,
     side_prefixed_moves: bool,
     include_check_qa: bool,
+    check_qa_prob: float,
     include_piece_qa: bool,
     king_base_prob: float,
     unknown_elo: dict[str, float],
@@ -308,6 +325,7 @@ def _process_one_shard(
         seed,
         output_path,
         include_check_qa=include_check_qa,
+        check_qa_prob=check_qa_prob,
         include_piece_qa=include_piece_qa,
         king_base_prob=king_base_prob,
         unknown_elo=unknown_elo,
@@ -493,6 +511,9 @@ def main(cfg: DictConfig) -> None:
     block_size = int(cfg.block_size)
     seed = int(cfg.seed)
     include_check_qa = bool(cfg.get("include_check_qa", True))
+    check_qa_prob = float(cfg.get("check_qa_prob", 0.5))
+    if not 0.0 <= check_qa_prob <= 1.0:
+        raise ValueError(f"check_qa_prob must be in [0, 1], got {check_qa_prob}")
     include_piece_qa = bool(cfg.get("include_piece_qa", True))
     king_base_prob = float(cfg.get("piece_qa", {}).get("king_base_prob", 0.5))
     if not 0.0 <= king_base_prob <= 1.0:
@@ -536,6 +557,7 @@ def main(cfg: DictConfig) -> None:
                 output_path,
                 side_prefixed_moves,
                 include_check_qa,
+                check_qa_prob,
                 include_piece_qa,
                 king_base_prob,
                 unknown_elo,
@@ -594,7 +616,7 @@ def main(cfg: DictConfig) -> None:
     token_mix = compute_token_mix_stats(filtered_lf.select("token_ids"))
     logger.info(
         "Token mix after >block_size filtering: UCI moves={} ({:.2f}%), "
-        "check QA={} ({:.2f}%), piece QA={} ({:.2f}%), outcome prefix={} ({:.2f}%)",
+        "check Q&A={} ({:.2f}%), piece Q&A={} ({:.2f}%), outcome prefix={} ({:.2f}%)",
         token_mix["uci_move_count"],
         token_mix["uci_move_pct"],
         token_mix["check_qa_count"],
@@ -625,7 +647,7 @@ def main(cfg: DictConfig) -> None:
     if token_mix["piece_answer_count"] > 0:
         total_piece_answers = token_mix["piece_answer_count"]
         logger.info(
-            "Piece QA answer distribution: pawn={:.2f}%, knight={:.2f}%, bishop={:.2f}%, "
+            "Piece Q&A answer distribution: pawn={:.2f}%, knight={:.2f}%, bishop={:.2f}%, "
             "rook={:.2f}%, queen={:.2f}%, king={:.2f}%",
             token_mix["pawn_count"] / total_piece_answers * 100.0,
             token_mix["knight_count"] / total_piece_answers * 100.0,
