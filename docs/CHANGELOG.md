@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-04-28
+
+Added probability to check-QA preprocessing with `check_qa_prob` in config.
+
+
 ## 2026-04-25
 
 Added production inference benchmark (CPU, Ryzen 5 2600, 12M model, 100 games × 40 moves):

@@ -9,10 +9,10 @@ from typing import Any
 
 import hydra
 import torch
-import wandb
 from omegaconf import DictConfig, OmegaConf
 from torch.utils.data import DataLoader
 
+import wandb
 from krasnal.config import (
     ARTIFACTS_DIR,
     EVAL_DATASET_PATH,
@@ -186,9 +186,12 @@ def main(cfg: DictConfig) -> None:
         stockfish=stockfish,
         seed=cfg.seed,
         acpl_sample_size=cfg.eval.acpl_sample_size,
-        enable_check_probe_metrics=bool(cfg.eval.enable_check_probe_metrics),
+        enable_qa_check_metrics=bool(cfg.eval.enable_qa_check_metrics),
         enable_piece_probe_metrics=bool(cfg.eval.enable_piece_probe_metrics),
-        enable_check_confusion_matrix_metrics=bool(cfg.eval.enable_check_confusion_matrix_metrics),
+        enable_piece_f1_breakdown_metrics=bool(cfg.eval.enable_piece_f1_breakdown_metrics),
+        enable_qa_check_confusion_matrix_metrics=bool(
+            cfg.eval.enable_qa_check_confusion_matrix_metrics
+        ),
         enable_piece_confusion_matrix_metrics=bool(cfg.eval.enable_piece_confusion_matrix_metrics),
     )
     cot_evaluator = ChessEvaluator(
@@ -196,9 +199,12 @@ def main(cfg: DictConfig) -> None:
         cot=True,
         stockfish=stockfish,
         seed=cfg.seed,
-        enable_check_probe_metrics=bool(cfg.eval.enable_check_probe_metrics),
+        enable_qa_check_metrics=bool(cfg.eval.enable_qa_check_metrics),
         enable_piece_probe_metrics=bool(cfg.eval.enable_piece_probe_metrics),
-        enable_check_confusion_matrix_metrics=bool(cfg.eval.enable_check_confusion_matrix_metrics),
+        enable_piece_f1_breakdown_metrics=bool(cfg.eval.enable_piece_f1_breakdown_metrics),
+        enable_qa_check_confusion_matrix_metrics=bool(
+            cfg.eval.enable_qa_check_confusion_matrix_metrics
+        ),
         enable_piece_confusion_matrix_metrics=bool(cfg.eval.enable_piece_confusion_matrix_metrics),
     )
     eval_device = torch.device(device)

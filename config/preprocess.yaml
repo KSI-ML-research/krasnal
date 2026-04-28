@@ -3,6 +3,7 @@ defaults:
   - _self_
 
 include_check_qa: true
+check_qa_prob: 0.5
 include_piece_qa: true
 
 piece_qa:
