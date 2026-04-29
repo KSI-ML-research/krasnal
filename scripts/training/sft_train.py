@@ -9,20 +9,22 @@ from typing import Any
 
 import hydra
 import torch
-import wandb
 from omegaconf import DictConfig, OmegaConf
 from torch.utils.data import DataLoader
 
+import wandb
 from krasnal.config import (
     ARTIFACTS_DIR,
     EVAL_DATASET_PATH,
     SFT_COT_SHARDS_DIR,
     GPTConfig,
+    PuzzleEvalConfig,
     TrainConfig,
 )
 from krasnal.dataset import ChessDataset, make_collate_fn
 from krasnal.eval import ChessEvaluator, get_stockfish_client
 from krasnal.eval.metrics import COT_METRICS, DEFAULT_METRICS
+from krasnal.eval.puzzles import evaluate_model_on_puzzle_file
 from krasnal.sft.train import (
     RandomTokenSource,
     compute_batch_sizes,
@@ -82,6 +84,7 @@ def main(cfg: DictConfig) -> None:
     model.load_state_dict(torch.load(checkpoint_path, map_location="cpu", weights_only=True))
 
     tconf = TrainConfig(**OmegaConf.to_container(cfg.train, resolve=True))
+    puzzle_eval = PuzzleEvalConfig(**OmegaConf.to_container(cfg.puzzle_eval, resolve=True))
     collate = make_collate_fn(tconf.padding_bucket_sizes)
 
     cot_batch_size, normal_batch_size = compute_batch_sizes(tconf.batch_size, cfg.cot_ratio)
@@ -139,6 +142,11 @@ def main(cfg: DictConfig) -> None:
         "n_embd": mconf.n_embd,
         "dropout": mconf.dropout,
         "bias": mconf.bias,
+        "puzzle_eval_enabled": puzzle_eval.enabled,
+        "puzzle_eval_path": str(puzzle_eval.path),
+        "puzzle_eval_sample_size": puzzle_eval.sample_size,
+        "puzzle_eval_log_mrr": puzzle_eval.log_mrr,
+        "puzzle_eval_log_bucket_metrics": puzzle_eval.log_bucket_metrics,
     }
 
     run_id, entity, project = init_wandb(
@@ -198,6 +206,20 @@ def main(cfg: DictConfig) -> None:
     def eval_fn(model: torch.nn.Module, _iter_num: int) -> dict[str, Any]:
         raw_model = unwrap_model(model)
         metrics = classical_evaluator.evaluate(raw_model, eval_dataset, 100, eval_device)
+        if puzzle_eval.enabled and puzzle_eval.path.exists():
+            puzzle_result = evaluate_model_on_puzzle_file(
+                model=raw_model,
+                device=eval_device,
+                puzzle_path=puzzle_eval.path,
+                sample_size=puzzle_eval.sample_size,
+                seed=puzzle_eval.seed,
+            )
+            metrics.update(
+                puzzle_result.to_metrics(
+                    log_mrr=puzzle_eval.log_mrr,
+                    log_bucket_metrics=puzzle_eval.log_bucket_metrics,
+                )
+            )
         cot_num_games = min(100, len(cot_eval_dataset))
         if cot_num_games > 0:
             metrics.update(

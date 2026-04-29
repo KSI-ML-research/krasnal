@@ -5,6 +5,13 @@ defaults:
 
 seed: 42
 wandb_project: krasnal
+puzzle_eval:
+  enabled: true
+  path: data/puzzles_filtered.jsonl
+  sample_size: null
+  seed: 42
+  log_mrr: false
+  log_bucket_metrics: false
 model_path: null
 latest_pretrain: false
 normal_dataset: data/2_tokenized/pretrain.parquet

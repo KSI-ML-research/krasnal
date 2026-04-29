@@ -3,20 +3,22 @@ from datetime import datetime
 
 import hydra
 import torch
-import wandb
 from omegaconf import DictConfig, OmegaConf
 from torch.utils.data import DataLoader
 
+import wandb
 from krasnal.config import (
     ARTIFACTS_DIR,
     EVAL_DATASET_PATH,
     PRETRAIN_DATASET_PATH,
     GPTConfig,
+    PuzzleEvalConfig,
     TrainConfig,
 )
 from krasnal.dataset import ChessDataset, make_collate_fn
 from krasnal.eval import ChessEvaluator, get_stockfish_client
 from krasnal.eval.metrics import DEFAULT_METRICS
+from krasnal.eval.puzzles import evaluate_model_on_puzzle_file
 from krasnal.tokens import get_vocab_size
 from krasnal.trainer import (
     build_model,
@@ -49,6 +51,7 @@ def main(cfg: DictConfig) -> None:
     model = build_model(model_config=mconf)
     vocab_size = get_vocab_size()
     tconf = TrainConfig(**OmegaConf.to_container(cfg.train, resolve=True))
+    puzzle_eval = PuzzleEvalConfig(**OmegaConf.to_container(cfg.puzzle_eval, resolve=True))
     collate = make_collate_fn(tconf.padding_bucket_sizes)
     if tconf.epochs <= 0:
         raise ValueError("TrainConfig.epochs must be > 0")
@@ -78,6 +81,11 @@ def main(cfg: DictConfig) -> None:
         "dataset_mtime": dataset_mtime,
         "dataset_size": len(train_dataset),
         "model_repr": repr(model),
+        "puzzle_eval_enabled": puzzle_eval.enabled,
+        "puzzle_eval_path": str(puzzle_eval.path),
+        "puzzle_eval_sample_size": puzzle_eval.sample_size,
+        "puzzle_eval_log_mrr": puzzle_eval.log_mrr,
+        "puzzle_eval_log_bucket_metrics": puzzle_eval.log_bucket_metrics,
     }
 
     run_id, entity, project = init_wandb(
@@ -153,7 +161,22 @@ def main(cfg: DictConfig) -> None:
 
     def eval_fn(model, _iter_num):
         raw_model = unwrap_model(model)
-        return evaluator.evaluate(raw_model, eval_dataset, tconf.eval_num_games, eval_device)
+        metrics = evaluator.evaluate(raw_model, eval_dataset, tconf.eval_num_games, eval_device)
+        if puzzle_eval.enabled and puzzle_eval.path.exists():
+            puzzle_result = evaluate_model_on_puzzle_file(
+                model=raw_model,
+                device=eval_device,
+                puzzle_path=puzzle_eval.path,
+                sample_size=puzzle_eval.sample_size,
+                seed=puzzle_eval.seed,
+            )
+            metrics.update(
+                puzzle_result.to_metrics(
+                    log_mrr=puzzle_eval.log_mrr,
+                    log_bucket_metrics=puzzle_eval.log_bucket_metrics,
+                )
+            )
+        return metrics
 
     def eval_log_fn(_iter_num, metrics):
         wandb.log({f"eval/{k}": v for k, v in metrics.items()})
