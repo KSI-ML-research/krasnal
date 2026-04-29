@@ -37,7 +37,10 @@ def replay_game_tokens(game_tokens: GameTokens) -> list[EvalContext]:
         piece_type = PIECE_TYPE_TO_INT.get(piece.piece_type, 0) if piece else 0
         fen = board.fen()
 
-        board.apply(move)
+        try:
+            board.apply(move)
+        except Exception:
+            break
         gives_check = board in bulletchess.CHECK
 
         contexts.append(
