@@ -62,8 +62,8 @@ class PuzzleEvalConfig:
     path: Path = DATA_DIR / "puzzles_filtered.jsonl"
     sample_size: int | None = None
     seed: int = 42
-    log_mrr: bool = False
-    log_bucket_metrics: bool = False
+    log_mrr: bool = True
+    log_bucket_metrics: bool = True
 
     def __post_init__(self) -> None:
         self.path = Path(self.path)
