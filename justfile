@@ -23,6 +23,9 @@ LICHESS_BOT_REF := "96a8f74d87a42db8039e847548fec0d9528bb079"
     @echo "  just pipeline                         - run full training pipeline"
     @echo "  just download-games [target=5000000] - download & filter Aix DB (DuckDB)"
     @echo "  just preprocess [args]                - tokenize Aix-filtered games for training"
+    @echo "  just download-puzzles                 - download Lichess puzzle CSV"
+    @echo "  just prepare-puzzles                  - filter puzzles to JSONL"
+    @echo "  just eval-puzzles [args]              - run puzzle evaluation"
     @echo "  just pretrain model=large train=cuda  - run pretraining stage"
     @echo "  just generate-sft-cot [args]          - generate CoT shards"
     @echo "  just train-sft-cot [args]             - train offline SFT on CoT shards"
@@ -143,3 +146,23 @@ bot-clean:
 # Remvoe dataset hf-cache
 hf-cache-clean:
     hf cache rm dataset/thomasd1/aix-lichess-database -y
+
+# ===== PUZZLES =====
+
+# Download Lichess puzzle database (~1GB)
+download-puzzles:
+    mkdir -p data
+    curl -L --progress-bar \
+        "https://database.lichess.org/lichess_db_puzzle.csv.zst" \
+        -o data/lichess_db_puzzle.csv.zst
+
+# Filter puzzles by rating and export to JSONL
+prepare-puzzles:
+    cargo run --release --bin prepare-puzzles
+
+# Evaluate model on prepared puzzles
+# Usage:
+#   just eval-puzzles                    # uses latest model
+#   just eval-puzzles --artifact-dir artifacts/pretrain/...
+eval-puzzles *args:
+    PYTHONPATH=src uv run scripts/evals/eval_puzzles.py {{args}}
