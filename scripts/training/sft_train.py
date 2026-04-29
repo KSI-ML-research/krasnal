@@ -242,8 +242,6 @@ def main(cfg: DictConfig) -> None:
                     log_bucket_metrics=puzzle_eval.log_bucket_metrics,
                 )
             )
-        elif puzzle_eval.enabled:
-            metrics["puzzle/available"] = 0.0
         cot_num_games = min(100, len(cot_eval_dataset))
         if cot_num_games > 0:
             metrics.update(

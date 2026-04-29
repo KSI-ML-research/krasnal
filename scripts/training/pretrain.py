@@ -153,7 +153,7 @@ def main(cfg: DictConfig) -> None:
     tconf.steps_per_epoch = steps_per_epoch
 
     def log_fn(_iter_num, last_loss_value, epoch_float):
-        wandb.log({"train_loss": last_loss_value, "epoch": epoch_float})
+        wandb.log({"train_loss": last_loss_value, "epoch": epoch_float}, step=_iter_num)
 
     eval_dataset = ChessDataset(EVAL_DATASET_PATH)
     val_loader = DataLoader(
@@ -195,8 +195,6 @@ def main(cfg: DictConfig) -> None:
                     log_bucket_metrics=puzzle_eval.log_bucket_metrics,
                 )
             )
-        elif puzzle_eval.enabled:
-            metrics["puzzle/available"] = 0.0
         return metrics
 
     def eval_log_fn(_iter_num, metrics):
