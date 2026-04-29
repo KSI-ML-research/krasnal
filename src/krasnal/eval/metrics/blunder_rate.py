@@ -68,7 +68,7 @@ class BlunderRateMetric(Metric):
             count += 1
 
         if skipped > 0:
-            logger.warning("Blunder rate: computed=%s skipped=%s", count, skipped)
+            logger.warning("Blunder rate: computed={}, skipped={}", count, skipped)
 
         self._contexts = []
         return {"blunder_rate": blunders / count if count > 0 else 0.0}

@@ -65,7 +65,7 @@ def test_stockfish_client_parses_terminal_position_without_bestmove():
 
 def test_stockfish_client_returns_none_when_analysis_fails():
     class FailingStockfish(StockfishClient):
-        def analyze(self, fen: str) -> StockfishAnalysis:
+        def analyze(self, _fen: str) -> StockfishAnalysis:
             raise RuntimeError("stockfish crashed")
 
     client = FailingStockfish(depth=10)

@@ -51,7 +51,7 @@ class StockfishTop1AgreementMetric(Metric):
             count += 1
 
         if skipped > 0:
-            logger.warning("Stockfish top-1: computed=%s skipped=%s", count, skipped)
+            logger.warning("Stockfish top-1: computed={}, skipped={}", count, skipped)
 
         self._contexts = []
         return {"stockfish_top1": matches / count if count > 0 else 0.0}

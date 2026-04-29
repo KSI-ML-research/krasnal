@@ -62,6 +62,21 @@ def init_wandb(
     return run_id, entity, proj
 
 
+def split_metrics_by_prefix(
+    metrics: dict[str, Any],
+    prefix: str,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Split metrics into unprefixed and prefixed namespaces."""
+    unprefixed: dict[str, Any] = {}
+    prefixed: dict[str, Any] = {}
+    for key, value in metrics.items():
+        if key.startswith(prefix):
+            prefixed[key[len(prefix) :]] = value
+        else:
+            unprefixed[key] = value
+    return unprefixed, prefixed
+
+
 def save_wandb_run(
     *,
     artifact_dir: Path,

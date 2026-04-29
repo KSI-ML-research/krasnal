@@ -4,6 +4,7 @@ from datetime import datetime
 import hydra
 import torch
 import wandb
+from loguru import logger
 from omegaconf import DictConfig, OmegaConf
 from torch.utils.data import DataLoader
 
@@ -27,7 +28,13 @@ from krasnal.trainer import (
     setup_runtime,
     unwrap_model,
 )
-from krasnal.utils import init_wandb, print_model_config, save_wandb_run, set_seed
+from krasnal.utils import (
+    init_wandb,
+    print_model_config,
+    save_wandb_run,
+    set_seed,
+    split_metrics_by_prefix,
+)
 
 torch.set_float32_matmul_precision("high")
 
@@ -85,7 +92,11 @@ def main(cfg: DictConfig) -> None:
         "puzzle_eval_sample_size": puzzle_eval.sample_size,
         "puzzle_eval_log_mrr": puzzle_eval.log_mrr,
         "puzzle_eval_log_bucket_metrics": puzzle_eval.log_bucket_metrics,
+        "puzzle_eval_path_exists": puzzle_eval.path.exists(),
     }
+
+    if puzzle_eval.enabled and not puzzle_eval.path.exists():
+        logger.warning(f"Puzzle eval enabled but file not found at {puzzle_eval.path}")
 
     run_id, entity, project = init_wandb(
         project=cfg.wandb_project,
@@ -184,10 +195,15 @@ def main(cfg: DictConfig) -> None:
                     log_bucket_metrics=puzzle_eval.log_bucket_metrics,
                 )
             )
+        elif puzzle_eval.enabled:
+            metrics["puzzle/available"] = 0.0
         return metrics
 
     def eval_log_fn(_iter_num, metrics):
-        wandb.log({f"eval/{k}": v for k, v in metrics.items()})
+        eval_metrics, puzzle_metrics = split_metrics_by_prefix(metrics, "puzzle/")
+        wandb.log({f"eval/{k}": v for k, v in eval_metrics.items()}, step=_iter_num)
+        if puzzle_metrics:
+            wandb.log({f"eval_puzzles/{k}": v for k, v in puzzle_metrics.items()}, step=_iter_num)
 
     run_supervised_training(
         model=model,
