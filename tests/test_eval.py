@@ -63,6 +63,17 @@ def test_stockfish_client_parses_terminal_position_without_bestmove():
     assert analysis == StockfishAnalysis(bestmove=None, score_cp=-1000.0)
 
 
+def test_stockfish_client_returns_none_when_analysis_fails():
+    class FailingStockfish(StockfishClient):
+        def analyze(self, fen: str) -> StockfishAnalysis:
+            raise RuntimeError("stockfish crashed")
+
+    client = FailingStockfish(depth=10)
+
+    assert client.get_eval("fen-1") is None
+    assert client.get_best_move("fen-1") is None
+
+
 def test_stockfish_top1_metric_compares_to_stockfish_bestmove():
     class DummyStockfish:
         def get_best_move(self, fen: str) -> str | None:

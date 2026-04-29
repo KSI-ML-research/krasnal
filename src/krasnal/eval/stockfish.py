@@ -28,12 +28,19 @@ class StockfishClient:
         self._process: subprocess.Popen[str] | None = None
 
     def get_eval(self, fen: str) -> float | None:
-        analysis = self.analyze(fen)
-        return analysis.score_cp
+        analysis = self._analyze_or_none(fen)
+        return analysis.score_cp if analysis is not None else None
 
     def get_best_move(self, fen: str) -> str | None:
-        analysis = self.analyze(fen)
-        return analysis.bestmove
+        analysis = self._analyze_or_none(fen)
+        return analysis.bestmove if analysis is not None else None
+
+    def _analyze_or_none(self, fen: str) -> StockfishAnalysis | None:
+        try:
+            return self.analyze(fen)
+        except (EOFError, OSError, RuntimeError, TimeoutError):
+            self.close()
+            return None
 
     def analyze(self, fen: str) -> StockfishAnalysis:
         self._ensure_process()
