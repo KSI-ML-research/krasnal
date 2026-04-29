@@ -42,6 +42,21 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Optional runtime device override (e.g. cpu, cuda).",
     )
+    parser.add_argument(
+        "--log-mrr",
+        action="store_true",
+        help="Include puzzle MRR in the output metrics.",
+    )
+    parser.add_argument(
+        "--log-bucket-metrics",
+        action="store_true",
+        help="Include per-rating-bucket puzzle metrics in the output.",
+    )
+    parser.add_argument(
+        "--log-diagnostics",
+        action="store_true",
+        help="Include diagnostic counts such as totals and skipped puzzles.",
+    )
     return parser.parse_args()
 
 
@@ -59,6 +74,11 @@ def main() -> None:
         puzzle_path=args.puzzles,
         sample_size=args.sample_size,
         seed=args.seed,
+    )
+    metrics = metrics.to_metrics(
+        log_mrr=args.log_mrr,
+        log_bucket_metrics=args.log_bucket_metrics,
+        log_diagnostics=args.log_diagnostics,
     )
 
     payload = {

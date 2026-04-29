@@ -10,7 +10,13 @@ import bulletchess
 import torch
 
 from krasnal.inference import Game, InferenceSession
-from krasnal.tokens import BLACK_WON_ID, WHITE_WON_ID, legal_token_ids, to_uci
+from krasnal.tokens import (
+    BLACK_WON_ID,
+    MOVE_TO_ID,
+    WHITE_WON_ID,
+    legal_token_ids,
+    to_uci,
+)
 
 
 @dataclass(frozen=True)
@@ -44,6 +50,7 @@ class _BucketStats:
     exact_matches: int = 0
     predicted_legal: int = 0
     solution_legal: int = 0
+    mrr_sum: float = 0.0
     solved_with_rating: list[tuple[int, int]] = field(default_factory=list)
 
     def record_skip(self) -> None:
@@ -56,6 +63,7 @@ class _BucketStats:
         exact_match: bool,
         predicted_is_legal: bool,
         solution_is_legal: bool,
+        mrr: float,
         rating: int | None,
     ) -> None:
         self.total += 1
@@ -63,6 +71,7 @@ class _BucketStats:
         self.exact_matches += int(exact_match)
         self.predicted_legal += int(predicted_is_legal)
         self.solution_legal += int(solution_is_legal)
+        self.mrr_sum += float(mrr)
         if rating is not None:
             self.solved_with_rating.append((rating, int(exact_match)))
 
@@ -71,7 +80,7 @@ class _BucketStats:
         predicted_legal = self.predicted_legal / self.evaluated if self.evaluated else 0.0
         solution_legal = self.solution_legal / self.evaluated if self.evaluated else 0.0
         pseudo_elo = estimate_pseudo_elo(self.solved_with_rating)
-        return {
+        metrics = {
             f"{prefix}/total": self.total,
             f"{prefix}/evaluated": self.evaluated,
             f"{prefix}/skipped": self.skipped,
@@ -80,6 +89,44 @@ class _BucketStats:
             f"{prefix}/solution_legal": solution_legal,
             f"{prefix}/pseudo_elo": pseudo_elo,
         }
+        if self.evaluated:
+            metrics[f"{prefix}/mrr"] = self.mrr_sum / self.evaluated
+        return metrics
+
+
+@dataclass
+class PuzzleEvalResult:
+    overall: dict[str, float | int]
+    buckets: dict[str, dict[str, float | int]] = field(default_factory=dict)
+
+    def to_metrics(
+        self,
+        *,
+        log_mrr: bool = False,
+        log_bucket_metrics: bool = False,
+        log_diagnostics: bool = False,
+    ) -> dict[str, float | int]:
+        metrics = {
+            f"puzzle/{key}": value
+            for key, value in _filter_metrics(
+                self.overall,
+                log_mrr=log_mrr,
+                log_diagnostics=log_diagnostics,
+            ).items()
+        }
+        if log_bucket_metrics:
+            for _bucket_name, bucket_metrics in self.buckets.items():
+                metrics.update(
+                    {
+                        f"puzzle/{key}": value
+                        for key, value in _filter_metrics(
+                            bucket_metrics,
+                            log_mrr=log_mrr,
+                            log_diagnostics=log_diagnostics,
+                        ).items()
+                    }
+                )
+        return metrics
 
 
 def load_puzzles_jsonl(puzzle_path: Path, limit: int | None = None) -> list[dict[str, Any]]:
@@ -142,7 +189,7 @@ def evaluate_model_on_puzzles(
     device: torch.device,
     puzzles: list[dict[str, Any]],
     buckets: tuple[PuzzleBucket, ...] = DEFAULT_PUZZLE_BUCKETS,
-) -> dict[str, float | int]:
+) -> PuzzleEvalResult:
     bucket_stats = {bucket.name: _BucketStats() for bucket in buckets}
     overall_stats = _BucketStats()
 
@@ -174,7 +221,12 @@ def evaluate_model_on_puzzles(
                 bucket.record_skip()
             continue
 
-        predicted_move = _predict_top1_move(model=model, device=device, board=board, fen=fen)
+        predicted_move, mrr = _predict_puzzle_move(
+            model=model,
+            device=device,
+            board=board,
+            solution=solution,
+        )
         if predicted_move is None:
             overall_stats.record_skip()
             if bucket is not None:
@@ -189,6 +241,7 @@ def evaluate_model_on_puzzles(
             exact_match=exact_match,
             predicted_is_legal=predicted_is_legal,
             solution_is_legal=solution_is_legal,
+            mrr=mrr,
             rating=rating,
         )
         if bucket is not None:
@@ -196,14 +249,43 @@ def evaluate_model_on_puzzles(
                 exact_match=exact_match,
                 predicted_is_legal=predicted_is_legal,
                 solution_is_legal=solution_is_legal,
+                mrr=mrr,
                 rating=rating,
             )
 
-    metrics: dict[str, float | int] = {}
-    metrics.update(overall_stats.to_metrics("overall"))
-    for bucket_name, stats in bucket_stats.items():
-        metrics.update(stats.to_metrics(f"bucket/{bucket_name}"))
-    return metrics
+    overall_metrics = overall_stats.to_metrics("overall")
+    bucket_metrics = {
+        bucket_name: stats.to_metrics(f"bucket/{bucket_name}")
+        for bucket_name, stats in bucket_stats.items()
+    }
+    return PuzzleEvalResult(overall=overall_metrics, buckets=bucket_metrics)
+
+
+def _filter_metrics(
+    metrics: dict[str, float | int],
+    *,
+    log_mrr: bool,
+    log_diagnostics: bool,
+) -> dict[str, float | int]:
+    filtered: dict[str, float | int] = {}
+    for key, value in metrics.items():
+        if key.endswith("/exact_match") or key.endswith("/pseudo_elo"):
+            filtered[key] = value
+            continue
+        if log_mrr and key.endswith("/mrr"):
+            filtered[key] = value
+            continue
+        if log_diagnostics and (
+            key.endswith("/total")
+            or key.endswith("/evaluated")
+            or key.endswith("/skipped")
+            or key.endswith("/predicted_legal")
+            or key.endswith("/solution_legal")
+            or key.endswith("/source_total")
+            or key.endswith("/sample_total")
+        ):
+            filtered[key] = value
+    return filtered
 
 
 def evaluate_model_on_puzzle_file(
@@ -214,18 +296,18 @@ def evaluate_model_on_puzzle_file(
     sample_size: int | None = None,
     seed: int = 42,
     buckets: tuple[PuzzleBucket, ...] = DEFAULT_PUZZLE_BUCKETS,
-) -> dict[str, float | int]:
+) -> PuzzleEvalResult:
     puzzles = load_puzzles_jsonl(puzzle_path)
     sampled_puzzles = sample_puzzles(puzzles, sample_size, seed=seed)
-    metrics = evaluate_model_on_puzzles(
+    result = evaluate_model_on_puzzles(
         model=model,
         device=device,
         puzzles=sampled_puzzles,
         buckets=buckets,
     )
-    metrics["overall/source_total"] = len(puzzles)
-    metrics["overall/sample_total"] = len(sampled_puzzles)
-    return metrics
+    result.overall["overall/source_total"] = len(puzzles)
+    result.overall["overall/sample_total"] = len(sampled_puzzles)
+    return result
 
 
 def _parse_rating(raw_rating: Any) -> int | None:
@@ -253,14 +335,14 @@ def _solve_probability(model_rating: float, puzzle_rating: float) -> float:
     return 1.0 / (1.0 + 10.0 ** ((puzzle_rating - model_rating) / 400.0))
 
 
-def _predict_top1_move(
+def _predict_puzzle_move(
     *,
     model: torch.nn.Module,
     device: torch.device,
     board: bulletchess.Board,
-    fen: str,
-) -> str | None:
-    side_to_move = fen.split()[1]
+    solution: str,
+) -> tuple[str | None, float]:
+    side_to_move = str(board.turn)
     outcome_token = WHITE_WON_ID if side_to_move == "w" else BLACK_WON_ID
     session = InferenceSession(
         model,
@@ -269,7 +351,24 @@ def _predict_top1_move(
     )
     legal_ids = legal_token_ids(session.game.board)
     if not legal_ids:
-        return None
+        return None, 0.0
     legal_probs = session.get_legal_probs()
-    predicted_token = int(torch.argmax(legal_probs).item())
-    return to_uci(predicted_token)
+    legal_ranks = torch.argsort(legal_probs[legal_ids], descending=True)
+    predicted_token = int(legal_ids[int(legal_ranks[0].item())])
+    predicted_move = to_uci(predicted_token)
+    solution_token = _solution_token_id(solution=solution, turn=board.turn)
+    if solution_token is None:
+        return predicted_move, 0.0
+
+    ranked_legal_ids = [int(legal_ids[idx]) for idx in legal_ranks.tolist()]
+    try:
+        solution_rank = ranked_legal_ids.index(solution_token) + 1
+    except ValueError:
+        return predicted_move, 0.0
+    mrr = 1.0 / solution_rank
+    return predicted_move, mrr
+
+
+def _solution_token_id(*, solution: str, turn: object) -> int | None:
+    prefix = "w:" if str(turn) == "White" else "b:"
+    return MOVE_TO_ID.get(prefix + solution)

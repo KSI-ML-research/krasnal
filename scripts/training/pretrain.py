@@ -1,6 +1,5 @@
 import math
 from datetime import datetime
-from pathlib import Path
 
 import hydra
 import torch
@@ -13,6 +12,7 @@ from krasnal.config import (
     EVAL_DATASET_PATH,
     PRETRAIN_DATASET_PATH,
     GPTConfig,
+    PuzzleEvalConfig,
     TrainConfig,
 )
 from krasnal.dataset import ChessDataset, make_collate_fn
@@ -51,6 +51,7 @@ def main(cfg: DictConfig) -> None:
     model = build_model(model_config=mconf)
     vocab_size = get_vocab_size()
     tconf = TrainConfig(**OmegaConf.to_container(cfg.train, resolve=True))
+    puzzle_eval = PuzzleEvalConfig(**OmegaConf.to_container(cfg.eval.puzzle_eval, resolve=True))
     collate = make_collate_fn(tconf.padding_bucket_sizes)
     if tconf.epochs <= 0:
         raise ValueError("TrainConfig.epochs must be > 0")
@@ -79,9 +80,11 @@ def main(cfg: DictConfig) -> None:
         "dataset_mtime": dataset_mtime,
         "dataset_size": len(train_dataset),
         "model_repr": repr(model),
-        "puzzle_eval_enabled": bool(cfg.eval.puzzle_eval.enabled),
-        "puzzle_eval_path": str(cfg.eval.puzzle_eval.path),
-        "puzzle_eval_sample_size": cfg.eval.puzzle_eval.sample_size,
+        "puzzle_eval_enabled": puzzle_eval.enabled,
+        "puzzle_eval_path": str(puzzle_eval.path),
+        "puzzle_eval_sample_size": puzzle_eval.sample_size,
+        "puzzle_eval_log_mrr": puzzle_eval.log_mrr,
+        "puzzle_eval_log_bucket_metrics": puzzle_eval.log_bucket_metrics,
     }
 
     run_id, entity, project = init_wandb(
@@ -164,30 +167,23 @@ def main(cfg: DictConfig) -> None:
     )
     eval_device = torch.device(device)
 
-    puzzle_eval_enabled = bool(cfg.eval.puzzle_eval.enabled)
-    puzzle_eval_path = Path(cfg.eval.puzzle_eval.path)
-    puzzle_eval_sample_size = cfg.eval.puzzle_eval.sample_size
-    puzzle_eval_seed = int(cfg.eval.puzzle_eval.seed)
-
-    if puzzle_eval_enabled and not puzzle_eval_path.exists():
-        print(
-            f"[warn] Puzzle eval disabled: file not found at {puzzle_eval_path}. "
-            "Run puzzle preparation first or update cfg.eval.puzzle_eval.path."
-        )
-        puzzle_eval_enabled = False
-
     def eval_fn(model, _iter_num):
         raw_model = unwrap_model(model)
         metrics = evaluator.evaluate(raw_model, eval_dataset, tconf.eval_num_games, eval_device)
-        if puzzle_eval_enabled:
-            puzzle_metrics = evaluate_model_on_puzzle_file(
+        if puzzle_eval.enabled and puzzle_eval.path.exists():
+            puzzle_result = evaluate_model_on_puzzle_file(
                 model=raw_model,
                 device=eval_device,
-                puzzle_path=puzzle_eval_path,
-                sample_size=puzzle_eval_sample_size,
-                seed=puzzle_eval_seed,
+                puzzle_path=puzzle_eval.path,
+                sample_size=puzzle_eval.sample_size,
+                seed=puzzle_eval.seed,
             )
-            metrics.update({f"puzzle/{k}": v for k, v in puzzle_metrics.items()})
+            metrics.update(
+                puzzle_result.to_metrics(
+                    log_mrr=puzzle_eval.log_mrr,
+                    log_bucket_metrics=puzzle_eval.log_bucket_metrics,
+                )
+            )
         return metrics
 
     def eval_log_fn(_iter_num, metrics):

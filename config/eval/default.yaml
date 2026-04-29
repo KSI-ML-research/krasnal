@@ -51,3 +51,5 @@ puzzle_eval:
   path: data/puzzles_filtered.jsonl
   sample_size: null
   seed: 42
+  log_mrr: false
+  log_bucket_metrics: false

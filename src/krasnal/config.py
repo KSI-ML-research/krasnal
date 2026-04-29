@@ -54,3 +54,16 @@ class TrainConfig:
     compile_dynamic: bool = False  # False since we use explicit padding buckets
     compile_fullgraph: bool = True  # captures the entire model into a single graph if True
     padding_bucket_sizes: tuple[int, ...] = ()
+
+
+@dataclass
+class PuzzleEvalConfig:
+    enabled: bool = True
+    path: Path = DATA_DIR / "puzzles_filtered.jsonl"
+    sample_size: int | None = None
+    seed: int = 42
+    log_mrr: bool = False
+    log_bucket_metrics: bool = False
+
+    def __post_init__(self) -> None:
+        self.path = Path(self.path)
