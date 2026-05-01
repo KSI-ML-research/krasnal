@@ -29,6 +29,7 @@ class EvalContext:
     phase: str | None = None
     gives_check: bool | None = None
     fen: str | None = None
+    post_move_fen: str | None = None
     top1_fen: str | None = None
     top1_move_uci: str | None = None
     cot_format_valid: bool | None = None

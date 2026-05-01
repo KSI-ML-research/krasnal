@@ -2,13 +2,19 @@ defaults:
   - pipeline
   - _self_
 
-include_check_qa: true
-check_qa_prob: 0.5
-include_piece_qa: true
+# Task-specific sampling probabilities
+qa:
+  check:
+    enabled: true
+    prob: 0.5
+  piece:
+    enabled: true
+    king_base_prob: 0.1
+  what_is_on:
+    enabled: true
+    prob: 0.1
 
-piece_qa:
-  king_base_prob: 0.1
-
+# Probability of hiding Elo information for one/both players
 unknown_elo:
   normal_prob: 0.97
   white_unknown_prob: 0.01

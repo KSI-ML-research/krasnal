@@ -39,6 +39,7 @@ def replay_game_tokens(game_tokens: GameTokens) -> list[EvalContext]:
 
         board.apply(move)
         gives_check = board in bulletchess.CHECK
+        post_move_fen = board.fen()
 
         contexts.append(
             EvalContext(
@@ -51,6 +52,7 @@ def replay_game_tokens(game_tokens: GameTokens) -> list[EvalContext]:
                 phase=phase,
                 gives_check=gives_check,
                 fen=fen,
+                post_move_fen=post_move_fen,
                 top1_fen=None,
             )
         )

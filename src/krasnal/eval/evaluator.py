@@ -1,9 +1,11 @@
 import random
 from typing import Any
 
+import plotly.graph_objects as go
 import torch
 from loguru import logger
 
+import wandb
 from krasnal.dataset import ChessDataset
 from krasnal.eval.cot import extract_think_tokens, is_valid_cot_sequence, parse_cot_sample
 from krasnal.eval.parsers import parse_game_tokens
@@ -11,6 +13,8 @@ from krasnal.eval.replayer import replay_games
 from krasnal.inference import InferenceSession, StatelessBatchInferenceSession
 from krasnal.tokens import (
     BISHOP_ID,
+    COLORED_PIECE_TOKENS,
+    EMPTY_ID,
     GAME_END_ID,
     IS_CHECK_ID,
     KING_ID,
@@ -19,7 +23,9 @@ from krasnal.tokens import (
     PAWN_ID,
     QUEEN_ID,
     ROOK_ID,
+    SQUARE_TOKENS,
     THINK_END_ID,
+    WHAT_IS_ON_ID,
     WHAT_PIECE_ID,
     YES_CHECK_ID,
     get_moves_only,
@@ -43,11 +49,7 @@ class ChessEvaluator:
         seed: int | None = None,
         stockfish: StockfishClient | None = None,
         acpl_sample_size: int = 100,
-        enable_qa_check_metrics: bool = True,
-        enable_piece_probe_metrics: bool = True,
-        enable_piece_f1_breakdown_metrics: bool = False,
-        enable_qa_check_confusion_matrix_metrics: bool = False,
-        enable_piece_confusion_matrix_metrics: bool = False,
+        qa_config: dict[str, Any] | None = None,
     ):
         if metrics is None:
             raise ValueError("ChessEvaluator requires an explicit metrics list")
@@ -58,11 +60,25 @@ class ChessEvaluator:
         self.seed = seed
         self.stockfish = stockfish
         self.acpl_sample_size = acpl_sample_size
-        self.enable_qa_check_metrics = enable_qa_check_metrics
-        self.enable_piece_probe_metrics = enable_piece_probe_metrics
-        self.enable_piece_f1_breakdown_metrics = enable_piece_f1_breakdown_metrics
-        self.enable_qa_check_confusion_matrix_metrics = enable_qa_check_confusion_matrix_metrics
-        self.enable_piece_confusion_matrix_metrics = enable_piece_confusion_matrix_metrics
+
+        qa_cfg = qa_config or {}
+        check_cfg = qa_cfg.get("check", {})
+        self.enable_qa_check_metrics = bool(check_cfg.get("enabled", True))
+        self.enable_qa_check_confusion_matrix_metrics = bool(
+            check_cfg.get("confusion_matrix", False)
+        )
+
+        piece_cfg = qa_cfg.get("piece", {})
+        self.enable_piece_probe_metrics = bool(piece_cfg.get("enabled", True))
+        self.enable_piece_f1_per_piece_metrics = bool(piece_cfg.get("f1_per_piece", False))
+        self.enable_piece_confusion_matrix_metrics = bool(piece_cfg.get("confusion_matrix", False))
+
+        what_is_on_cfg = qa_cfg.get("what_is_on", {})
+        self.enable_what_is_on_probe_metrics = bool(what_is_on_cfg.get("enabled", True))
+        self.enable_what_is_on_f1_per_square_metrics = bool(
+            what_is_on_cfg.get("f1_per_square", False)
+        )
+
         self.metrics = self._init_metrics()
 
     def _init_metrics(self) -> dict[str, Any]:
@@ -151,6 +167,8 @@ class ChessEvaluator:
             final.update(self._evaluate_is_check_probe(contexts, model, device))
         if self.enable_piece_probe_metrics:
             final.update(self._evaluate_piece_probe(contexts, model, device))
+        if self.enable_what_is_on_probe_metrics:
+            final.update(self._evaluate_what_is_on_probe(contexts, model, device))
         return final
 
     def _evaluate_piece_probe(
@@ -194,16 +212,18 @@ class ChessEvaluator:
             labels.append(true_piece_token)
 
         default_metrics: dict[str, float] = {
-            "piece_acc": 0.0,
-            "qa_piece_f1": 0.0,
+            "qa/piece/acc": 0.0,
+            "qa/piece/f1": 0.0,
         }
-        if self.enable_piece_f1_breakdown_metrics:
+        if self.enable_piece_f1_per_piece_metrics:
             for piece_id in piece_ids:
-                default_metrics[f"piece_f1_{piece_names[piece_id]}"] = 0.0
+                default_metrics[f"qa/piece/f1_per_piece/{piece_names[piece_id]}"] = 0.0
         if self.enable_piece_confusion_matrix_metrics:
             for true_id in piece_ids:
                 for pred_id in piece_ids:
-                    default_metrics[f"piece_cm_{piece_names[true_id]}_{piece_names[pred_id]}"] = 0.0
+                    default_metrics[
+                        f"qa/piece/confusion_matrix/{piece_names[true_id]}_{piece_names[pred_id]}"
+                    ] = 0.0
 
         if not probe_sequences:
             return default_metrics
@@ -240,18 +260,20 @@ class ChessEvaluator:
         macro_f1 = f1_sum / len(piece_ids)
 
         metrics: dict[str, float] = {
-            "piece_acc": acc,
-            "qa_piece_f1": macro_f1,
+            "qa/piece/acc": acc,
+            "qa/piece/f1": macro_f1,
         }
-        if self.enable_piece_f1_breakdown_metrics:
+        if self.enable_piece_f1_per_piece_metrics:
             for piece_id in piece_ids:
-                metrics[f"piece_f1_{piece_names[piece_id]}"] = piece_f1_scores[piece_id]
+                metrics[f"qa/piece/f1_per_piece/{piece_names[piece_id]}"] = piece_f1_scores[
+                    piece_id
+                ]
         if self.enable_piece_confusion_matrix_metrics:
             for true_id in piece_ids:
                 for pred_id in piece_ids:
-                    metrics[f"piece_cm_{piece_names[true_id]}_{piece_names[pred_id]}"] = float(
-                        confusion[(true_id, pred_id)]
-                    )
+                    metrics[
+                        f"qa/piece/confusion_matrix/{piece_names[true_id]}_{piece_names[pred_id]}"
+                    ] = float(confusion[(true_id, pred_id)])
         return metrics
 
     def _evaluate_is_check_probe(
@@ -275,9 +297,9 @@ class ChessEvaluator:
 
         if not probe_sequences:
             return {
-                "qa_check_precision": 0.0,
-                "qa_check_recall": 0.0,
-                "qa_check_f1": 0.0,
+                "qa/check/precision": 0.0,
+                "qa/check/recall": 0.0,
+                "qa/check/f1": 0.0,
             }
 
         batch_session = StatelessBatchInferenceSession(model, device)
@@ -293,11 +315,177 @@ class ChessEvaluator:
 
         metrics = self._compute_binary_f1_metrics(tp=tp, fp=fp, fn=fn)
         if self.enable_qa_check_confusion_matrix_metrics:
-            metrics["qa_check_tp"] = float(tp)
-            metrics["qa_check_fp"] = float(fp)
-            metrics["qa_check_tn"] = float(tn)
-            metrics["qa_check_fn"] = float(fn)
+            metrics["qa/check/confusion_matrix/tp"] = float(tp)
+            metrics["qa/check/confusion_matrix/fp"] = float(fp)
+            metrics["qa/check/confusion_matrix/tn"] = float(tn)
+            metrics["qa/check/confusion_matrix/fn"] = float(fn)
         return metrics
+
+    def _evaluate_what_is_on_probe(
+        self,
+        contexts: list[EvalContext],
+        model: torch.nn.Module,
+        device: torch.device,
+    ) -> dict[str, Any]:
+        from hashlib import blake2b
+
+        import bulletchess
+
+        probe_sequences: list[list[int]] = []
+        labels: list[int] = []
+        sq_strs: list[str] = []
+        block_size = model.config.block_size
+
+        for ctx in contexts:
+            if ctx.sequence is None or ctx.actual_token is None or ctx.post_move_fen is None:
+                continue
+
+            # Deterministically sample a square using FEN hash
+            sq_idx = (
+                int.from_bytes(
+                    blake2b(f"what_is_on_{ctx.post_move_fen}".encode(), digest_size=8).digest(),
+                    "big",
+                )
+                % 64
+            )
+
+            file_char = chr(97 + (sq_idx % 8))
+            rank_char = str(1 + (sq_idx // 8))
+            sq_str = f"{file_char}{rank_char}"
+            sq_token_id = SQUARE_TOKENS[f"<{sq_str}>"]
+
+            board = bulletchess.Board.from_fen(ctx.post_move_fen)
+            piece = board[bulletchess.Square.from_str(sq_str)]
+
+            if piece is None:
+                ans_id = EMPTY_ID
+            else:
+                color_str = "w" if str(piece.color) == "White" else "b"
+                piece_str = str(piece.piece_type).lower()
+                ans_id = COLORED_PIECE_TOKENS[f"<{color_str}:{piece_str}>"]
+
+            probe = [*ctx.sequence, ctx.actual_token, WHAT_IS_ON_ID, sq_token_id]
+            if len(probe) > block_size:
+                continue
+
+            probe_sequences.append(probe)
+            labels.append(ans_id)
+            sq_strs.append(sq_str)
+
+        metrics: dict[str, Any] = {
+            "qa/what_is_on/acc": 0.0,
+            "qa/what_is_on/f1": 0.0,
+        }
+        if self.enable_what_is_on_f1_per_square_metrics:
+            metrics["qa/what_is_on/f1_matrix"] = self._build_what_is_on_heatmap({})
+
+        if not probe_sequences:
+            return metrics
+
+        batch_session = StatelessBatchInferenceSession(model, device)
+        probs = batch_session.get_raw_probs_batch(probe_sequences)
+        preds: list[int] = []
+
+        valid_ans_ids = [EMPTY_ID, *list(COLORED_PIECE_TOKENS.values())]
+
+        for prob in probs:
+            pred_id = max(valid_ans_ids, key=lambda pid: float(prob[pid]))
+            preds.append(pred_id)
+
+        correct = sum(1 for pred, label in zip(preds, labels, strict=True) if pred == label)
+        total = len(labels)
+
+        confusion = {
+            (true_id, pred_id): 0 for true_id in valid_ans_ids for pred_id in valid_ans_ids
+        }
+        for true_id, pred_id in zip(labels, preds, strict=True):
+            confusion[(true_id, pred_id)] += 1
+
+        f1_sum = 0.0
+        for ans_id in valid_ans_ids:
+            tp = confusion[(ans_id, ans_id)]
+            fp = sum(confusion[(other, ans_id)] for other in valid_ans_ids if other != ans_id)
+            fn = sum(confusion[(ans_id, other)] for other in valid_ans_ids if other != ans_id)
+            precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
+            recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0
+            f1 = (
+                2.0 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0.0
+            )
+            f1_sum += f1
+        macro_f1 = f1_sum / len(valid_ans_ids)
+
+        metrics["qa/what_is_on/acc"] = correct / total if total > 0 else 0.0
+        metrics["qa/what_is_on/f1"] = macro_f1
+
+        if self.enable_what_is_on_f1_per_square_metrics:
+            square_f1s: dict[str, float] = {}
+            for file_i in range(8):
+                for rank_i in range(8):
+                    sq = f"{chr(97 + file_i)}{1 + rank_i}"
+                    sq_indices = [i for i, s in enumerate(sq_strs) if s == sq]
+                    if not sq_indices:
+                        square_f1s[sq] = 0.0
+                        continue
+                    sq_preds = [preds[i] for i in sq_indices]
+                    sq_labels = [labels[i] for i in sq_indices]
+
+                    sq_confusion = {
+                        (true_id, pred_id): 0
+                        for true_id in valid_ans_ids
+                        for pred_id in valid_ans_ids
+                    }
+                    for true_id, pred_id in zip(sq_labels, sq_preds, strict=True):
+                        sq_confusion[(true_id, pred_id)] += 1
+
+                    sq_f1_sum = 0.0
+                    for ans_id in valid_ans_ids:
+                        tp = sq_confusion[(ans_id, ans_id)]
+                        fp = sum(
+                            sq_confusion[(other, ans_id)]
+                            for other in valid_ans_ids
+                            if other != ans_id
+                        )
+                        fn = sum(
+                            sq_confusion[(ans_id, other)]
+                            for other in valid_ans_ids
+                            if other != ans_id
+                        )
+                        precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
+                        recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0
+                        f1 = (
+                            2.0 * precision * recall / (precision + recall)
+                            if (precision + recall) > 0
+                            else 0.0
+                        )
+                        sq_f1_sum += f1
+                    square_f1s[sq] = sq_f1_sum / len(valid_ans_ids)
+
+            metrics["qa/what_is_on/f1_matrix"] = self._build_what_is_on_heatmap(square_f1s)
+
+        return metrics
+
+    @staticmethod
+    def _build_what_is_on_heatmap(square_f1s: dict[str, float]) -> wandb.Plotly:
+        files = ["a", "b", "c", "d", "e", "f", "g", "h"]
+        ranks = ["8", "7", "6", "5", "4", "3", "2", "1"]
+        z = [[square_f1s.get(f"{file}{rank}", 0.0) for file in files] for rank in ranks]
+        fig = go.Figure(
+            data=go.Heatmap(
+                z=z,
+                x=files,
+                y=ranks,
+                colorscale="Viridis",
+                reversescale=False,
+                colorbar={"title": "F1"},
+                hovertemplate="file=%{x}<br>rank=%{y}<br>f1=%{z:.4f}<extra></extra>",
+            )
+        )
+        fig.update_layout(
+            title="what_is_on F1 per square",
+            xaxis_title="File",
+            yaxis_title="Rank",
+        )
+        return wandb.Plotly(fig)
 
     @staticmethod
     def _compute_binary_f1_metrics(
@@ -313,9 +501,9 @@ class ChessEvaluator:
         )
 
         return {
-            "qa_check_precision": precision,
-            "qa_check_recall": recall,
-            "qa_check_f1": check_f1,
+            "qa/check/precision": precision,
+            "qa/check/recall": recall,
+            "qa/check/f1": check_f1,
         }
 
     def _compute_top1_fen(self, ctx: EvalContext) -> None:
@@ -342,10 +530,11 @@ class ChessEvaluator:
     def _aggregate_results(self, results: dict[str, list[float]]) -> dict[str, float]:
         final_results: dict[str, float] = {}
         for k, v in results.items():
-            final_results[k] = sum(v) / len(v) if v else 0.0
+            final_results[f"game/{k}"] = sum(v) / len(v) if v else 0.0
         for metric in self.metrics.values():
             if hasattr(metric, "finalize"):
-                final_results.update(metric.finalize())
+                for k, v in metric.finalize().items():
+                    final_results[f"game/{k}"] = v
         return final_results
 
     def evaluate_cot(
@@ -392,7 +581,8 @@ class ChessEvaluator:
                     results[key].append(float(value))
 
         return {
-            key: (sum(values) / len(values) if values else 0.0) for key, values in results.items()
+            f"cot/{key.removeprefix('cot_')}": (sum(values) / len(values) if values else 0.0)
+            for key, values in results.items()
         }
 
     def _generate_cot_continuation(

@@ -6,8 +6,9 @@ import torch
 from torch.utils.data import DataLoader, TensorDataset
 
 from krasnal.dataset import make_collate_fn
-from krasnal.tokens import IS_CHECK_ID
+from krasnal.tokens import IS_CHECK_ID, MOVE_TO_ID, WHAT_IS_ON_PROMPT_TOKEN_IDS
 from krasnal.trainer import cosine_warmup_lr, run_supervised_training
+from krasnal.utils import format_eval_metric_key
 
 
 class MockConfig:
@@ -122,3 +123,26 @@ def test_collate_masks_is_check_targets():
 
     assert x.tolist() == [[10, IS_CHECK_ID]]
     assert y.tolist() == [[-100, 11]]
+
+
+def test_collate_masks_what_is_on_prompt_tokens():
+    collate = make_collate_fn()
+    what_is_on = MOVE_TO_ID["<what_is_on>"]
+    square = MOVE_TO_ID["<e4>"]
+    answer = MOVE_TO_ID["<w:pawn>"]
+
+    assert what_is_on in WHAT_IS_ON_PROMPT_TOKEN_IDS
+    assert square in WHAT_IS_ON_PROMPT_TOKEN_IDS
+    assert answer not in WHAT_IS_ON_PROMPT_TOKEN_IDS
+
+    x, y = collate([torch.tensor([10, what_is_on, square, answer], dtype=torch.long)])
+
+    assert x.tolist() == [[10, what_is_on, square]]
+    assert y.tolist() == [[-100, -100, answer]]
+
+
+def test_format_eval_metric_key_groups_game_metrics():
+    assert format_eval_metric_key("illegal_mass") == "eval/game/illegal_mass"
+    assert format_eval_metric_key("top1_legal") == "eval/game/top1_legal"
+    assert format_eval_metric_key("qa/what_is_on/f1_matrix") == "eval/qa/what_is_on/f1_matrix"
+    assert format_eval_metric_key("val_loss") == "eval/val_loss"
