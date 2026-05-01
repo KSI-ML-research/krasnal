@@ -125,20 +125,32 @@ def test_extract_generated_think_tokens_handles_multiple_think_blocks():
 def test_compute_binary_f1_metrics_returns_expected_values():
     result = ChessEvaluator._compute_binary_f1_metrics(tp=3, fp=1, fn=2)
 
-    assert result["qa_check_precision"] == 0.75
-    assert result["qa_check_recall"] == 0.6
-    assert result["qa_check_f1"] == 2 * 0.75 * 0.6 / (0.75 + 0.6)
+    assert result["qa/check/precision"] == 0.75
+    assert result["qa/check/recall"] == 0.6
+    assert result["qa/check/f1"] == 2 * 0.75 * 0.6 / (0.75 + 0.6)
 
 
-def test_piece_probe_metrics_can_skip_piece_f1_breakdown():
+def test_build_what_is_on_heatmap_uses_all_squares():
+    square_f1s = {f"{file}{rank}": float(rank) for rank in range(1, 9) for file in "abcdefgh"}
+
+    heatmap = ChessEvaluator._build_what_is_on_heatmap(square_f1s)
+
+    assert heatmap is not None
+
+
+def test_piece_probe_metrics_can_skip_piece_f1_per_piece():
     evaluator = ChessEvaluator(
         metrics=["piece_acc"],
-        enable_piece_probe_metrics=True,
-        enable_piece_f1_breakdown_metrics=False,
+        qa_config={
+            "piece": {
+                "enabled": True,
+                "f1_per_piece": False,
+            }
+        },
     )
     model = SimpleNamespace(config=SimpleNamespace(block_size=128))
 
     result = evaluator._evaluate_piece_probe([], model=model, device=None)
 
-    assert result == {"piece_acc": 0.0, "qa_piece_f1": 0.0}
-    assert not any(key.startswith("piece_f1_") for key in result)
+    assert result == {"qa/piece/acc": 0.0, "qa/piece/f1": 0.0}
+    assert not any(key.startswith("qa/piece/f1_per_piece/") for key in result)

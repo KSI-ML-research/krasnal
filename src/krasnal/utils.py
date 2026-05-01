@@ -81,6 +81,14 @@ def save_wandb_run(
     wandb.log_artifact(artifact)
 
 
+def format_eval_metric_key(key: str) -> str:
+    if key == "val_loss":
+        return "eval/val_loss"
+    if key.startswith("qa/") or key.startswith("cot_"):
+        return f"eval/{key}"
+    return f"eval/game/{key}"
+
+
 REQUIRED_CONFIG_KEYS = {"block_size", "n_layer", "n_head", "n_embd"}
 
 

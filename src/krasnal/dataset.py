@@ -8,7 +8,12 @@ from datasets import Dataset as HFDataset
 from torch.nn.utils.rnn import pad_sequence
 from torch.utils.data import Dataset
 
-from krasnal.tokens import IS_CHECK_ID, PAD_ID, WHAT_PIECE_ID
+from krasnal.tokens import (
+    IS_CHECK_ID,
+    PAD_ID,
+    WHAT_IS_ON_PROMPT_TOKEN_IDS,
+    WHAT_PIECE_ID,
+)
 
 LOSS_IGNORE_INDEX = -100
 
@@ -92,6 +97,8 @@ class CollateFn:
         y = padded[:, 1:].clone()
         y[y == IS_CHECK_ID] = LOSS_IGNORE_INDEX
         y[y == WHAT_PIECE_ID] = LOSS_IGNORE_INDEX
+        for token_id in WHAT_IS_ON_PROMPT_TOKEN_IDS:
+            y[y == token_id] = LOSS_IGNORE_INDEX
         return x, y
 
 
