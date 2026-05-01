@@ -87,23 +87,33 @@ def test_elo_bucket_function():
 
 
 def test_get_moves_only_basic():
-    assert get_moves_only([GAME_START_ID, WHITE_WON_ID, 100, 101, 102, GAME_END_ID]) == [
-        100,
-        101,
-        102,
+    assert get_moves_only([GAME_START_ID, WHITE_WON_ID, 5000, 5001, 5002, GAME_END_ID]) == [
+        5000,
+        5001,
+        5002,
     ]
 
 
 def test_get_moves_only_with_elo():
     assert get_moves_only(
-        [GAME_START_ID, WHITE_WON_ID, ELO_2000_2499_ID, ELO_1500_1999_ID, 100, 101, GAME_END_ID]
-    ) == [100, 101]
+        [GAME_START_ID, WHITE_WON_ID, ELO_2000_2499_ID, ELO_1500_1999_ID, 5000, 5001, GAME_END_ID]
+    ) == [5000, 5001]
 
 
 def test_get_moves_only_strips_think_content():
     assert get_moves_only(
-        [GAME_START_ID, WHITE_WON_ID, 100, THINK_START_ID, 200, 201, THINK_END_ID, 102, GAME_END_ID]
-    ) == [100, 102]
+        [
+            GAME_START_ID,
+            WHITE_WON_ID,
+            5000,
+            THINK_START_ID,
+            200,
+            201,
+            THINK_END_ID,
+            5002,
+            GAME_END_ID,
+        ]
+    ) == [5000, 5002]
 
 
 def test_get_moves_only_all_special_tokens():
@@ -117,11 +127,11 @@ def test_get_moves_only_all_special_tokens():
             500,
             501,
             THINK_END_ID,
-            100,
-            101,
+            5000,
+            5001,
             GAME_END_ID,
         ]
-    ) == [100, 101]
+    ) == [5000, 5001]
 
 
 def test_side_prefixed_moves_toggle_changes_move_keys():

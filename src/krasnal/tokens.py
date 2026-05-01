@@ -39,6 +39,18 @@ BISHOP_ID = 23
 ROOK_ID = 24
 QUEEN_ID = 25
 KING_ID = 26
+WHAT_IS_ON_ID = 27
+EMPTY_ID = 28
+
+SQUARE_TOKENS = {f"<{chr(f + 97)}{r + 1}>": 29 + r * 8 + f for r in range(8) for f in range(8)}
+SQUARE_TOKEN_IDS = frozenset(SQUARE_TOKENS.values())
+
+COLORED_PIECE_TOKENS = {}
+_next_id = 93
+for _color in ["w", "b"]:
+    for _piece in ["pawn", "knight", "bishop", "rook", "queen", "king"]:
+        COLORED_PIECE_TOKENS[f"<{_color}:{_piece}>"] = _next_id
+        _next_id += 1
 
 WHITE_PREFIX = "w:"
 BLACK_PREFIX = "b:"
@@ -79,7 +91,12 @@ QA_TOKENS = {
     "<rook>": ROOK_ID,
     "<queen>": QUEEN_ID,
     "<king>": KING_ID,
+    "<what_is_on>": WHAT_IS_ON_ID,
+    "<empty>": EMPTY_ID,
+    **SQUARE_TOKENS,
+    **COLORED_PIECE_TOKENS,
 }
+WHAT_IS_ON_PROMPT_TOKEN_IDS = frozenset({WHAT_IS_ON_ID, *SQUARE_TOKEN_IDS})
 
 QA_TOKEN_IDS = frozenset(QA_TOKENS.values())
 

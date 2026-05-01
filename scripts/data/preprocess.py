@@ -4,6 +4,7 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 from hashlib import blake2b
 from pathlib import Path
 
+import bulletchess
 import hydra
 import polars as pl
 from loguru import logger
@@ -17,6 +18,7 @@ from krasnal.config import (
 from krasnal.tokens import (
     BISHOP_ID,
     BLACK_WON_ID,
+    COLORED_PIECE_TOKENS,
     DRAW_ID,
     ELO_1000_1499_ID,
     ELO_1500_1999_ID,
@@ -25,6 +27,7 @@ from krasnal.tokens import (
     ELO_ABOVE_3000_ID,
     ELO_BELOW_1000_ID,
     ELO_UNKNOWN_ID,
+    EMPTY_ID,
     GAME_END_ID,
     GAME_START_ID,
     IS_CHECK_ID,
@@ -36,7 +39,9 @@ from krasnal.tokens import (
     QUEEN_ID,
     ROOK_ID,
     SPECIAL_TOKENS,
+    SQUARE_TOKENS,
     UNKNOWN_RESULT_ID,
+    WHAT_IS_ON_ID,
     WHAT_PIECE_ID,
     WHITE_WON_ID,
     YES_CHECK_ID,
@@ -156,9 +161,15 @@ def _build_game_tokens(
     p_no: float,
     include_piece_qa: bool,
     piece_sampling_probs: dict[str, float],
+    fen: str | None = None,
+    include_what_is_on_qa: bool = False,
+    what_is_on_prob: float = 0.0,
 ) -> list[int]:
     if not uci_moves:
         return []
+
+    if include_what_is_on_qa:
+        b = bulletchess.Board.from_fen(fen) if fen else bulletchess.Board()
 
     moves_list = uci_moves.split()
 
@@ -186,6 +197,39 @@ def _build_game_tokens(
                 ):
                     answer_token = PIECE_ROLE_TO_TOKEN_ID[piece_role]
                     result_tokens.extend([WHAT_PIECE_ID, answer_token])
+
+        if include_what_is_on_qa:
+            for m in b.legal_moves():
+                if m.uci() == move:
+                    b.apply(m)
+                    break
+
+            if _sample_bool(
+                seed=seed + 20, game_key=uci_moves, ply=ply, probability=what_is_on_prob
+            ):
+                from hashlib import blake2b
+
+                sq_idx = (
+                    int.from_bytes(
+                        blake2b(f"{seed + 21}|{uci_moves}|{ply}".encode(), digest_size=8).digest(),
+                        "big",
+                    )
+                    % 64
+                )
+                file_char = chr(97 + (sq_idx % 8))
+                rank_char = str(1 + (sq_idx // 8))
+                sq_str = f"{file_char}{rank_char}"
+                sq_token_id = SQUARE_TOKENS[f"<{sq_str}>"]
+
+                piece = b[bulletchess.Square.from_str(sq_str)]
+                if piece is None:
+                    ans_id = EMPTY_ID
+                else:
+                    color_str = "w" if str(piece.color) == "White" else "b"
+                    piece_str = str(piece.piece_type).lower()
+                    ans_id = COLORED_PIECE_TOKENS[f"<{color_str}:{piece_str}>"]
+
+                result_tokens.extend([WHAT_IS_ON_ID, sq_token_id, ans_id])
 
     white_elo = get_elo_bucket(white_rating)
     black_elo = get_elo_bucket(black_rating)
@@ -231,6 +275,8 @@ def process_file_streaming(
     include_piece_qa: bool,
     king_base_prob: float,
     unknown_elo: dict[str, float],
+    include_what_is_on_qa: bool = False,
+    what_is_on_prob: float = 0.0,
 ) -> int:
     lf = pl.scan_parquet(parquet_path)
 
@@ -286,6 +332,9 @@ def process_file_streaming(
                 p_no=p_no,
                 include_piece_qa=include_piece_qa,
                 piece_sampling_probs=piece_sampling_probs,
+                fen=batch["fen"][i] if "fen" in batch.columns and batch["fen"][i] else None,
+                include_what_is_on_qa=include_what_is_on_qa,
+                what_is_on_prob=what_is_on_prob,
             )
             token_ids_list.append(token_ids)
 
@@ -318,6 +367,8 @@ def _process_one_shard(
     include_piece_qa: bool,
     king_base_prob: float,
     unknown_elo: dict[str, float],
+    include_what_is_on_qa: bool = False,
+    what_is_on_prob: float = 0.0,
 ) -> tuple[str, int, str]:
     set_side_prefixed_moves(side_prefixed_moves)
     count = process_file_streaming(
@@ -329,6 +380,8 @@ def _process_one_shard(
         include_piece_qa=include_piece_qa,
         king_base_prob=king_base_prob,
         unknown_elo=unknown_elo,
+        include_what_is_on_qa=include_what_is_on_qa,
+        what_is_on_prob=what_is_on_prob,
     )
     return parquet_path.name, count, output_path.name
 
@@ -399,6 +452,16 @@ def compute_token_mix_stats(tokenized_lf: pl.LazyFrame) -> dict[str, float]:
             .sum()
             .alias("what_piece_count"),
             pl.col("token_ids")
+            .list.eval((pl.element() == WHAT_IS_ON_ID).cast(pl.UInt32), parallel=True)
+            .list.sum()
+            .sum()
+            .alias("what_is_on_count"),
+            pl.col("token_ids")
+            .list.eval((pl.element() == EMPTY_ID).cast(pl.UInt32), parallel=True)
+            .list.sum()
+            .sum()
+            .alias("empty_count"),
+            pl.col("token_ids")
             .list.eval((pl.element() == PAWN_ID).cast(pl.UInt32), parallel=True)
             .list.sum()
             .sum()
@@ -453,15 +516,17 @@ def compute_token_mix_stats(tokenized_lf: pl.LazyFrame) -> dict[str, float]:
     yes_check_count = int(stats[2] or 0)
     no_check_count = int(stats[3] or 0)
     what_piece_count = int(stats[4] or 0)
-    pawn_count = int(stats[5] or 0)
-    knight_count = int(stats[6] or 0)
-    bishop_count = int(stats[7] or 0)
-    rook_count = int(stats[8] or 0)
-    queen_count = int(stats[9] or 0)
-    king_count = int(stats[10] or 0)
-    result_count = int(stats[11] or 0)
-    elo_count = int(stats[12] or 0)
-    special_count = int(stats[13] or 0)
+    what_is_on_count = int(stats[5] or 0)
+    empty_count = int(stats[6] or 0)
+    pawn_count = int(stats[7] or 0)
+    knight_count = int(stats[8] or 0)
+    bishop_count = int(stats[9] or 0)
+    rook_count = int(stats[10] or 0)
+    queen_count = int(stats[11] or 0)
+    king_count = int(stats[12] or 0)
+    result_count = int(stats[13] or 0)
+    elo_count = int(stats[14] or 0)
+    special_count = int(stats[15] or 0)
 
     check_qa_count = is_check_count + yes_check_count + no_check_count
     piece_answer_count = (
@@ -497,6 +562,9 @@ def compute_token_mix_stats(tokenized_lf: pl.LazyFrame) -> dict[str, float]:
         "check_qa_pct": pct(check_qa_count),
         "piece_qa_pct": pct(piece_qa_count),
         "outcome_prefix_pct": pct(outcome_prefix_count),
+        "what_is_on_count": what_is_on_count,
+        "empty_count": empty_count,
+        "occupied_count": what_is_on_count - empty_count,
     }
 
 
@@ -510,14 +578,26 @@ def main(cfg: DictConfig) -> None:
     set_side_prefixed_moves(bool(cfg.get("side_prefixed_moves", True)))
     block_size = int(cfg.block_size)
     seed = int(cfg.seed)
-    include_check_qa = bool(cfg.get("include_check_qa", True))
-    check_qa_prob = float(cfg.get("check_qa_prob", 0.5))
+
+    qa = cfg.get("qa", {})
+
+    check_cfg = qa.get("check", {})
+    include_check_qa = bool(check_cfg.get("enabled", True))
+    check_qa_prob = float(check_cfg.get("prob", 0.5))
     if not 0.0 <= check_qa_prob <= 1.0:
-        raise ValueError(f"check_qa_prob must be in [0, 1], got {check_qa_prob}")
-    include_piece_qa = bool(cfg.get("include_piece_qa", True))
-    king_base_prob = float(cfg.get("piece_qa", {}).get("king_base_prob", 0.5))
+        raise ValueError(f"qa.check.prob must be in [0, 1], got {check_qa_prob}")
+
+    piece_cfg = qa.get("piece", {})
+    include_piece_qa = bool(piece_cfg.get("enabled", True))
+    king_base_prob = float(piece_cfg.get("king_base_prob", 0.5))
     if not 0.0 <= king_base_prob <= 1.0:
-        raise ValueError(f"piece_qa.king_base_prob must be in [0, 1], got {king_base_prob}")
+        raise ValueError(f"qa.piece.king_base_prob must be in [0, 1], got {king_base_prob}")
+
+    what_is_on_cfg = qa.get("what_is_on", {})
+    include_what_is_on_qa = bool(what_is_on_cfg.get("enabled", False))
+    what_is_on_prob = float(what_is_on_cfg.get("prob", 0.0))
+    if not 0.0 <= what_is_on_prob <= 1.0:
+        raise ValueError(f"qa.what_is_on.prob must be in [0, 1], got {what_is_on_prob}")
     unknown_elo = {
         "normal_prob": float(cfg.unknown_elo.normal_prob),
         "white_unknown_prob": float(cfg.unknown_elo.white_unknown_prob),
@@ -561,6 +641,8 @@ def main(cfg: DictConfig) -> None:
                 include_piece_qa,
                 king_base_prob,
                 unknown_elo,
+                include_what_is_on_qa,
+                what_is_on_prob,
             )
             futures[future] = parquet_path.name
 
@@ -616,13 +698,18 @@ def main(cfg: DictConfig) -> None:
     token_mix = compute_token_mix_stats(filtered_lf.select("token_ids"))
     logger.info(
         "Token mix after >block_size filtering: UCI moves={} ({:.2f}%), "
-        "check Q&A={} ({:.2f}%), piece Q&A={} ({:.2f}%), outcome prefix={} ({:.2f}%)",
+        "check Q&A={} ({:.2f}%), piece Q&A={} ({:.2f}%), "
+        "what_is_on={} ({:.2f}%), outcome prefix={} ({:.2f}%)",
         token_mix["uci_move_count"],
         token_mix["uci_move_pct"],
         token_mix["check_qa_count"],
         token_mix["check_qa_pct"],
         token_mix["piece_qa_count"],
         token_mix["piece_qa_pct"],
+        token_mix["what_is_on_count"],
+        (token_mix["what_is_on_count"] / token_mix["total_tokens"] * 100)
+        if token_mix["total_tokens"] > 0
+        else 0,
         token_mix["outcome_prefix_count"],
         token_mix["outcome_prefix_pct"],
     )

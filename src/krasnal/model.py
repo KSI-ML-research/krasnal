@@ -6,6 +6,7 @@ Differences from the original NanoGPT implementation:
 - Replaced LayerNorm with RMSNorm, which is more efficient. (paper: https://arxiv.org/abs/1910.07467)
 - Replaced absolute positional embeddings with RoPE, which is better at extrapolation.
 - Replaced ReLU activation with GeLU which is smoother and performs better in practice.
+- Added KV Cache (Kyryllo Goroshenko) to speed up long context inference.
 """
 
 from __future__ import annotations

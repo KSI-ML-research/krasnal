@@ -2,5 +2,5 @@ defaults:
   - pipeline
   - model: small
   - train: cuda
-  - eval: default
+  - eval@eval
   - _self_

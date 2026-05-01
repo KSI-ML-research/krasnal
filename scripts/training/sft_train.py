@@ -38,7 +38,13 @@ from krasnal.trainer import (
     setup_runtime,
     unwrap_model,
 )
-from krasnal.utils import init_wandb, print_model_config, save_wandb_run, set_seed
+from krasnal.utils import (
+    format_eval_metric_key,
+    init_wandb,
+    print_model_config,
+    save_wandb_run,
+    set_seed,
+)
 
 
 def mixed_batch_generator(
@@ -180,32 +186,20 @@ def main(cfg: DictConfig) -> None:
         collate_fn=collate,
     )
 
-    stockfish = get_stockfish_client(depth=cfg.eval.stockfish_depth)
+    stockfish = get_stockfish_client(depth=cfg.eval.stockfish.depth)
     classical_evaluator = ChessEvaluator(
         metrics=list(cfg.eval.metrics),
         stockfish=stockfish,
         seed=cfg.seed,
-        acpl_sample_size=cfg.eval.acpl_sample_size,
-        enable_qa_check_metrics=bool(cfg.eval.enable_qa_check_metrics),
-        enable_piece_probe_metrics=bool(cfg.eval.enable_piece_probe_metrics),
-        enable_piece_f1_breakdown_metrics=bool(cfg.eval.enable_piece_f1_breakdown_metrics),
-        enable_qa_check_confusion_matrix_metrics=bool(
-            cfg.eval.enable_qa_check_confusion_matrix_metrics
-        ),
-        enable_piece_confusion_matrix_metrics=bool(cfg.eval.enable_piece_confusion_matrix_metrics),
+        acpl_sample_size=cfg.eval.stockfish.acpl_sample_size,
+        qa_config=OmegaConf.to_container(cfg.eval.qa, resolve=True),
     )
     cot_evaluator = ChessEvaluator(
         metrics=list(cfg.eval.cot_metrics),
         cot=True,
         stockfish=stockfish,
         seed=cfg.seed,
-        enable_qa_check_metrics=bool(cfg.eval.enable_qa_check_metrics),
-        enable_piece_probe_metrics=bool(cfg.eval.enable_piece_probe_metrics),
-        enable_piece_f1_breakdown_metrics=bool(cfg.eval.enable_piece_f1_breakdown_metrics),
-        enable_qa_check_confusion_matrix_metrics=bool(
-            cfg.eval.enable_qa_check_confusion_matrix_metrics
-        ),
-        enable_piece_confusion_matrix_metrics=bool(cfg.eval.enable_piece_confusion_matrix_metrics),
+        qa_config=OmegaConf.to_container(cfg.eval.qa, resolve=True),
     )
     eval_device = torch.device(device)
 
@@ -228,7 +222,16 @@ def main(cfg: DictConfig) -> None:
         return metrics
 
     def eval_log_fn(_iter_num: int, metrics: dict[str, Any]) -> None:
-        wandb.log({f"eval/{k}": v for k, v in metrics.items()})
+        payload = {}
+        for k, v in metrics.items():
+            if k.startswith("qa/what_is_on/f1_per_square/"):
+                continue
+            payload[format_eval_metric_key(k)] = v
+        if "qa/what_is_on/f1_matrix" in metrics:
+            heatmap = metrics["qa/what_is_on/f1_matrix"]
+            payload[format_eval_metric_key("qa/what_is_on/f1_matrix")] = heatmap
+            wandb.run.summary["eval/qa/what_is_on/f1_matrix"] = heatmap  # type: ignore[index]
+        wandb.log(payload)
 
     run_supervised_training(
         model=model,
