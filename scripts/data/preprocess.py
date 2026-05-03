@@ -39,10 +39,10 @@ from krasnal.tokens import (
     QUEEN_ID,
     ROOK_ID,
     SPECIAL_TOKENS,
-    SQUARE_TOKENS,
     UNKNOWN_RESULT_ID,
-    WHAT_IS_ON_ID,
     WHAT_PIECE_ID,
+    WHATS_ON_SQUARE,
+    WHATS_ON_SQUARE_TOKEN_IDS,
     WHITE_WON_ID,
     YES_CHECK_ID,
     get_elo_bucket,
@@ -219,7 +219,7 @@ def _build_game_tokens(
                 file_char = chr(97 + (sq_idx % 8))
                 rank_char = str(1 + (sq_idx // 8))
                 sq_str = f"{file_char}{rank_char}"
-                sq_token_id = SQUARE_TOKENS[f"<{sq_str}>"]
+                whats_on_token_id = WHATS_ON_SQUARE[f"<whats_on_{sq_str}>"]
 
                 piece = b[bulletchess.Square.from_str(sq_str)]
                 if piece is None:
@@ -229,7 +229,7 @@ def _build_game_tokens(
                     piece_str = str(piece.piece_type).lower()
                     ans_id = COLORED_PIECE_TOKENS[f"<{color_str}:{piece_str}>"]
 
-                result_tokens.extend([WHAT_IS_ON_ID, sq_token_id, ans_id])
+                result_tokens.extend([whats_on_token_id, ans_id])
 
     white_elo = get_elo_bucket(white_rating)
     black_elo = get_elo_bucket(black_rating)
@@ -452,7 +452,10 @@ def compute_token_mix_stats(tokenized_lf: pl.LazyFrame) -> dict[str, float]:
             .sum()
             .alias("what_piece_count"),
             pl.col("token_ids")
-            .list.eval((pl.element() == WHAT_IS_ON_ID).cast(pl.UInt32), parallel=True)
+            .list.eval(
+                pl.element().is_in(list(WHATS_ON_SQUARE_TOKEN_IDS)).cast(pl.UInt32),
+                parallel=True,
+            )
             .list.sum()
             .sum()
             .alias("what_is_on_count"),

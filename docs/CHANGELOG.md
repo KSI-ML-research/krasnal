@@ -1,5 +1,13 @@
 # Changelog
 
+## 2026-04-30
+
+Merged `<what_is_on> <square>` (3-token Q&A) into `<whats_on_XX>` (2-token Q&A). 64 merged tokens replace the decomposed prompt, saving 1 token per Q&A instance. Better suited for small models — eliminates cross-token composition overhead. Requires re-preprocessing.
+
+## 2026-04-29
+
+Added `<what_is_on> <square>` (3-token Q&A) to pretraining. Each instance asks "what is on square XX?" and answers with "<empty>" or "<w:pawn>", "<b:pawn>", etc.
+
 ## 2026-04-28
 
 Added probability to check-QA preprocessing with `check_qa_prob` in config.

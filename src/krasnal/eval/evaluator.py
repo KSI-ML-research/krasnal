@@ -23,10 +23,9 @@ from krasnal.tokens import (
     PAWN_ID,
     QUEEN_ID,
     ROOK_ID,
-    SQUARE_TOKENS,
     THINK_END_ID,
-    WHAT_IS_ON_ID,
     WHAT_PIECE_ID,
+    WHATS_ON_SQUARE,
     YES_CHECK_ID,
     get_moves_only,
     to_uci,
@@ -352,7 +351,7 @@ class ChessEvaluator:
             file_char = chr(97 + (sq_idx % 8))
             rank_char = str(1 + (sq_idx // 8))
             sq_str = f"{file_char}{rank_char}"
-            sq_token_id = SQUARE_TOKENS[f"<{sq_str}>"]
+            whats_on_token_id = WHATS_ON_SQUARE[f"<whats_on_{sq_str}>"]
 
             board = bulletchess.Board.from_fen(ctx.post_move_fen)
             piece = board[bulletchess.Square.from_str(sq_str)]
@@ -364,7 +363,7 @@ class ChessEvaluator:
                 piece_str = str(piece.piece_type).lower()
                 ans_id = COLORED_PIECE_TOKENS[f"<{color_str}:{piece_str}>"]
 
-            probe = [*ctx.sequence, ctx.actual_token, WHAT_IS_ON_ID, sq_token_id]
+            probe = [*ctx.sequence, ctx.actual_token, whats_on_token_id]
             if len(probe) > block_size:
                 continue
 
