@@ -2,12 +2,11 @@ from __future__ import annotations
 
 from contextlib import AbstractContextManager, nullcontext
 
-import bulletchess
 import torch
 
 from krasnal.config import GPTConfig
 from krasnal.model import GPT
-from krasnal.tokens import get_vocab_size, move_token_id_for_turn
+from krasnal.tokens import get_vocab_size
 
 
 def create_amp_context(device: torch.device) -> AbstractContextManager:
@@ -31,12 +30,3 @@ def load_model(model_path: str, device: torch.device, config: GPTConfig) -> GPT:
     model.to(device)
     model.eval()
     return model
-
-
-def get_legal_token_ids(board: bulletchess.Board) -> list[int]:
-    """Map legal UCI moves on the board to token IDs."""
-    return [
-        token_id
-        for m in board.legal_moves()
-        if (uci := m.uci()) and (token_id := move_token_id_for_turn(uci, board.turn)) is not None
-    ]
