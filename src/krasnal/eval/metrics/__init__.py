@@ -1,7 +1,6 @@
 from typing import Any
 
 from .acpl import ACPLMetric
-from .base import Metric
 from .blunder_rate import BlunderRateMetric
 from .context import EvalContext
 from .core import AccuracyCore, IllegalMassCore, MRRCore, Top1LegalCore
@@ -20,128 +19,43 @@ from .filtered import (
 )
 from .stockfish_top1 import StockfishTop1AgreementMetric
 
-
-def _create_top1_legal(**_: Any) -> Metric:
-    return Top1LegalCore()
-
-
-def _create_accuracy(**_: Any) -> Metric:
-    return AccuracyCore()
-
-
-def _create_illegal_mass(**_: Any) -> Metric:
-    return IllegalMassCore()
-
-
-def _create_mrr(**_: Any) -> Metric:
-    return MRRCore()
-
-
-def _create_top1_legal_when_in_check(**_: Any) -> Metric:
-    return WhenInCheckMetric(Top1LegalCore())
-
-
-def _create_accuracy_when_in_check(**_: Any) -> Metric:
-    return WhenInCheckMetric(AccuracyCore())
-
-
-def _create_illegal_mass_when_in_check(**_: Any) -> Metric:
-    return WhenInCheckMetric(IllegalMassCore())
-
-
-def _create_top1_legal_when_gives_check(**_: Any) -> Metric:
-    return WhenGivesCheckMetric(Top1LegalCore())
-
-
-def _create_accuracy_when_gives_check(**_: Any) -> Metric:
-    return WhenGivesCheckMetric(AccuracyCore())
-
-
-def _create_illegal_mass_when_gives_check(**_: Any) -> Metric:
-    return WhenGivesCheckMetric(IllegalMassCore())
-
-
-def _create_top1_legal_opening(**_: Any) -> Metric:
-    return ByPhaseMetric(Top1LegalCore(), "opening")
-
-
-def _create_accuracy_opening(**_: Any) -> Metric:
-    return ByPhaseMetric(AccuracyCore(), "opening")
-
-
-def _create_illegal_mass_opening(**_: Any) -> Metric:
-    return ByPhaseMetric(IllegalMassCore(), "opening")
-
-
-def _create_top1_legal_middlegame(**_: Any) -> Metric:
-    return ByPhaseMetric(Top1LegalCore(), "middlegame")
-
-
-def _create_accuracy_middlegame(**_: Any) -> Metric:
-    return ByPhaseMetric(AccuracyCore(), "middlegame")
-
-
-def _create_illegal_mass_middlegame(**_: Any) -> Metric:
-    return ByPhaseMetric(IllegalMassCore(), "middlegame")
-
-
-def _create_top1_legal_endgame(**_: Any) -> Metric:
-    return ByPhaseMetric(Top1LegalCore(), "endgame")
-
-
-def _create_accuracy_endgame(**_: Any) -> Metric:
-    return ByPhaseMetric(AccuracyCore(), "endgame")
-
-
-def _create_illegal_mass_endgame(**_: Any) -> Metric:
-    return ByPhaseMetric(IllegalMassCore(), "endgame")
-
-
-def _create_target_piece_top1_legal(**_: Any) -> Metric:
-    return PerPieceMetric(Top1LegalCore())
-
-
-def _create_target_piece_accuracy(**_: Any) -> Metric:
-    return PerPieceMetric(AccuracyCore())
-
-
 METRIC_REGISTRY: dict[str, Any] = {
-    # Core metrics
-    "top1_legal": _create_top1_legal,
-    "acc": _create_accuracy,
-    "illegal_mass": _create_illegal_mass,
-    "mrr": _create_mrr,
-    # Condition variants
-    "top1_legal_when_in_check": _create_top1_legal_when_in_check,
-    "acc_when_in_check": _create_accuracy_when_in_check,
-    "illegal_mass_when_in_check": _create_illegal_mass_when_in_check,
-    "top1_legal_when_gives_check": _create_top1_legal_when_gives_check,
-    "acc_when_gives_check": _create_accuracy_when_gives_check,
-    "illegal_mass_when_gives_check": _create_illegal_mass_when_gives_check,
-    # Phase variants
-    "top1_legal_opening": _create_top1_legal_opening,
-    "acc_opening": _create_accuracy_opening,
-    "illegal_mass_opening": _create_illegal_mass_opening,
-    "top1_legal_middlegame": _create_top1_legal_middlegame,
-    "acc_middlegame": _create_accuracy_middlegame,
-    "illegal_mass_middlegame": _create_illegal_mass_middlegame,
-    "top1_legal_endgame": _create_top1_legal_endgame,
-    "acc_endgame": _create_accuracy_endgame,
-    "illegal_mass_endgame": _create_illegal_mass_endgame,
-    # Per-piece variants
-    "target_piece_top1_legal": _create_target_piece_top1_legal,
-    "target_piece_acc": _create_target_piece_accuracy,
-    # Stockfish-based metrics (keep as-is - need special args)
+    "top1_legal": lambda **_: Top1LegalCore(),
+    "acc": lambda **_: AccuracyCore(),
+    "illegal_mass": lambda **_: IllegalMassCore(),
+    "mrr": lambda **_: MRRCore(),
+    "top1_legal_when_in_check": lambda **_: WhenInCheckMetric(Top1LegalCore()),
+    "acc_when_in_check": lambda **_: WhenInCheckMetric(AccuracyCore()),
+    "illegal_mass_when_in_check": lambda **_: WhenInCheckMetric(IllegalMassCore()),
+    "mrr_when_in_check": lambda **_: WhenInCheckMetric(MRRCore()),
+    "top1_legal_when_gives_check": lambda **_: WhenGivesCheckMetric(Top1LegalCore()),
+    "acc_when_gives_check": lambda **_: WhenGivesCheckMetric(AccuracyCore()),
+    "illegal_mass_when_gives_check": lambda **_: WhenGivesCheckMetric(IllegalMassCore()),
+    "mrr_when_gives_check": lambda **_: WhenGivesCheckMetric(MRRCore()),
+    "top1_legal_opening": lambda **_: ByPhaseMetric(Top1LegalCore(), "opening"),
+    "acc_opening": lambda **_: ByPhaseMetric(AccuracyCore(), "opening"),
+    "illegal_mass_opening": lambda **_: ByPhaseMetric(IllegalMassCore(), "opening"),
+    "mrr_opening": lambda **_: ByPhaseMetric(MRRCore(), "opening"),
+    "top1_legal_middlegame": lambda **_: ByPhaseMetric(Top1LegalCore(), "middlegame"),
+    "acc_middlegame": lambda **_: ByPhaseMetric(AccuracyCore(), "middlegame"),
+    "illegal_mass_middlegame": lambda **_: ByPhaseMetric(IllegalMassCore(), "middlegame"),
+    "mrr_middlegame": lambda **_: ByPhaseMetric(MRRCore(), "middlegame"),
+    "top1_legal_endgame": lambda **_: ByPhaseMetric(Top1LegalCore(), "endgame"),
+    "acc_endgame": lambda **_: ByPhaseMetric(AccuracyCore(), "endgame"),
+    "illegal_mass_endgame": lambda **_: ByPhaseMetric(IllegalMassCore(), "endgame"),
+    "mrr_endgame": lambda **_: ByPhaseMetric(MRRCore(), "endgame"),
+    "target_piece_top1_legal": lambda **_: PerPieceMetric(Top1LegalCore()),
+    "target_piece_acc": lambda **_: PerPieceMetric(AccuracyCore()),
     "acpl": ACPLMetric,
     "blunder_rate": BlunderRateMetric,
     "stockfish_top1": StockfishTop1AgreementMetric,
-    # CoT metrics
-    "cot_format_valid": CotFormatValidMetric,
-    "cot_post_think_top1": CotPostThinkTop1Metric,
-    "cot_post_think_mrr": CotPostThinkMRRMetric,
-    "cot_post_think_top1_legal": CotPostThinkTop1LegalMetric,
-    "cot_think_token_recall": CotThinkTokenRecallMetric,
+    "cot_format_valid": lambda **_: CotFormatValidMetric(),
+    "cot_post_think_top1": lambda **_: CotPostThinkTop1Metric(),
+    "cot_post_think_mrr": lambda **_: CotPostThinkMRRMetric(),
+    "cot_post_think_top1_legal": lambda **_: CotPostThinkTop1LegalMetric(),
+    "cot_think_token_recall": lambda **_: CotThinkTokenRecallMetric(),
 }
+
 
 __all__ = [
     "METRIC_REGISTRY",
