@@ -6,7 +6,7 @@ import torch
 from torch.utils.data import DataLoader, TensorDataset
 
 from krasnal.dataset import make_collate_fn
-from krasnal.tokens import IS_CHECK_ID, MOVE_TO_ID, WHAT_IS_ON_PROMPT_TOKEN_IDS
+from krasnal.tokens import IS_CHECK_ID, MOVE_TO_ID, WHATS_ON_PROMPT_TOKEN_IDS
 from krasnal.trainer import cosine_warmup_lr, run_supervised_training
 from krasnal.utils import format_eval_metric_key
 
@@ -125,20 +125,18 @@ def test_collate_masks_is_check_targets():
     assert y.tolist() == [[-100, 11]]
 
 
-def test_collate_masks_what_is_on_prompt_tokens():
+def test_collate_masks_whats_on_prompt_tokens():
     collate = make_collate_fn()
-    what_is_on = MOVE_TO_ID["<what_is_on>"]
-    square = MOVE_TO_ID["<e4>"]
+    whats_on_e4 = MOVE_TO_ID["<whats_on_e4>"]
     answer = MOVE_TO_ID["<w:pawn>"]
 
-    assert what_is_on in WHAT_IS_ON_PROMPT_TOKEN_IDS
-    assert square in WHAT_IS_ON_PROMPT_TOKEN_IDS
-    assert answer not in WHAT_IS_ON_PROMPT_TOKEN_IDS
+    assert whats_on_e4 in WHATS_ON_PROMPT_TOKEN_IDS
+    assert answer not in WHATS_ON_PROMPT_TOKEN_IDS
 
-    x, y = collate([torch.tensor([10, what_is_on, square, answer], dtype=torch.long)])
+    x, y = collate([torch.tensor([10, whats_on_e4, answer], dtype=torch.long)])
 
-    assert x.tolist() == [[10, what_is_on, square]]
-    assert y.tolist() == [[-100, -100, answer]]
+    assert x.tolist() == [[10, whats_on_e4]]
+    assert y.tolist() == [[-100, answer]]
 
 
 def test_format_eval_metric_key_groups_game_metrics():
