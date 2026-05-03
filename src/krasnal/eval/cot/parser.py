@@ -1,12 +1,12 @@
 import bulletchess
 
-from krasnal.inference.utils import get_legal_token_ids
 from krasnal.tokens import (
     GAME_END_ID,
     GAME_START_ID,
     ID_TO_MOVE,
     THINK_END_ID,
     THINK_START_ID,
+    legal_token_ids,
 )
 
 
@@ -69,7 +69,7 @@ def parse_cot_sample(token_ids: list[int]) -> dict | None:
         "prompt_tokens": prompt_tokens,
         "target_think_tokens": target_think_tokens,
         "post_think_actual_token": post_think_actual_token,
-        "post_think_legal_ids": get_legal_token_ids(board),
+        "post_think_legal_ids": legal_token_ids(board),
     }
 
 

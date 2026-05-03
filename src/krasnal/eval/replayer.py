@@ -2,8 +2,7 @@ import bulletchess
 
 from krasnal.eval.metrics.context import EvalContext
 from krasnal.eval.parsers import GameTokens
-from krasnal.inference.utils import get_legal_token_ids
-from krasnal.tokens import to_uci
+from krasnal.tokens import legal_token_ids, to_uci
 
 PIECE_TYPE_TO_INT = {pt: i + 1 for i, pt in enumerate(bulletchess.PIECE_TYPES)}
 
@@ -17,7 +16,7 @@ def replay_game_tokens(game_tokens: GameTokens) -> list[EvalContext]:
     context = game_tokens.initial_context.copy()
 
     for move_idx, move_token in enumerate(game_tokens.move_tokens):
-        legal_ids = get_legal_token_ids(board)
+        legal_ids = legal_token_ids(board)
         if not legal_ids:
             break
 
