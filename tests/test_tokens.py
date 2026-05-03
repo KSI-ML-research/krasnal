@@ -19,12 +19,12 @@ from krasnal.tokens import (
     NO_CHECK_ID,
     PAD_ID,
     PAWN_ID,
+    PIECE_TYPE_MOVED_ID,
     QUEEN_ID,
     ROOK_ID,
     SPECIAL_TOKENS,
     THINK_END_ID,
     THINK_START_ID,
-    WHAT_MOVED_ID,
     WHITE_WON_ID,
     YES_CHECK_ID,
     get_elo_bucket,
@@ -46,7 +46,7 @@ def test_special_tokens_exist():
     assert IS_CHECK_ID in SPECIAL_TOKENS.values()
     assert YES_CHECK_ID in SPECIAL_TOKENS.values()
     assert NO_CHECK_ID in SPECIAL_TOKENS.values()
-    assert WHAT_MOVED_ID in SPECIAL_TOKENS.values()
+    assert PIECE_TYPE_MOVED_ID in SPECIAL_TOKENS.values()
     assert PAWN_ID in SPECIAL_TOKENS.values()
     assert KNIGHT_ID in SPECIAL_TOKENS.values()
     assert BISHOP_ID in SPECIAL_TOKENS.values()

@@ -31,23 +31,22 @@ ELO_UNKNOWN_ID = 15
 IS_CHECK_ID = 16
 YES_CHECK_ID = 17
 NO_CHECK_ID = 18
-CAPTURE_ID = 19
-WHAT_MOVED_ID = 20
-PAWN_ID = 21
-KNIGHT_ID = 22
-BISHOP_ID = 23
-ROOK_ID = 24
-QUEEN_ID = 25
-KING_ID = 26
-EMPTY_ID = 27
+PIECE_TYPE_MOVED_ID = 19
+PAWN_ID = 20
+KNIGHT_ID = 21
+BISHOP_ID = 22
+ROOK_ID = 23
+QUEEN_ID = 24
+KING_ID = 25
+EMPTY_ID = 26
 
 WHATS_ON_SQUARE = {
-    f"<whats_on_{chr(f + 97)}{r + 1}>": 28 + r * 8 + f for r in range(8) for f in range(8)
+    f"<whats_on_{chr(f + 97)}{r + 1}>": 27 + r * 8 + f for r in range(8) for f in range(8)
 }
 WHATS_ON_SQUARE_TOKEN_IDS = frozenset(WHATS_ON_SQUARE.values())
 
 COLORED_PIECE_TOKENS = {}
-_next_id = 92
+_next_id = 91
 for _color in ["w", "b"]:
     for _piece in ["pawn", "knight", "bishop", "rook", "queen", "king"]:
         COLORED_PIECE_TOKENS[f"<{_color}:{_piece}>"] = _next_id
@@ -75,6 +74,11 @@ ELO_TOKENS = {
     "<elo_unknown>": ELO_UNKNOWN_ID,
 }
 
+# Loss-mask targets: model always receives result + Elo as a fixed prefix at inference.
+CONDITIONING_METADATA_TARGET_MASK_IDS: Final[frozenset[int]] = frozenset(
+    (*OUTCOME_TOKENS.values(), *ELO_TOKENS.values())
+)
+
 THINKING_TOKENS = {
     "<think_start>": THINK_START_ID,
     "<think_end>": THINK_END_ID,
@@ -84,8 +88,7 @@ QA_TOKENS = {
     "<is_check>": IS_CHECK_ID,
     "<yes_check>": YES_CHECK_ID,
     "<no_check>": NO_CHECK_ID,
-    "<capture>": CAPTURE_ID,
-    "<what_moved>": WHAT_MOVED_ID,
+    "<piece_type_moved>": PIECE_TYPE_MOVED_ID,
     "<pawn>": PAWN_ID,
     "<knight>": KNIGHT_ID,
     "<bishop>": BISHOP_ID,

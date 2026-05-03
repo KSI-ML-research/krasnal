@@ -13,6 +13,7 @@ from krasnal.tokens import (
     BLACK_PREFIX,
     DRAW_ID,
     MOVE_TO_ID,
+    PAWN_ID,
     THINK_END_ID,
     THINK_START_ID,
     WHITE_PREFIX,
@@ -130,7 +131,11 @@ def test_kv_cache_single_token_matches_full_prefix_logits():
     device = torch.device("cpu")
     model = _build_test_model(device)
 
-    sequence = torch.tensor([[0, WHITE_WON_ID, 17, 42, 5, 73, 19]], dtype=torch.long, device=device)
+    sequence = torch.tensor(
+        [[0, WHITE_WON_ID, 17, 42, 5, 73, PAWN_ID]],
+        dtype=torch.long,
+        device=device,
+    )
     kv_cache = _build_kv_cache_for_model(model, device)
 
     for t in range(1, sequence.size(1) + 1):

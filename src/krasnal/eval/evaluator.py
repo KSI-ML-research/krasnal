@@ -21,10 +21,10 @@ from krasnal.tokens import (
     KNIGHT_ID,
     NO_CHECK_ID,
     PAWN_ID,
+    PIECE_TYPE_MOVED_ID,
     QUEEN_ID,
     ROOK_ID,
     THINK_END_ID,
-    WHAT_MOVED_ID,
     WHATS_ON_SQUARE,
     YES_CHECK_ID,
     get_moves_only,
@@ -67,10 +67,14 @@ class ChessEvaluator:
             check_cfg.get("confusion_matrix", False)
         )
 
-        piece_cfg = qa_cfg.get("piece", {})
-        self.enable_piece_probe_metrics = bool(piece_cfg.get("enabled", True))
-        self.enable_piece_f1_per_piece_metrics = bool(piece_cfg.get("f1_per_piece", False))
-        self.enable_piece_confusion_matrix_metrics = bool(piece_cfg.get("confusion_matrix", False))
+        piece_type_moved_cfg = qa_cfg.get("piece_type_moved", {})
+        self.enable_piece_probe_metrics = bool(piece_type_moved_cfg.get("enabled", True))
+        self.enable_piece_f1_per_piece_metrics = bool(
+            piece_type_moved_cfg.get("f1_per_piece", False)
+        )
+        self.enable_piece_confusion_matrix_metrics = bool(
+            piece_type_moved_cfg.get("confusion_matrix", False)
+        )
 
         what_is_on_cfg = qa_cfg.get("what_is_on", {})
         self.enable_what_is_on_probe_metrics = bool(what_is_on_cfg.get("enabled", True))
@@ -107,7 +111,7 @@ class ChessEvaluator:
 
         if stockfish is not None:
             self.stockfish = stockfish
-            self.metrics = self._init_metrics()
+        self.metrics = self._init_metrics()
 
         if self.cot:
             return self.evaluate_cot(model, dataset, num_games, device, seed)
@@ -204,7 +208,7 @@ class ChessEvaluator:
             true_piece_token = piece_type_to_token.get(ctx.piece_type)
             if true_piece_token is None:
                 continue
-            probe = [*ctx.sequence, ctx.actual_token, WHAT_MOVED_ID]
+            probe = [*ctx.sequence, ctx.actual_token, PIECE_TYPE_MOVED_ID]
             if len(probe) > block_size:
                 continue
             probe_sequences.append(probe)
@@ -548,6 +552,8 @@ class ChessEvaluator:
         seed = seed if seed is not None else self.seed
         if seed is not None:
             set_seed(seed)
+
+        self.metrics = self._init_metrics()
 
         indices = list(range(len(dataset)))
         random.shuffle(indices)
