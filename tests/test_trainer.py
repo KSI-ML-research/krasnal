@@ -6,7 +6,14 @@ import torch
 from torch.utils.data import DataLoader, TensorDataset
 
 from krasnal.dataset import make_collate_fn
-from krasnal.tokens import IS_CHECK_ID, MOVE_TO_ID, WHATS_ON_PROMPT_TOKEN_IDS
+from krasnal.tokens import (
+    ELO_2000_2499_ID,
+    IS_CHECK_ID,
+    MOVE_TO_ID,
+    PAWN_ID,
+    WHATS_ON_PROMPT_TOKEN_IDS,
+    WHITE_WON_ID,
+)
 from krasnal.trainer import cosine_warmup_lr, run_supervised_training
 from krasnal.utils import format_eval_metric_key
 
@@ -117,12 +124,20 @@ def test_run_training_smoke():
     assert result is not None
 
 
+def test_collate_masks_conditioning_metadata_targets():
+    collate = make_collate_fn()
+    x, y = collate([torch.tensor([0, WHITE_WON_ID, ELO_2000_2499_ID, 500], dtype=torch.long)])
+
+    assert x.tolist() == [[0, WHITE_WON_ID, ELO_2000_2499_ID]]
+    assert y.tolist() == [[-100, -100, 500]]
+
+
 def test_collate_masks_is_check_targets():
     collate = make_collate_fn()
-    x, y = collate([torch.tensor([10, IS_CHECK_ID, 11], dtype=torch.long)])
+    x, y = collate([torch.tensor([10, IS_CHECK_ID, PAWN_ID], dtype=torch.long)])
 
     assert x.tolist() == [[10, IS_CHECK_ID]]
-    assert y.tolist() == [[-100, 11]]
+    assert y.tolist() == [[-100, PAWN_ID]]
 
 
 def test_collate_masks_whats_on_prompt_tokens():

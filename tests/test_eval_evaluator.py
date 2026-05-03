@@ -1,6 +1,7 @@
 from types import SimpleNamespace
 
 from krasnal.eval.evaluator import ChessEvaluator
+from krasnal.eval.metrics import EvalContext
 from krasnal.tokens import (
     BLACK_PREFIX,
     GAME_END_ID,
@@ -142,7 +143,7 @@ def test_piece_probe_metrics_can_skip_piece_f1_per_piece():
     evaluator = ChessEvaluator(
         metrics=["piece_acc"],
         qa_config={
-            "piece": {
+            "piece_type_moved": {
                 "enabled": True,
                 "f1_per_piece": False,
             }
@@ -154,3 +155,34 @@ def test_piece_probe_metrics_can_skip_piece_f1_per_piece():
 
     assert result == {"qa/piece/acc": 0.0, "qa/piece/f1": 0.0}
     assert not any(key.startswith("qa/piece/f1_per_piece/") for key in result)
+
+
+def test_evaluate_resets_stateful_metrics_between_runs(monkeypatch):
+    evaluator = ChessEvaluator(metrics=["acc_opening"])
+    evaluator.metrics["acc_opening"].buffer.append(1.0)
+
+    dataset = [SimpleNamespace(tolist=lambda: [GAME_START_ID, GAME_END_ID])]
+    model = SimpleNamespace(config=SimpleNamespace(block_size=128))
+
+    def fake_parse_game_tokens(_token_ids):
+        return SimpleNamespace(move_tokens=[], initial_context=[])
+
+    def fake_get_moves_only(_token_ids):
+        return [MOVE_TO_ID[WHITE_PREFIX + "e2e4"]]
+
+    def fake_replay_games(_games, _block_size):
+        return [EvalContext(sequence=[])]
+
+    def fake_infer_and_aggregate(contexts, _model, _device):
+        assert contexts
+        assert evaluator.metrics["acc_opening"].buffer == []
+        return {"game/acc_opening": 0.0}
+
+    monkeypatch.setattr("krasnal.eval.evaluator.parse_game_tokens", fake_parse_game_tokens)
+    monkeypatch.setattr("krasnal.eval.evaluator.get_moves_only", fake_get_moves_only)
+    monkeypatch.setattr("krasnal.eval.evaluator.replay_games", fake_replay_games)
+    monkeypatch.setattr(evaluator, "_infer_and_aggregate", fake_infer_and_aggregate)
+
+    result = evaluator.evaluate(model=model, dataset=dataset, num_games=1, device=None)
+
+    assert result == {"game/acc_opening": 0.0}

@@ -153,6 +153,8 @@ results = evaluator.evaluate(
 # {'top1_legal': 0.85, 'acc': 0.72, ...}
 ```
 
+Each call to `evaluate()` or `evaluate_cot()` starts with fresh metric instances. This matters for buffered metrics such as `acc_opening`, `acc_middlegame`, `acc_endgame`, per-piece metrics, and other filtered metrics that aggregate state across positions.
+
 Metric sets are configured via Hydra config files (not Python defaults):
 
 ```yaml
