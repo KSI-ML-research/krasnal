@@ -40,7 +40,7 @@ from krasnal.tokens import (
     ROOK_ID,
     SPECIAL_TOKENS,
     UNKNOWN_RESULT_ID,
-    WHAT_PIECE_ID,
+    WHAT_MOVED_ID,
     WHATS_ON_SQUARE,
     WHATS_ON_SQUARE_TOKEN_IDS,
     WHITE_WON_ID,
@@ -196,7 +196,7 @@ def _build_game_tokens(
                     seed=seed + 13, game_key=uci_moves, ply=ply, probability=probability
                 ):
                     answer_token = PIECE_ROLE_TO_TOKEN_ID[piece_role]
-                    result_tokens.extend([WHAT_PIECE_ID, answer_token])
+                    result_tokens.extend([WHAT_MOVED_ID, answer_token])
 
         if include_what_is_on_qa:
             for m in b.legal_moves():
@@ -447,10 +447,10 @@ def compute_token_mix_stats(tokenized_lf: pl.LazyFrame) -> dict[str, float]:
             .sum()
             .alias("no_check_count"),
             pl.col("token_ids")
-            .list.eval((pl.element() == WHAT_PIECE_ID).cast(pl.UInt32), parallel=True)
+            .list.eval((pl.element() == WHAT_MOVED_ID).cast(pl.UInt32), parallel=True)
             .list.sum()
             .sum()
-            .alias("what_piece_count"),
+            .alias("what_moved_count"),
             pl.col("token_ids")
             .list.eval(
                 pl.element().is_in(list(WHATS_ON_SQUARE_TOKEN_IDS)).cast(pl.UInt32),
@@ -518,7 +518,7 @@ def compute_token_mix_stats(tokenized_lf: pl.LazyFrame) -> dict[str, float]:
     is_check_count = int(stats[1] or 0)
     yes_check_count = int(stats[2] or 0)
     no_check_count = int(stats[3] or 0)
-    what_piece_count = int(stats[4] or 0)
+    what_moved_count = int(stats[4] or 0)
     what_is_on_count = int(stats[5] or 0)
     empty_count = int(stats[6] or 0)
     pawn_count = int(stats[7] or 0)
@@ -535,7 +535,7 @@ def compute_token_mix_stats(tokenized_lf: pl.LazyFrame) -> dict[str, float]:
     piece_answer_count = (
         pawn_count + knight_count + bishop_count + rook_count + queen_count + king_count
     )
-    piece_qa_count = what_piece_count + piece_answer_count
+    piece_qa_count = what_moved_count + piece_answer_count
     outcome_prefix_count = result_count + elo_count
     uci_move_count = max(0, total_tokens - special_count)
 
@@ -552,7 +552,7 @@ def compute_token_mix_stats(tokenized_lf: pl.LazyFrame) -> dict[str, float]:
         "is_check_count": is_check_count,
         "yes_check_count": yes_check_count,
         "no_check_count": no_check_count,
-        "what_piece_count": what_piece_count,
+        "what_moved_count": what_moved_count,
         "pawn_count": pawn_count,
         "knight_count": knight_count,
         "bishop_count": bishop_count,
@@ -718,12 +718,12 @@ def main(cfg: DictConfig) -> None:
     )
     logger.info(
         "Token mix details: <is_check>={}, <yes_check>={}, <no_check>={}, "
-        "<what_piece>={}, <pawn>={}, <knight>={}, <bishop>={}, <rook>={}, <queen>={}, <king>={}, "
+        "<what_moved>={}, <pawn>={}, <knight>={}, <bishop>={}, <rook>={}, <queen>={}, <king>={}, "
         "result_tokens={}, elo_tokens={}, total_tokens={}",
         token_mix["is_check_count"],
         token_mix["yes_check_count"],
         token_mix["no_check_count"],
-        token_mix["what_piece_count"],
+        token_mix["what_moved_count"],
         token_mix["pawn_count"],
         token_mix["knight_count"],
         token_mix["bishop_count"],

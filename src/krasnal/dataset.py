@@ -11,7 +11,7 @@ from torch.utils.data import Dataset
 from krasnal.tokens import (
     IS_CHECK_ID,
     PAD_ID,
-    WHAT_PIECE_ID,
+    WHAT_MOVED_ID,
     WHATS_ON_PROMPT_TOKEN_IDS,
 )
 
@@ -96,7 +96,7 @@ class CollateFn:
         x = padded[:, :-1]
         y = padded[:, 1:].clone()
         y[y == IS_CHECK_ID] = LOSS_IGNORE_INDEX
-        y[y == WHAT_PIECE_ID] = LOSS_IGNORE_INDEX
+        y[y == WHAT_MOVED_ID] = LOSS_IGNORE_INDEX
         for token_id in WHATS_ON_PROMPT_TOKEN_IDS:
             y[y == token_id] = LOSS_IGNORE_INDEX
         return x, y
