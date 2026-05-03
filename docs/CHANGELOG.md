@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-05-03
+
+Renamed auxiliary question token `<what_piece>` to `<what_moved>` (numeric id unchanged). Token-mix stat key `what_piece_count` is now `what_moved_count`. Requires re-preprocessing if sequences were built with the old string in saved vocab artifacts.
+
 ## 2026-04-30
 
 Merged `<what_is_on> <square>` (3-token Q&A) into `<whats_on_XX>` (2-token Q&A). 64 merged tokens replace the decomposed prompt, saving 1 token per Q&A instance. Better suited for small models — eliminates cross-token composition overhead. Requires re-preprocessing.
@@ -28,7 +32,7 @@ Fixed Stockfish-backed eval on terminal positions. When Stockfish returns `bestm
 
 Added auxiliary piece-probing QA tokens in pretraining:
 
-- Question token: `<what_piece>`
+- Question token: `<what_moved>` (formerly `<what_piece>`)
 - Answer tokens: `<pawn>`, `<knight>`, `<bishop>`, `<rook>`, `<queen>`, `<king>`
 
 Piece QA is inserted after sampled moves and uses deterministic inverse-frequency sampling with `p_king=0.5` baseline. This targets a more balanced piece-answer distribution while keeping preprocessing reproducible.

@@ -24,7 +24,7 @@ from krasnal.tokens import (
     QUEEN_ID,
     ROOK_ID,
     THINK_END_ID,
-    WHAT_PIECE_ID,
+    WHAT_MOVED_ID,
     WHATS_ON_SQUARE,
     YES_CHECK_ID,
     get_moves_only,
@@ -204,7 +204,7 @@ class ChessEvaluator:
             true_piece_token = piece_type_to_token.get(ctx.piece_type)
             if true_piece_token is None:
                 continue
-            probe = [*ctx.sequence, ctx.actual_token, WHAT_PIECE_ID]
+            probe = [*ctx.sequence, ctx.actual_token, WHAT_MOVED_ID]
             if len(probe) > block_size:
                 continue
             probe_sequences.append(probe)
