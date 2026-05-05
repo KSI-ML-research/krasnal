@@ -1,10 +1,13 @@
 from pathlib import Path
+from typing import ClassVar
 
 import torch
 
 from krasnal.eval.puzzles import (
     DEFAULT_PUZZLE_BUCKETS,
     PuzzleEvalResult,
+    _build_game_from_source_game,
+    _extract_lichess_game_id,
     estimate_pseudo_elo,
     evaluate_model_on_puzzles,
 )
@@ -130,3 +133,57 @@ def test_default_puzzle_buckets_cover_expected_ranges():
 def test_eval_puzzles_script_importable():
     script_path = Path("scripts/evals/eval_puzzles.py")
     assert script_path.exists()
+
+
+def test_extract_lichess_game_id_handles_analysis_url():
+    assert _extract_lichess_game_id("https://lichess.org/abc123/white") == "abc123"
+
+
+def test_extract_lichess_game_id_handles_pgn_url():
+    assert _extract_lichess_game_id("https://lichess.org/abc123.pgn") == "abc123"
+
+
+def test_build_game_from_source_game_reconstructs_prefix(monkeypatch):
+    from krasnal.eval import puzzles as puzzles_mod
+
+    class _FakeMove:
+        def __init__(self, uci: str):
+            self._uci = uci
+
+        def uci(self) -> str:
+            return self._uci
+
+    class _FakeBoard:
+        def __init__(self):
+            self.moves: list[str] = []
+
+        def push(self, move):
+            self.moves.append(move.uci())
+
+        def fen(self):
+            if self.moves == ["e2e4", "e7e5"]:
+                return "puzzle-fen"
+            return "start-fen"
+
+    class _FakePGNGame:
+        headers: ClassVar[dict[str, str]] = {
+            "Result": "1-0",
+            "WhiteElo": "2000",
+            "BlackElo": "2100",
+        }
+
+        def board(self):
+            return _FakeBoard()
+
+        def mainline_moves(self):
+            return [_FakeMove("e2e4"), _FakeMove("e7e5")]
+
+    monkeypatch.setattr(puzzles_mod.chess.pgn, "read_game", lambda _fh: _FakePGNGame())
+    monkeypatch.setattr(puzzles_mod, "_fetch_lichess_pgn", lambda _url: "fake-pgn")
+
+    game = _build_game_from_source_game(
+        game_url="https://lichess.org/abc123/white#42",
+        puzzle_fen="puzzle-fen",
+    )
+
+    assert game.moves_uci == ["e2e4", "e7e5"]

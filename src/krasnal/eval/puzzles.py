@@ -3,18 +3,27 @@ from __future__ import annotations
 import json
 import random
 from dataclasses import dataclass, field
+from functools import lru_cache
+from io import StringIO
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
+from urllib.request import Request, urlopen
 
 import bulletchess
+import chess
+import chess.pgn
 import torch
+from loguru import logger
 
 from krasnal.inference import Game, InferenceSession
 from krasnal.tokens import (
-    BLACK_WON_ID,
+    ELO_UNKNOWN_ID,
     MOVE_TO_ID,
-    WHITE_WON_ID,
+    UNKNOWN_RESULT_ID,
+    get_elo_bucket,
     legal_token_ids,
+    result_to_token_id,
     to_uci,
 )
 
@@ -153,6 +162,68 @@ def sample_puzzles(
     return rng.sample(puzzles, sample_size)
 
 
+def _extract_lichess_game_id(game_url: str) -> str:
+    parsed = urlparse(game_url)
+    path_parts = [part for part in parsed.path.split("/") if part]
+    if not path_parts:
+        raise ValueError(f"Could not extract game id from URL: {game_url}")
+    game_id = path_parts[-1]
+    if game_id in {"white", "black", "analysis"} and len(path_parts) >= 2:
+        game_id = path_parts[-2]
+    if game_id.endswith(".pgn"):
+        game_id = game_id[:-4]
+    if not game_id:
+        raise ValueError(f"Could not extract game id from URL: {game_url}")
+    return game_id
+
+
+@lru_cache(maxsize=4096)
+def _fetch_lichess_pgn(game_url: str) -> str:
+    game_id = _extract_lichess_game_id(game_url)
+    export_url = f"https://lichess.org/game/export/{game_id}.pgn"
+    request = Request(export_url, headers={"User-Agent": "krasnal-puzzle-eval/1.0"})
+    with urlopen(request, timeout=10) as response:
+        return response.read().decode("utf-8")
+
+
+def _elo_token_from_header(raw_elo: Any) -> int:
+    if raw_elo is None:
+        return ELO_UNKNOWN_ID
+    try:
+        return get_elo_bucket(int(raw_elo))
+    except (TypeError, ValueError):
+        return ELO_UNKNOWN_ID
+
+
+def _outcome_token_from_header(raw_result: Any) -> int:
+    try:
+        return result_to_token_id(raw_result if raw_result is not None else UNKNOWN_RESULT_ID)
+    except ValueError:
+        return UNKNOWN_RESULT_ID
+
+
+def _build_game_from_source_game(*, game_url: str, puzzle_fen: str) -> Game:
+    pgn_text = _fetch_lichess_pgn(game_url)
+    pgn_game = chess.pgn.read_game(StringIO(pgn_text))
+    if pgn_game is None:
+        raise ValueError(f"Could not parse PGN for {game_url}")
+
+    game = Game(
+        target_outcome_token=_outcome_token_from_header(pgn_game.headers.get("Result")),
+        white_elo_token=_elo_token_from_header(pgn_game.headers.get("WhiteElo")),
+        black_elo_token=_elo_token_from_header(pgn_game.headers.get("BlackElo")),
+    )
+
+    board = pgn_game.board()
+    for move in pgn_game.mainline_moves():
+        board.push(move)
+        game.feed_uci(move.uci())
+        if board.fen() == puzzle_fen:
+            return game
+
+    raise ValueError(f"Puzzle FEN not found in source game: {game_url}")
+
+
 def estimate_pseudo_elo(
     solved_outcomes: list[tuple[int, int]],
     *,
@@ -226,6 +297,7 @@ def evaluate_model_on_puzzles(
             device=device,
             board=board,
             solution=solution,
+            game_url=puzzle.get("game_url"),
         )
         if predicted_move is None:
             overall_stats.record_skip()
@@ -341,14 +413,27 @@ def _predict_puzzle_move(
     device: torch.device,
     board: bulletchess.Board,
     solution: str,
+    game_url: str | None,
 ) -> tuple[str | None, float]:
-    side_to_move = str(board.turn)
-    outcome_token = WHITE_WON_ID if side_to_move == "w" else BLACK_WON_ID
-    session = InferenceSession(
-        model,
-        device,
-        game=Game(target_outcome_token=outcome_token, board=board),
-    )
+    try:
+        if game_url:
+            game = _build_game_from_source_game(game_url=game_url, puzzle_fen=board.fen())
+        else:
+            raise ValueError("missing game_url")
+    except Exception as exc:
+        logger.warning(
+            "Puzzle source-game reconstruction failed for {}: {}; falling back to FEN-only context",
+            game_url or "<missing>",
+            exc,
+        )
+        game = Game(
+            target_outcome_token=UNKNOWN_RESULT_ID,
+            white_elo_token=ELO_UNKNOWN_ID,
+            black_elo_token=ELO_UNKNOWN_ID,
+            board=board,
+        )
+
+    session = InferenceSession(model, device, game=game)
     legal_ids = legal_token_ids(session.game.board)
     if not legal_ids:
         return None, 0.0
