@@ -38,3 +38,5 @@ class EvalContext:
     cot_post_think_legal_ids: list[int] | None = None
     target_think_tokens: list[int] | None = None
     generated_think_tokens: list[int] | None = None
+    what_is_on_game_key: str | None = None
+    what_is_on_ply: int | None = None

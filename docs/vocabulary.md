@@ -51,6 +51,8 @@ or
 
 Question tokens are loss-masked, so model learns answers and chess continuation, not question timing.
 
+`<whats_on_a1>` ... `<whats_on_h8>` — merged prompts ("what is on square XX?"). Answers are `<empty>` or `<w:pawn>` ... `<b:king>`. During preprocessing and eval, which square is asked is drawn deterministically from **post-move FEN**, a **per-game key** (same space-separated UCI string as dataset `uci_moves`), **ply**, and the run **seed**.
+
 ## CoT Tokens (future)
 
 CoT tokens structure internal reasoning: `<think_start>` moves... `<think_end>`.

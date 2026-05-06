@@ -1,7 +1,6 @@
 import os
 import shutil
 from concurrent.futures import ProcessPoolExecutor, as_completed
-from hashlib import blake2b
 from pathlib import Path
 
 import bulletchess
@@ -15,6 +14,7 @@ from krasnal.config import (
     PRETRAIN_DATASET_PATH,
     RAW_UCI_DIR,
 )
+from krasnal.sampling import sample_bool, whats_on_square_index
 from krasnal.tokens import (
     BISHOP_ID,
     BLACK_WON_ID,
@@ -120,16 +120,6 @@ def _compute_piece_counts(lf: pl.LazyFrame) -> dict[str, int]:
     return {role: int(stats[i] or 0) for i, role in enumerate(PIECE_ROLES)}
 
 
-def _sample_bool(seed: int, game_key: str, ply: int, probability: float) -> bool:
-    if probability <= 0.0:
-        return False
-    if probability >= 1.0:
-        return True
-    digest = blake2b(f"{seed}|{game_key}|{ply}".encode(), digest_size=8).digest()
-    value = int.from_bytes(digest, byteorder="big") / 2**64
-    return value < probability
-
-
 def _compute_check_qa_probs(
     check_count: int,
     no_check_count: int,
@@ -183,16 +173,16 @@ def _build_game_tokens(
         if include_check_qa:
             gives_check = ply < len(is_check) and bool(is_check[ply])
             if gives_check:
-                if _sample_bool(seed=seed, game_key=uci_moves, ply=ply, probability=check_qa_prob):
+                if sample_bool(seed=seed, game_key=uci_moves, ply=ply, probability=check_qa_prob):
                     result_tokens.extend([IS_CHECK_ID, YES_CHECK_ID])
-            elif _sample_bool(seed=seed, game_key=uci_moves, ply=ply, probability=p_no):
+            elif sample_bool(seed=seed, game_key=uci_moves, ply=ply, probability=p_no):
                 result_tokens.extend([IS_CHECK_ID, NO_CHECK_ID])
 
         if include_piece_qa and ply < len(piece_moved):
             piece_role = _normalize_piece_role(piece_moved[ply])
             if piece_role is not None:
                 probability = piece_sampling_probs.get(piece_role, 0.0)
-                if _sample_bool(
+                if sample_bool(
                     seed=seed + 13, game_key=uci_moves, ply=ply, probability=probability
                 ):
                     answer_token = PIECE_ROLE_TO_TOKEN_ID[piece_role]
@@ -204,17 +194,15 @@ def _build_game_tokens(
                     b.apply(m)
                     break
 
-            if _sample_bool(
+            if sample_bool(
                 seed=seed + 20, game_key=uci_moves, ply=ply, probability=what_is_on_prob
             ):
-                from hashlib import blake2b
-
-                sq_idx = (
-                    int.from_bytes(
-                        blake2b(f"{seed + 21}|{uci_moves}|{ply}".encode(), digest_size=8).digest(),
-                        "big",
-                    )
-                    % 64
+                post_move_fen = b.fen()
+                sq_idx = whats_on_square_index(
+                    post_move_fen=post_move_fen,
+                    game_key=uci_moves,
+                    ply=ply,
+                    seed=seed,
                 )
                 file_char = chr(97 + (sq_idx % 8))
                 rank_char = str(1 + (sq_idx // 8))
