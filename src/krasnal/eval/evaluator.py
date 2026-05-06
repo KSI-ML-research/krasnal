@@ -11,6 +11,7 @@ from krasnal.eval.cot import extract_think_tokens, is_valid_cot_sequence, parse_
 from krasnal.eval.parsers import parse_game_tokens
 from krasnal.eval.replayer import replay_games
 from krasnal.inference import InferenceSession, StatelessBatchInferenceSession
+from krasnal.sampling import whats_on_square_index
 from krasnal.tokens import (
     BISHOP_ID,
     COLORED_PIECE_TOKENS,
@@ -137,13 +138,15 @@ class ChessEvaluator:
         if not contexts:
             return {name: 0.0 for name in self.metrics}
 
-        return self._infer_and_aggregate(contexts, model, device)
+        eval_seed = seed if seed is not None else (self.seed if self.seed is not None else 0)
+        return self._infer_and_aggregate(contexts, model, device, eval_seed)
 
     def _infer_and_aggregate(
         self,
         contexts: list[EvalContext],
         model: torch.nn.Module,
         device: torch.device,
+        eval_seed: int,
     ) -> dict[str, float]:
         all_positions = [ctx.sequence for ctx in contexts]
         batch_session = StatelessBatchInferenceSession(model, device)
@@ -171,7 +174,7 @@ class ChessEvaluator:
         if self.enable_piece_probe_metrics:
             final.update(self._evaluate_piece_probe(contexts, model, device))
         if self.enable_what_is_on_probe_metrics:
-            final.update(self._evaluate_what_is_on_probe(contexts, model, device))
+            final.update(self._evaluate_what_is_on_probe(contexts, model, device, eval_seed))
         return final
 
     def _evaluate_piece_probe(
@@ -329,9 +332,8 @@ class ChessEvaluator:
         contexts: list[EvalContext],
         model: torch.nn.Module,
         device: torch.device,
+        eval_seed: int,
     ) -> dict[str, Any]:
-        from hashlib import blake2b
-
         import bulletchess
 
         probe_sequences: list[list[int]] = []
@@ -343,13 +345,14 @@ class ChessEvaluator:
             if ctx.sequence is None or ctx.actual_token is None or ctx.post_move_fen is None:
                 continue
 
-            # Deterministically sample a square using FEN hash
-            sq_idx = (
-                int.from_bytes(
-                    blake2b(f"what_is_on_{ctx.post_move_fen}".encode(), digest_size=8).digest(),
-                    "big",
-                )
-                % 64
+            game_key = ctx.what_is_on_game_key or ""
+            ply = ctx.what_is_on_ply if ctx.what_is_on_ply is not None else 0
+            board = bulletchess.Board.from_fen(ctx.post_move_fen)
+            sq_idx = whats_on_square_index(
+                post_move_fen=ctx.post_move_fen,
+                game_key=game_key,
+                ply=ply,
+                seed=eval_seed,
             )
 
             file_char = chr(97 + (sq_idx % 8))
@@ -357,7 +360,6 @@ class ChessEvaluator:
             sq_str = f"{file_char}{rank_char}"
             whats_on_token_id = WHATS_ON_SQUARE[f"<whats_on_{sq_str}>"]
 
-            board = bulletchess.Board.from_fen(ctx.post_move_fen)
             piece = board[bulletchess.Square.from_str(sq_str)]
 
             if piece is None:

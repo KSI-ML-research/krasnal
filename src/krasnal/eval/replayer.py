@@ -11,6 +11,8 @@ def replay_game_tokens(game_tokens: GameTokens) -> list[EvalContext]:
     if not game_tokens.move_tokens:
         return []
 
+    what_is_on_game_key = " ".join(to_uci(t) for t in game_tokens.move_tokens)
+
     contexts: list[EvalContext] = []
     board = bulletchess.Board()
     context = game_tokens.initial_context.copy()
@@ -53,6 +55,8 @@ def replay_game_tokens(game_tokens: GameTokens) -> list[EvalContext]:
                 fen=fen,
                 post_move_fen=post_move_fen,
                 top1_fen=None,
+                what_is_on_game_key=what_is_on_game_key,
+                what_is_on_ply=move_idx,
             )
         )
 

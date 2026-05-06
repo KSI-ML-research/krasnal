@@ -173,7 +173,7 @@ def test_evaluate_resets_stateful_metrics_between_runs(monkeypatch):
     def fake_replay_games(_games, _block_size):
         return [EvalContext(sequence=[])]
 
-    def fake_infer_and_aggregate(contexts, _model, _device):
+    def fake_infer_and_aggregate(contexts, _model, _device, _eval_seed):
         assert contexts
         assert evaluator.metrics["acc_opening"].buffer == []
         return {"game/acc_opening": 0.0}
