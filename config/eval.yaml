@@ -12,7 +12,7 @@ qa:
     confusion_matrix: false
   what_is_on:
     enabled: true
-    f1_per_square: true
+    accuracy_per_square: true
 
 # List of classical metrics to compute
 metrics:

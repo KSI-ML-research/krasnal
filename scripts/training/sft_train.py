@@ -224,13 +224,11 @@ def main(cfg: DictConfig) -> None:
     def eval_log_fn(_iter_num: int, metrics: dict[str, Any]) -> None:
         payload = {}
         for k, v in metrics.items():
-            if k.startswith("qa/what_is_on/f1_per_square/"):
-                continue
             payload[format_eval_metric_key(k)] = v
-        if "qa/what_is_on/f1_matrix" in metrics:
-            heatmap = metrics["qa/what_is_on/f1_matrix"]
-            payload[format_eval_metric_key("qa/what_is_on/f1_matrix")] = heatmap
-            wandb.run.summary["eval/qa/what_is_on/f1_matrix"] = heatmap  # type: ignore[index]
+        if "qa/what_is_on/accuracy_matrix" in metrics:
+            heatmap = metrics["qa/what_is_on/accuracy_matrix"]
+            payload[format_eval_metric_key("qa/what_is_on/accuracy_matrix")] = heatmap
+            wandb.run.summary["eval/qa/what_is_on/accuracy_matrix"] = heatmap  # type: ignore[index]
         wandb.log(payload)
 
     run_supervised_training(

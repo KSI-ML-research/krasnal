@@ -79,8 +79,8 @@ class ChessEvaluator:
 
         what_is_on_cfg = qa_cfg.get("what_is_on", {})
         self.enable_what_is_on_probe_metrics = bool(what_is_on_cfg.get("enabled", True))
-        self.enable_what_is_on_f1_per_square_metrics = bool(
-            what_is_on_cfg.get("f1_per_square", False)
+        self.enable_what_is_on_accuracy_per_square_metrics = bool(
+            what_is_on_cfg.get("accuracy_per_square", False)
         )
 
         self.metrics = self._init_metrics()
@@ -218,17 +218,17 @@ class ChessEvaluator:
             labels.append(true_piece_token)
 
         default_metrics: dict[str, float] = {
-            "qa/piece/acc": 0.0,
-            "qa/piece/f1": 0.0,
+            "qa/piece_type_moved/acc": 0.0,
+            "qa/piece_type_moved/f1": 0.0,
         }
         if self.enable_piece_f1_per_piece_metrics:
             for piece_id in piece_ids:
-                default_metrics[f"qa/piece/f1_per_piece/{piece_names[piece_id]}"] = 0.0
+                default_metrics[f"qa/piece_type_moved/f1_per_piece/{piece_names[piece_id]}"] = 0.0
         if self.enable_piece_confusion_matrix_metrics:
             for true_id in piece_ids:
                 for pred_id in piece_ids:
                     default_metrics[
-                        f"qa/piece/confusion_matrix/{piece_names[true_id]}_{piece_names[pred_id]}"
+                        f"qa/piece_type_moved/confusion_matrix/{piece_names[true_id]}_{piece_names[pred_id]}"
                     ] = 0.0
 
         if not probe_sequences:
@@ -266,19 +266,18 @@ class ChessEvaluator:
         macro_f1 = f1_sum / len(piece_ids)
 
         metrics: dict[str, float] = {
-            "qa/piece/acc": acc,
-            "qa/piece/f1": macro_f1,
+            "qa/piece_type_moved/acc": acc,
+            "qa/piece_type_moved/f1": macro_f1,
         }
         if self.enable_piece_f1_per_piece_metrics:
             for piece_id in piece_ids:
-                metrics[f"qa/piece/f1_per_piece/{piece_names[piece_id]}"] = piece_f1_scores[
-                    piece_id
-                ]
+                key = f"qa/piece_type_moved/f1_per_piece/{piece_names[piece_id]}"
+                metrics[key] = piece_f1_scores[piece_id]
         if self.enable_piece_confusion_matrix_metrics:
             for true_id in piece_ids:
                 for pred_id in piece_ids:
                     metrics[
-                        f"qa/piece/confusion_matrix/{piece_names[true_id]}_{piece_names[pred_id]}"
+                        f"qa/piece_type_moved/confusion_matrix/{piece_names[true_id]}_{piece_names[pred_id]}"
                     ] = float(confusion[(true_id, pred_id)])
         return metrics
 
@@ -303,9 +302,9 @@ class ChessEvaluator:
 
         if not probe_sequences:
             return {
-                "qa/check/precision": 0.0,
-                "qa/check/recall": 0.0,
-                "qa/check/f1": 0.0,
+                "qa/is_check/precision": 0.0,
+                "qa/is_check/recall": 0.0,
+                "qa/is_check/f1": 0.0,
             }
 
         batch_session = StatelessBatchInferenceSession(model, device)
@@ -321,10 +320,10 @@ class ChessEvaluator:
 
         metrics = self._compute_binary_f1_metrics(tp=tp, fp=fp, fn=fn)
         if self.enable_qa_check_confusion_matrix_metrics:
-            metrics["qa/check/confusion_matrix/tp"] = float(tp)
-            metrics["qa/check/confusion_matrix/fp"] = float(fp)
-            metrics["qa/check/confusion_matrix/tn"] = float(tn)
-            metrics["qa/check/confusion_matrix/fn"] = float(fn)
+            metrics["qa/is_check/confusion_matrix/tp"] = float(tp)
+            metrics["qa/is_check/confusion_matrix/fp"] = float(fp)
+            metrics["qa/is_check/confusion_matrix/tn"] = float(tn)
+            metrics["qa/is_check/confusion_matrix/fn"] = float(fn)
         return metrics
 
     def _evaluate_what_is_on_probe(
@@ -379,10 +378,9 @@ class ChessEvaluator:
 
         metrics: dict[str, Any] = {
             "qa/what_is_on/acc": 0.0,
-            "qa/what_is_on/f1": 0.0,
         }
-        if self.enable_what_is_on_f1_per_square_metrics:
-            metrics["qa/what_is_on/f1_matrix"] = self._build_what_is_on_heatmap({})
+        if self.enable_what_is_on_accuracy_per_square_metrics:
+            metrics["qa/what_is_on/accuracy_matrix"] = self._build_what_is_on_heatmap({})
 
         if not probe_sequences:
             return metrics
@@ -400,80 +398,33 @@ class ChessEvaluator:
         correct = sum(1 for pred, label in zip(preds, labels, strict=True) if pred == label)
         total = len(labels)
 
-        confusion = {
-            (true_id, pred_id): 0 for true_id in valid_ans_ids for pred_id in valid_ans_ids
-        }
-        for true_id, pred_id in zip(labels, preds, strict=True):
-            confusion[(true_id, pred_id)] += 1
-
-        f1_sum = 0.0
-        for ans_id in valid_ans_ids:
-            tp = confusion[(ans_id, ans_id)]
-            fp = sum(confusion[(other, ans_id)] for other in valid_ans_ids if other != ans_id)
-            fn = sum(confusion[(ans_id, other)] for other in valid_ans_ids if other != ans_id)
-            precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
-            recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0
-            f1 = (
-                2.0 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0.0
-            )
-            f1_sum += f1
-        macro_f1 = f1_sum / len(valid_ans_ids)
-
         metrics["qa/what_is_on/acc"] = correct / total if total > 0 else 0.0
-        metrics["qa/what_is_on/f1"] = macro_f1
 
-        if self.enable_what_is_on_f1_per_square_metrics:
-            square_f1s: dict[str, float] = {}
+        if self.enable_what_is_on_accuracy_per_square_metrics:
+            square_accs: dict[str, float] = {}
             for file_i in range(8):
                 for rank_i in range(8):
                     sq = f"{chr(97 + file_i)}{1 + rank_i}"
                     sq_indices = [i for i, s in enumerate(sq_strs) if s == sq]
                     if not sq_indices:
-                        square_f1s[sq] = 0.0
+                        square_accs[sq] = 0.0
                         continue
                     sq_preds = [preds[i] for i in sq_indices]
                     sq_labels = [labels[i] for i in sq_indices]
+                    correct = sum(
+                        1 for p, label in zip(sq_preds, sq_labels, strict=True) if p == label
+                    )
+                    square_accs[sq] = correct / len(sq_preds)
 
-                    sq_confusion = {
-                        (true_id, pred_id): 0
-                        for true_id in valid_ans_ids
-                        for pred_id in valid_ans_ids
-                    }
-                    for true_id, pred_id in zip(sq_labels, sq_preds, strict=True):
-                        sq_confusion[(true_id, pred_id)] += 1
-
-                    sq_f1_sum = 0.0
-                    for ans_id in valid_ans_ids:
-                        tp = sq_confusion[(ans_id, ans_id)]
-                        fp = sum(
-                            sq_confusion[(other, ans_id)]
-                            for other in valid_ans_ids
-                            if other != ans_id
-                        )
-                        fn = sum(
-                            sq_confusion[(ans_id, other)]
-                            for other in valid_ans_ids
-                            if other != ans_id
-                        )
-                        precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
-                        recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0
-                        f1 = (
-                            2.0 * precision * recall / (precision + recall)
-                            if (precision + recall) > 0
-                            else 0.0
-                        )
-                        sq_f1_sum += f1
-                    square_f1s[sq] = sq_f1_sum / len(valid_ans_ids)
-
-            metrics["qa/what_is_on/f1_matrix"] = self._build_what_is_on_heatmap(square_f1s)
+            metrics["qa/what_is_on/accuracy_matrix"] = self._build_what_is_on_heatmap(square_accs)
 
         return metrics
 
     @staticmethod
-    def _build_what_is_on_heatmap(square_f1s: dict[str, float]) -> wandb.Plotly:
+    def _build_what_is_on_heatmap(square_accs: dict[str, float]) -> wandb.Plotly:
         files = ["a", "b", "c", "d", "e", "f", "g", "h"]
         ranks = ["8", "7", "6", "5", "4", "3", "2", "1"]
-        z = [[square_f1s.get(f"{file}{rank}", 0.0) for file in files] for rank in ranks]
+        z = [[square_accs.get(f"{file}{rank}", 0.0) for file in files] for rank in ranks]
         fig = go.Figure(
             data=go.Heatmap(
                 z=z,
@@ -481,12 +432,12 @@ class ChessEvaluator:
                 y=ranks,
                 colorscale="Viridis",
                 reversescale=False,
-                colorbar={"title": "F1"},
-                hovertemplate="file=%{x}<br>rank=%{y}<br>f1=%{z:.4f}<extra></extra>",
+                colorbar={"title": "Accuracy"},
+                hovertemplate="file=%{x}<br>rank=%{y}<br>acc=%{z:.4f}<extra></extra>",
             )
         )
         fig.update_layout(
-            title="what_is_on F1 per square",
+            title="what_is_on accuracy per square",
             xaxis_title="File",
             yaxis_title="Rank",
         )
@@ -506,9 +457,9 @@ class ChessEvaluator:
         )
 
         return {
-            "qa/check/precision": precision,
-            "qa/check/recall": recall,
-            "qa/check/f1": check_f1,
+            "qa/is_check/precision": precision,
+            "qa/is_check/recall": recall,
+            "qa/is_check/f1": check_f1,
         }
 
     def _compute_top1_fen(self, ctx: EvalContext) -> None:

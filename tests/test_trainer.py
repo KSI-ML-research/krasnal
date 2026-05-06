@@ -157,5 +157,6 @@ def test_collate_masks_whats_on_prompt_tokens():
 def test_format_eval_metric_key_groups_game_metrics():
     assert format_eval_metric_key("illegal_mass") == "eval/game/illegal_mass"
     assert format_eval_metric_key("top1_legal") == "eval/game/top1_legal"
-    assert format_eval_metric_key("qa/what_is_on/f1_matrix") == "eval/qa/what_is_on/f1_matrix"
+    key = "qa/what_is_on/accuracy_matrix"
+    assert format_eval_metric_key(key) == "eval/qa/what_is_on/accuracy_matrix"
     assert format_eval_metric_key("val_loss") == "eval/val_loss"
