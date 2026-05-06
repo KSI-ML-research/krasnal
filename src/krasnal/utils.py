@@ -86,6 +86,8 @@ def format_eval_metric_key(key: str) -> str:
         return "eval/val_loss"
     if key.startswith("qa/") or key.startswith("cot_"):
         return f"eval/{key}"
+    if key.startswith("acc_elo_"):
+        return f"eval/game/elo/{key}"
     return f"eval/game/{key}"
 
 

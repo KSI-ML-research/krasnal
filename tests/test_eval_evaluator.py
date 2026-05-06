@@ -126,9 +126,9 @@ def test_extract_generated_think_tokens_handles_multiple_think_blocks():
 def test_compute_binary_f1_metrics_returns_expected_values():
     result = ChessEvaluator._compute_binary_f1_metrics(tp=3, fp=1, fn=2)
 
-    assert result["qa/check/precision"] == 0.75
-    assert result["qa/check/recall"] == 0.6
-    assert result["qa/check/f1"] == 2 * 0.75 * 0.6 / (0.75 + 0.6)
+    assert result["qa/is_check/precision"] == 0.75
+    assert result["qa/is_check/recall"] == 0.6
+    assert result["qa/is_check/f1"] == 2 * 0.75 * 0.6 / (0.75 + 0.6)
 
 
 def test_build_what_is_on_heatmap_uses_all_squares():
@@ -153,8 +153,8 @@ def test_piece_probe_metrics_can_skip_piece_f1_per_piece():
 
     result = evaluator._evaluate_piece_probe([], model=model, device=None)
 
-    assert result == {"qa/piece/acc": 0.0, "qa/piece/f1": 0.0}
-    assert not any(key.startswith("qa/piece/f1_per_piece/") for key in result)
+    assert result == {"qa/piece_type_moved/acc": 0.0, "qa/piece_type_moved/f1": 0.0}
+    assert not any(key.startswith("qa/piece_type_moved/f1_per_piece/") for key in result)
 
 
 def test_evaluate_resets_stateful_metrics_between_runs(monkeypatch):
