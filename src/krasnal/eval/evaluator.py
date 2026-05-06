@@ -535,11 +535,11 @@ class ChessEvaluator:
     def _aggregate_results(self, results: dict[str, list[float]]) -> dict[str, float]:
         final_results: dict[str, float] = {}
         for k, v in results.items():
-            final_results[f"game/{k}"] = sum(v) / len(v) if v else 0.0
+            final_results[k] = sum(v) / len(v) if v else 0.0
         for metric in self.metrics.values():
             if hasattr(metric, "finalize"):
                 for k, v in metric.finalize().items():
-                    final_results[f"game/{k}"] = v
+                    final_results[k] = v
         return final_results
 
     def evaluate_cot(

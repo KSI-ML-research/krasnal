@@ -176,7 +176,7 @@ def test_evaluate_resets_stateful_metrics_between_runs(monkeypatch):
     def fake_infer_and_aggregate(contexts, _model, _device, _eval_seed):
         assert contexts
         assert evaluator.metrics["acc_opening"].buffer == []
-        return {"game/acc_opening": 0.0}
+        return {"acc_opening": 0.0}
 
     monkeypatch.setattr("krasnal.eval.evaluator.parse_game_tokens", fake_parse_game_tokens)
     monkeypatch.setattr("krasnal.eval.evaluator.get_moves_only", fake_get_moves_only)
@@ -185,4 +185,4 @@ def test_evaluate_resets_stateful_metrics_between_runs(monkeypatch):
 
     result = evaluator.evaluate(model=model, dataset=dataset, num_games=1, device=None)
 
-    assert result == {"game/acc_opening": 0.0}
+    assert result == {"acc_opening": 0.0}
