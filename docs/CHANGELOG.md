@@ -1,23 +1,16 @@
 # Changelog
 
-## 2026-05-03
+## 2026-05-06
 
-Removed unused `<capture>` from the vocabulary and renumbered all subsequent special token ids by -1 (e.g. `<piece_type_moved>` is now id 19, `<whats_on_*>` range shifts, colored piece tokens start at 91). UCI move token ids shift by -1. **Incompatible with checkpoints and Parquet produced before this change** — retrain and re-preprocess.
+*Squashed changes from 2026-04-28 - 2026-05-06*
 
-Renamed auxiliary piece-type Q&A question token `<what_piece>` to `<piece_type_moved>`.
-
-## 2026-04-30
-
-Merged `<what_is_on> <square>` (3-token Q&A) into `<whats_on_XX>` (2-token Q&A). 64 merged tokens replace the decomposed prompt, saving 1 token per Q&A instance. Eliminates cross-token composition overhead.
-
-## 2026-04-29
-
-Added `<what_is_on> <square>` (3-token Q&A) to pretraining. Each instance asks "what is on square XX?" and answers with "<empty>" or "<w:pawn>", "<b:pawn>", etc.
-
-## 2026-04-28
-
-Added probability to check-QA preprocessing with `check_qa_prob` in config.
-
+- Removed unused `<capture>` token
+- Added `<whats_on_XX>` `<empty>/<w:pawn>/<b:pawn>` auxiliary Q&A
+- Renamed auxiliary piece-type Q&A question token `<what_piece>` to `<piece_type_moved>`.
+- Added configurable probability to generating `<is_check>` tokens
+- Simplified configs and wandb view
+- Mask Q&A tokens in the inference
+- Mask loss for Questions and Conditioning tokens in the training
 
 ## 2026-04-25
 
