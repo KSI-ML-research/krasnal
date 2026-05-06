@@ -1,5 +1,7 @@
 from typing import Any
 
+from krasnal.tokens import ELO_BUCKETS
+
 from .acpl import ACPLMetric
 from .blunder_rate import BlunderRateMetric
 from .context import EvalContext
@@ -12,6 +14,7 @@ from .cot import (
     CotThinkTokenRecallMetric,
 )
 from .filtered import (
+    ByEloMetric,
     ByPhaseMetric,
     PerPieceMetric,
     WhenGivesCheckMetric,
@@ -44,6 +47,12 @@ METRIC_REGISTRY: dict[str, Any] = {
     "acc_endgame": lambda **_: ByPhaseMetric(AccuracyCore(), "endgame"),
     "illegal_mass_endgame": lambda **_: ByPhaseMetric(IllegalMassCore(), "endgame"),
     "mrr_endgame": lambda **_: ByPhaseMetric(MRRCore(), "endgame"),
+    **{
+        f"acc_elo_{bucket_name}": lambda elo_token=elo_token, **_: ByEloMetric(
+            AccuracyCore(), elo_token
+        )
+        for elo_token, bucket_name in ELO_BUCKETS.items()
+    },
     "target_piece_top1_legal": lambda **_: PerPieceMetric(Top1LegalCore()),
     "target_piece_acc": lambda **_: PerPieceMetric(AccuracyCore()),
     "acpl": ACPLMetric,

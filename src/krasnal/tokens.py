@@ -74,6 +74,15 @@ ELO_TOKENS = {
     "<elo_unknown>": ELO_UNKNOWN_ID,
 }
 
+ELO_BUCKETS = {
+    ELO_BELOW_1000_ID: "below_1000",
+    ELO_1000_1499_ID: "1000_1499",
+    ELO_1500_1999_ID: "1500_1999",
+    ELO_2000_2499_ID: "2000_2499",
+    ELO_2500_2999_ID: "2500_2999",
+    ELO_ABOVE_3000_ID: "above_3000",
+}
+
 # Loss-mask targets: model always receives result + Elo as a fixed prefix at inference.
 CONDITIONING_METADATA_TARGET_MASK_IDS: Final[frozenset[int]] = frozenset(
     (*OUTCOME_TOKENS.values(), *ELO_TOKENS.values())
