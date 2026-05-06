@@ -105,6 +105,12 @@ final = {name: sum(values)/len(values) for name, values in results.items()}
 | `acpl` | Average centipawn loss (needs Stockfish) |
 | `blunder_rate` | % of moves that are blunders |
 
+Filtered game metrics aggregate by context. For example, `acc_opening`,
+`acc_middlegame`, and `acc_endgame` split accuracy by move index phase, while
+`acc_elo_1500_1999`, `acc_elo_2000_2499`, `acc_elo_2500_2999`, and the other Elo
+buckets split accuracy by the Elo bucket of the side to move. Elo accuracy keys
+are logged under wandb paths such as `eval/game/acc/acc_elo_1500_1999`.
+
 Check QA probe metrics are also reported from a dedicated probe pass:
 
 - `check_tp`, `check_fp`, `check_tn`, `check_fn` (confusion matrix counts)

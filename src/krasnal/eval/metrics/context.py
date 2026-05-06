@@ -15,6 +15,7 @@ class EvalContext:
         actual_token: The actual token that was played (ground truth).
         in_check: Whether the player's king is in check.
         phase: Game phase (opening, middlegame, endgame).
+        player_elo_token: Elo bucket token for the side to move.
         gives_check: Whether the move gives check to opponent.
         fen: FEN string of the position before the move.
         top1_fen: FEN string after applying model's top-1 legal move.
@@ -27,6 +28,7 @@ class EvalContext:
     actual_token: int | None = None
     in_check: bool | None = None
     phase: str | None = None
+    player_elo_token: int | None = None
     gives_check: bool | None = None
     fen: str | None = None
     post_move_fen: str | None = None

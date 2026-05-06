@@ -1,6 +1,8 @@
 from collections.abc import Callable
 from typing import Any, ClassVar
 
+from krasnal.tokens import ELO_BUCKETS
+
 from .base import Metric
 from .context import EvalContext
 from .core import CoreMetric
@@ -69,6 +71,20 @@ class ByPhaseMetric(FilteredMetric):
             core=core,
             filter_fn=lambda ctx: ctx.phase == phase,
             result_key=f"{core.name}_{phase}",
+        )
+
+
+class ByEloMetric(FilteredMetric):
+    """Filter by Elo bucket of the side to move."""
+
+    def __init__(self, core: CoreMetric, elo_token: int):
+        if elo_token not in ELO_BUCKETS:
+            raise ValueError(f"Invalid Elo bucket token: {elo_token}")
+        bucket_name = ELO_BUCKETS[elo_token]
+        super().__init__(
+            core=core,
+            filter_fn=lambda ctx: ctx.player_elo_token == elo_token,
+            result_key=f"{core.name}/{core.name}_elo_{bucket_name}",
         )
 
 

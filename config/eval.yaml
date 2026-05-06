@@ -22,6 +22,12 @@ metrics:
   - acc_endgame
   - acc_when_gives_check
   - acc_when_in_check
+  - acc_elo_below_1000
+  - acc_elo_1000_1499
+  - acc_elo_1500_1999
+  - acc_elo_2000_2499
+  - acc_elo_2500_2999
+  - acc_elo_above_3000
 
   - illegal_mass
   - illegal_mass_opening

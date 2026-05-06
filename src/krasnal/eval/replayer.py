@@ -24,6 +24,9 @@ def replay_game_tokens(game_tokens: GameTokens) -> list[EvalContext]:
 
         in_check = board in bulletchess.CHECK
         phase = get_game_phase(move_idx)
+        player_elo_token = (
+            game_tokens.white_elo_token if move_idx % 2 == 0 else game_tokens.black_elo_token
+        )
 
         uci_move = to_uci(move_token)
         if not uci_move:
@@ -51,6 +54,7 @@ def replay_game_tokens(game_tokens: GameTokens) -> list[EvalContext]:
                 actual_token=move_token,
                 in_check=in_check,
                 phase=phase,
+                player_elo_token=player_elo_token,
                 gives_check=gives_check,
                 fen=fen,
                 post_move_fen=post_move_fen,
