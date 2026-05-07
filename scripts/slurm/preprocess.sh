@@ -26,4 +26,4 @@ mkdir -p $HF_HOME
 uv venv .venv --python 3.13
 uv sync
 
-uv run scripts/data/preprocess.py
+uv run scripts/data/preprocess.py preprocess_workers=24
