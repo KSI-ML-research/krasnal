@@ -44,11 +44,10 @@ uv sync
 uv run python scripts/data/download_games.py
 
 # Preprocess games
-uv run python scripts/data/preprocess.py
+uv run python scripts/data/preprocess.py preprocess_workers=24
 
 # Pretrain model
 uv run python scripts/training/pretrain.py \
     model=$MODEL \
     train=$TRAIN_CONFIG \
-    train.batch_size=64 \
-    train.num_workers=24
+    train.batch_size=64
