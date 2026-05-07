@@ -3,12 +3,13 @@
 #SBATCH --output=output/%j_pipeline.out
 #SBATCH --error=output/%j_pipeline.err
 #SBATCH --gres=gpu:1
-#SBATCH --cpus-per-task=8
+#SBATCH --cpus-per-task=24
 #SBATCH --partition=student-nvidia
 #SBATCH --time=24:00:00
 
-# IMPORTANT: Ensure WANDB_API_KEY is set in your ~/.bashrc on HPC
+# IMPORTANT: Ensure WANDB_API_KEY and HF_TOKEN are set in your ~/.bashrc on HPC
 # export WANDB_API_KEY=your_key_here
+# export HF_TOKEN=your_token_here
 
 # === User & Paths ===
 USER=ijakus
