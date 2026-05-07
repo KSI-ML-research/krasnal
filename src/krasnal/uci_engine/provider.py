@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import random
 from pathlib import Path
@@ -11,7 +12,7 @@ from loguru import logger
 from krasnal.inference import Game, InferenceSession, load_model
 from krasnal.inference.exceptions import NoLegalMovesError
 from krasnal.inference.sampling import sample_token
-from krasnal.tokens import get_vocab_size, legal_token_ids, to_uci
+from krasnal.tokens import get_vocab_size, legal_token_ids, load_move_vocab, to_uci
 from krasnal.utils import (
     build_gpt_config_from_artifact,
     resolve_runtime_device,
@@ -107,6 +108,15 @@ class ModelProvider(ChessModelProvider):
         artifact_dir: Path,
         device: torch.device | None = None,
     ) -> ModelProvider:
+        with (artifact_dir / "config.json").open() as f:
+            artifact_config = json.load(f)
+        piece_aware_moves = bool(artifact_config.get("piece_aware_moves", False))
+        side_prefixed_moves = bool(artifact_config.get("side_prefixed_moves", True))
+        load_move_vocab(
+            artifact_dir / "move_vocab.json",
+            piece_aware_moves=piece_aware_moves,
+            side_prefixed_moves=side_prefixed_moves,
+        )
         gpt_config = build_gpt_config_from_artifact(
             artifact_dir,
             vocab_size=get_vocab_size(),
@@ -150,16 +160,29 @@ class ModelProvider(ChessModelProvider):
         return session
 
     def get_best_move(self, uci_moves: str) -> str:
-        move_list = list(filter(None, uci_moves.split()))
-        session = self._sync_session_history(move_list)
+        try:
+            move_list = list(filter(None, uci_moves.split()))
+            session = self._sync_session_history(move_list)
 
-        legal_ids = legal_token_ids(session.game.board)
-        if not legal_ids:
-            raise NoLegalMovesError("No legal moves available")
+            if not list(session.game.board.legal_moves()):
+                raise NoLegalMovesError("No legal moves available")
 
-        legal_probs = session.get_legal_probs()
-        if torch.isnan(legal_probs).any():
-            raise ModelProviderError("Could not produce legal move probabilities")
+            legal_ids = legal_token_ids(session.game.board)
+            if not legal_ids:
+                raise ModelProviderError("No legal move tokens available for current position")
 
-        best_token = sample_token(legal_probs, temperature=self.temperature, top_p=self.top_p)
-        return to_uci(best_token)
+            legal_probs = session.get_legal_probs()
+            if torch.isnan(legal_probs).any():
+                raise ModelProviderError("Could not produce legal move probabilities")
+
+            best_token = sample_token(legal_probs, temperature=self.temperature, top_p=self.top_p)
+            best_move = to_uci(best_token)
+            if not best_move:
+                raise ModelProviderError(f"Sampled token {best_token} is not a move")
+            return best_move
+        except NoLegalMovesError:
+            raise
+        except ModelProviderError:
+            raise
+        except Exception as exc:
+            raise ModelProviderError("Unrecoverable inference error") from exc

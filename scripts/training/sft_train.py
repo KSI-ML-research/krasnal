@@ -16,6 +16,7 @@ import wandb
 from krasnal.config import (
     ARTIFACTS_DIR,
     EVAL_DATASET_PATH,
+    MOVE_VOCAB_PATH,
     SFT_COT_SHARDS_DIR,
     GPTConfig,
     TrainConfig,
@@ -28,7 +29,7 @@ from krasnal.sft.train import (
     resolve_shard_paths,
     split_shard_paths,
 )
-from krasnal.tokens import get_vocab_size, set_side_prefixed_moves
+from krasnal.tokens import get_vocab_size, load_move_vocab
 from krasnal.trainer import (
     build_model,
     cosine_warmup_lr,
@@ -45,6 +46,45 @@ from krasnal.utils import (
     save_wandb_run,
     set_seed,
 )
+
+
+def build_run_config(
+    cfg: DictConfig,
+    tconf: TrainConfig,
+    mconf: GPTConfig,
+    *,
+    cot_train_paths: list[Path],
+    cot_eval_paths: list[Path],
+    normal_dataset_path: Path,
+    vocab_size: int,
+    total_iters: int,
+) -> dict[str, Any]:
+    piece_aware_moves = bool(cfg.get("piece_aware_moves", False))
+    side_prefixed_moves = bool(cfg.get("side_prefixed_moves", True))
+    return {
+        "stage": "sft_cot_train",
+        "seed": cfg.seed,
+        "cot_shards_dir": str(SFT_COT_SHARDS_DIR),
+        "cot_train_shards": len(cot_train_paths),
+        "cot_eval_shards": len(cot_eval_paths),
+        "normal_dataset": str(normal_dataset_path),
+        "cot_ratio": cfg.cot_ratio,
+        "batch_size": tconf.batch_size,
+        "learning_rate": tconf.learning_rate,
+        "max_iters": total_iters,
+        "epochs": tconf.epochs,
+        "gpt_model_name": cfg.model.get("name", "custom"),
+        "vocab_size": vocab_size,
+        "block_size": mconf.block_size,
+        "n_layer": mconf.n_layer,
+        "n_head": mconf.n_head,
+        "n_embd": mconf.n_embd,
+        "dropout": mconf.dropout,
+        "bias": mconf.bias,
+        "piece_aware_moves": piece_aware_moves,
+        "side_prefixed_moves": side_prefixed_moves,
+        "move_vocab_path": str(MOVE_VOCAB_PATH),
+    }
 
 
 def mixed_batch_generator(
@@ -68,7 +108,13 @@ def mixed_batch_generator(
 
 @hydra.main(version_base=None, config_path="../../config", config_name="sft_train")
 def main(cfg: DictConfig) -> None:
-    set_side_prefixed_moves(bool(cfg.get("side_prefixed_moves", True)))
+    piece_aware_moves = bool(cfg.get("piece_aware_moves", False))
+    side_prefixed_moves = bool(cfg.get("side_prefixed_moves", True))
+    load_move_vocab(
+        MOVE_VOCAB_PATH,
+        piece_aware_moves=piece_aware_moves,
+        side_prefixed_moves=side_prefixed_moves,
+    )
     set_seed(cfg.seed)
 
     shard_paths = resolve_shard_paths(SFT_COT_SHARDS_DIR)
@@ -124,28 +170,16 @@ def main(cfg: DictConfig) -> None:
     artifact_dir = ARTIFACTS_DIR / "sft_cot" / timestamp
     artifact_dir.mkdir(parents=True, exist_ok=True)
     vocab_size = get_vocab_size()
-
-    run_config = {
-        "stage": "sft_cot_train",
-        "seed": cfg.seed,
-        "cot_shards_dir": str(SFT_COT_SHARDS_DIR),
-        "cot_train_shards": len(cot_train_paths),
-        "cot_eval_shards": len(cot_eval_paths),
-        "normal_dataset": str(normal_dataset_path),
-        "cot_ratio": cfg.cot_ratio,
-        "batch_size": tconf.batch_size,
-        "learning_rate": tconf.learning_rate,
-        "max_iters": total_iters,
-        "epochs": tconf.epochs,
-        "gpt_model_name": cfg.model.get("name", "custom"),
-        "vocab_size": vocab_size,
-        "block_size": mconf.block_size,
-        "n_layer": mconf.n_layer,
-        "n_head": mconf.n_head,
-        "n_embd": mconf.n_embd,
-        "dropout": mconf.dropout,
-        "bias": mconf.bias,
-    }
+    run_config = build_run_config(
+        cfg,
+        tconf,
+        mconf,
+        cot_train_paths=cot_train_paths,
+        cot_eval_paths=cot_eval_paths,
+        normal_dataset_path=normal_dataset_path,
+        vocab_size=vocab_size,
+        total_iters=total_iters,
+    )
 
     run_id, entity, project = init_wandb(
         project=cfg.wandb_project,
@@ -248,7 +282,7 @@ def main(cfg: DictConfig) -> None:
     )
 
     model_path = artifact_dir / "model.pt"
-    save_model_state(unwrap_model(model), model_path)
+    save_model_state(unwrap_model(model), model_path, move_vocab_path=MOVE_VOCAB_PATH)
 
     save_wandb_run(
         artifact_dir=artifact_dir,

@@ -6,8 +6,8 @@ This document describes the complete data pipeline: from downloading raw chess g
 
 ```
 Download (Aix DB) → Filter → Preprocess → Pretrain
-       ↓                              ↓
-  HuggingFace                 artifacts/
+       ↓                    ↓         ↓
+  HuggingFace          move_vocab   artifacts/
    Cache
 ```
 
@@ -44,8 +44,15 @@ just preprocess target_games=5000000
 **Configuration** (in `config/preprocess.yaml`):
 - `target_games` - number of games to tokenize
 - `preprocess_workers` - parallel workers (0 = auto)
+- `side_prefixed_moves` - include mover side in move tokens (`w:e2e4`, `b:e7e5`)
+- `piece_aware_moves` - include mover piece type in move tokens (`w:pawn:e2e4`)
 
-**Output:** Binary training files in `data/2_pretrain/`
+**Output:**
+- `data/2_tokenized/move_vocab.json` - generated vocabulary with manifest and token IDs
+- `data/2_tokenized/pretrain.parquet` - tokenized training games
+- `data/2_tokenized/eval.parquet` - tokenized eval games
+
+Preprocessing always rebuilds `move_vocab.json` from all `data/1_filtered/` games before the train/eval split. Move IDs are assigned from sorted token strings, so the mapping is deterministic for a fixed filtered corpus and vocabulary config. The corpus must include valid `piece_moved` lists for every move.
 
 ---
 
@@ -62,6 +69,10 @@ just pretrain model=large train=cuda
 - `train` - training backend (cuda, mps, cpu)
 
 **Output:** Model checkpoints in `artifacts/pretrain/`
+
+Pretraining reads `data/2_tokenized/move_vocab.json` directly. It fails before training if the file is missing or if `piece_aware_moves` / `side_prefixed_moves` do not match the manifest.
+
+Training applies the supervised CE loss mask in one place (`src/krasnal/supervised_target_mask.py`): Q&A prompts, square-query prompts, outcome/Elo conditioning tokens, and related prompt-like positions are written as `ignore_index` on the shifted target so they are never trained as next-token labels.
 
 ---
 

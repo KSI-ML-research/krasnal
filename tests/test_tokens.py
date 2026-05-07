@@ -1,3 +1,7 @@
+import json
+
+import pytest
+
 from krasnal.tokens import (
     BISHOP_ID,
     BLACK_WON_ID,
@@ -27,10 +31,12 @@ from krasnal.tokens import (
     THINK_START_ID,
     WHITE_WON_ID,
     YES_CHECK_ID,
+    build_move_key,
     get_elo_bucket,
     get_moves_only,
+    load_move_vocab,
+    make_move_vocab_artifact,
     move_key_for_ply,
-    set_side_prefixed_moves,
 )
 
 
@@ -135,12 +141,123 @@ def test_get_moves_only_all_special_tokens():
 
 
 def test_side_prefixed_moves_toggle_changes_move_keys():
-    set_side_prefixed_moves(True)
-    assert move_key_for_ply("e2e4", 0) == "w:e2e4"
-    assert move_key_for_ply("e7e5", 1) == "b:e7e5"
-    try:
-        set_side_prefixed_moves(False)
-        assert move_key_for_ply("e2e4", 0) == "e2e4"
-        assert move_key_for_ply("e7e5", 1) == "e7e5"
-    finally:
-        set_side_prefixed_moves(True)
+    assert move_key_for_ply("e2e4", 0, side_prefixed_moves=True) == "w:e2e4"
+    assert move_key_for_ply("e7e5", 1, side_prefixed_moves=True) == "b:e7e5"
+    assert move_key_for_ply("e2e4", 0, side_prefixed_moves=False) == "e2e4"
+    assert move_key_for_ply("e7e5", 1, side_prefixed_moves=False) == "e7e5"
+
+
+def test_move_vocab_generation_is_deterministic_and_sorted():
+    move_keys = ["w:e2e4", "b:e7e5", "w:a2a3", "b:e7e5"]
+
+    first = make_move_vocab_artifact(
+        move_keys,
+        piece_aware_moves=False,
+        side_prefixed_moves=True,
+        generation_timestamp="test",
+    )
+    second = make_move_vocab_artifact(
+        reversed(move_keys),
+        piece_aware_moves=False,
+        side_prefixed_moves=True,
+        generation_timestamp="test",
+    )
+
+    assert first["vocab"] == second["vocab"]
+    move_vocab = {
+        token: token_id for token, token_id in first["vocab"].items() if token not in SPECIAL_TOKENS
+    }
+    assert list(move_vocab) == ["b:e7e5", "w:a2a3", "w:e2e4"]
+    assert list(move_vocab.values()) == list(
+        range(max(SPECIAL_TOKENS.values()) + 1, max(SPECIAL_TOKENS.values()) + 4)
+    )
+
+
+def test_piece_aware_moves_and_uci_move_keys_keep_promotion_suffix():
+    assert (
+        build_move_key(
+            "e7e8q",
+            "pawn",
+            ply=0,
+            piece_aware_moves=False,
+            side_prefixed_moves=True,
+        )
+        == "w:e7e8q"
+    )
+    assert (
+        build_move_key(
+            "g1f3",
+            "n",
+            ply=1,
+            piece_aware_moves=True,
+            side_prefixed_moves=True,
+        )
+        == "b:knight:g1f3"
+    )
+    assert (
+        build_move_key(
+            "e7e8q",
+            "pawn",
+            ply=0,
+            piece_aware_moves=True,
+            side_prefixed_moves=False,
+        )
+        == "pawn:e7e8q"
+    )
+
+
+def test_side_prefix_combinations():
+    assert (
+        build_move_key(
+            "e2e4",
+            "pawn",
+            ply=0,
+            piece_aware_moves=False,
+            side_prefixed_moves=True,
+        )
+        == "w:e2e4"
+    )
+    assert (
+        build_move_key(
+            "e2e4",
+            "pawn",
+            ply=0,
+            piece_aware_moves=False,
+            side_prefixed_moves=False,
+        )
+        == "e2e4"
+    )
+    assert (
+        build_move_key(
+            "e2e4",
+            "pawn",
+            ply=0,
+            piece_aware_moves=True,
+            side_prefixed_moves=True,
+        )
+        == "w:pawn:e2e4"
+    )
+    assert (
+        build_move_key(
+            "e2e4",
+            "pawn",
+            ply=0,
+            piece_aware_moves=True,
+            side_prefixed_moves=False,
+        )
+        == "pawn:e2e4"
+    )
+
+
+def test_move_vocab_manifest_mismatch_fails(tmp_path):
+    path = tmp_path / "move_vocab.json"
+    artifact = make_move_vocab_artifact(
+        ["w:e2e4"],
+        piece_aware_moves=False,
+        side_prefixed_moves=True,
+        generation_timestamp="test",
+    )
+    path.write_text(json.dumps(artifact))
+
+    with pytest.raises(ValueError, match="manifest does not match runtime config"):
+        load_move_vocab(path, piece_aware_moves=True, side_prefixed_moves=True)

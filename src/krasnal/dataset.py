@@ -8,15 +8,8 @@ from datasets import Dataset as HFDataset
 from torch.nn.utils.rnn import pad_sequence
 from torch.utils.data import Dataset
 
-from krasnal.tokens import (
-    CONDITIONING_METADATA_TARGET_MASK_IDS,
-    IS_CHECK_ID,
-    PAD_ID,
-    PIECE_TYPE_MOVED_ID,
-    WHATS_ON_PROMPT_TOKEN_IDS,
-)
-
-LOSS_IGNORE_INDEX = -100
+from krasnal.supervised_target_mask import apply_supervised_loss_mask
+from krasnal.tokens import PAD_ID
 
 
 def resolve_hf_datasets_cache_dir() -> str:
@@ -95,13 +88,7 @@ class CollateFn:
                 padded = F.pad(padded, (0, pad_size), value=PAD_ID)
 
         x = padded[:, :-1]
-        y = padded[:, 1:].clone()
-        y[y == IS_CHECK_ID] = LOSS_IGNORE_INDEX
-        y[y == PIECE_TYPE_MOVED_ID] = LOSS_IGNORE_INDEX
-        for token_id in WHATS_ON_PROMPT_TOKEN_IDS:
-            y[y == token_id] = LOSS_IGNORE_INDEX
-        for token_id in CONDITIONING_METADATA_TARGET_MASK_IDS:
-            y[y == token_id] = LOSS_IGNORE_INDEX
+        y = apply_supervised_loss_mask(padded[:, 1:])
         return x, y
 
 

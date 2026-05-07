@@ -9,6 +9,7 @@ from krasnal.tokens import (
     ELO_UNKNOWN_ID,
     GAME_START_ID,
     OUTCOME_TOKENS,
+    normalize_piece_type,
     token_to_uci,
     uci_to_token_id,
 )
@@ -44,7 +45,10 @@ class Game:
 
     def feed_uci(self, uci: str) -> None:
         move = self._parse_and_validate_uci(uci)
-        token_id = uci_to_token_id(uci, self.board.turn)
+        piece = self.board[move.origin]
+        if piece is None:
+            raise ValueError(f"No piece on move origin for move: {uci}")
+        token_id = uci_to_token_id(uci, self.board.turn, normalize_piece_type(piece.piece_type))
         if token_id is None:
             raise ValueError(f"No token for move: {uci}")
 
