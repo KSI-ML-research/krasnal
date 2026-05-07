@@ -1,18 +1,57 @@
 import math
+import os
 import shutil
 from collections.abc import Callable, Iterable
 from contextlib import AbstractContextManager, nullcontext
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import torch
+import torch.distributed as dist
+from torch.nn.parallel import DistributedDataParallel as DDP
 from tqdm.auto import tqdm
 
 from krasnal.config import ARTIFACTS_DIR, GPTConfig, TrainConfig
-from krasnal.dataset import ChessDataset, make_collate_fn
 from krasnal.model import GPT
 from krasnal.supervised_target_mask import LOSS_IGNORE_INDEX
 from krasnal.tokens import get_vocab_size
+
+
+@dataclass(frozen=True)
+class DistributedInfo:
+    """Process group info; when ``enabled`` is False, rank is always 0 and world_size is 1."""
+
+    enabled: bool
+    rank: int
+    world_size: int
+    local_rank: int
+
+    @property
+    def is_master(self) -> bool:
+        return self.rank == 0
+
+
+def setup_distributed() -> DistributedInfo:
+    world_size = int(os.environ.get("WORLD_SIZE", "1"))
+    if world_size <= 1:
+        return DistributedInfo(enabled=False, rank=0, world_size=1, local_rank=0)
+    if not torch.cuda.is_available():
+        raise RuntimeError("Multi-GPU training requires CUDA and torchrun.")
+    local_rank = int(os.environ["LOCAL_RANK"])
+    torch.cuda.set_device(local_rank)
+    dist.init_process_group(backend="nccl")
+    return DistributedInfo(
+        enabled=True,
+        rank=dist.get_rank(),
+        world_size=dist.get_world_size(),
+        local_rank=local_rank,
+    )
+
+
+def teardown_distributed(dinfo: DistributedInfo) -> None:
+    if dinfo.enabled:
+        dist.destroy_process_group()
 
 
 def build_model(model_config: GPTConfig) -> GPT:
@@ -27,67 +66,30 @@ def resolve_pretrained_checkpoint(model_path: str | None, latest: bool) -> Path:
         if path.exists():
             return path
         raise FileNotFoundError(f"Checkpoint not found: {path}")
-
     if not latest:
         raise ValueError("Either --model or --latest-pretrain must be specified")
-
     pretrain_dirs = sorted(
         (ARTIFACTS_DIR / "pretrain").iterdir(),
         key=lambda p: p.stat().st_mtime,
         reverse=True,
     )
-
     for d in pretrain_dirs:
         model_file = d / "model.pt"
         if model_file.exists():
             return model_file
-
     raise FileNotFoundError(
         f"No pretrained checkpoint found in {ARTIFACTS_DIR / 'pretrain'}. "
         "Run pretrain first or specify --model."
     )
 
 
-def evaluate_loss(
-    model,
-    dataset_path: Path | list[Path],
-    batch_size: int,
-    num_workers: int,
-    device: str,
-) -> float:
-    eval_dataset = ChessDataset(dataset_path)
-    collate = make_collate_fn()
-    loader = torch.utils.data.DataLoader(
-        eval_dataset,
-        shuffle=False,
-        pin_memory=(device == "cuda"),
-        batch_size=batch_size,
-        num_workers=num_workers,
-        collate_fn=collate,
-    )
-
-    model.eval()
-    total_loss = 0.0
-    total_tokens = 0
-    with torch.inference_mode():
-        for x, y in loader:
-            x = x.to(device, non_blocking=True)
-            y = y.to(device, non_blocking=True)
-            _, loss = model(x, y, ignore_index=LOSS_IGNORE_INDEX)
-            valid_tokens = (y != LOSS_IGNORE_INDEX).sum().item()
-            total_loss += float(loss.item()) * valid_tokens
-            total_tokens += valid_tokens
-    model.train()
-    if total_tokens == 0:
-        raise ValueError("Eval dataset has no valid tokens")
-    return total_loss / total_tokens
-
-
-def setup_runtime() -> tuple[
-    torch.device, torch.dtype, AbstractContextManager, torch.amp.GradScaler
-]:
-    """Build common runtime objects used by training scripts."""
-    if torch.cuda.is_available():
+def setup_runtime(
+    *,
+    device: torch.device | None = None,
+) -> tuple[torch.device, torch.dtype, AbstractContextManager, torch.amp.GradScaler]:
+    if device is not None:
+        selected_device = device
+    elif torch.cuda.is_available():
         selected_device = torch.device("cuda")
     elif torch.backends.mps.is_available():
         selected_device = torch.device("mps")
@@ -111,23 +113,12 @@ def setup_runtime() -> tuple[
 
 
 def cosine_warmup_lr(iter_num: int, train_config: TrainConfig) -> float:
-    """Cosine annealing learning rate schedule with warmup.
-
-    Args:
-        iter_num: Current iteration number.
-        train_config: Config object with learning_rate, min_lr, warmup_iters, max_iters.
-
-    Returns:
-        The learning rate for the current iteration.
-    """
     if train_config.warmup_iters <= 0:
         raise ValueError(f"warmup_iters must be positive, got {train_config.warmup_iters}")
     if iter_num < train_config.warmup_iters:
         return train_config.learning_rate * iter_num / train_config.warmup_iters
-
     if iter_num > train_config.max_iters:
         return train_config.min_lr
-
     if train_config.max_iters <= train_config.warmup_iters:
         raise ValueError(
             f"max_iters ({train_config.max_iters}) must be greater than "
@@ -137,14 +128,21 @@ def cosine_warmup_lr(iter_num: int, train_config: TrainConfig) -> float:
         train_config.max_iters - train_config.warmup_iters
     )
     assert 0 <= decay_ratio <= 1
-
     coeff = 0.5 * (1.0 + math.cos(math.pi * decay_ratio))
     return train_config.min_lr + coeff * (train_config.learning_rate - train_config.min_lr)
 
 
 def unwrap_model(model: torch.nn.Module) -> torch.nn.Module:
-    """Unwrap compiled model to get original for saving weights."""
-    return model._orig_mod if hasattr(model, "_orig_mod") else model
+    m: torch.nn.Module = model
+    while True:
+        if isinstance(m, DDP):
+            m = m.module
+            continue
+        if hasattr(m, "_orig_mod"):
+            m = m._orig_mod  # type: ignore[assignment]
+            continue
+        break
+    return m
 
 
 def save_model_state(
@@ -153,7 +151,6 @@ def save_model_state(
     *,
     move_vocab_path: Path | None = None,
 ) -> None:
-    """Save model state_dict and the generated move vocabulary when supplied."""
     out_path.parent.mkdir(parents=True, exist_ok=True)
     raw_model = unwrap_model(model)
     torch.save(raw_model.state_dict(), out_path)
@@ -176,27 +173,11 @@ def run_supervised_training(
     eval_fn: Callable[[torch.nn.Module, int], dict[str, Any]],
     eval_log_fn: Callable[[int, dict[str, Any]], None],
     val_loader: Iterable,
+    dist_info: DistributedInfo | None = None,
+    train_sampler: Any | None = None,
 ):
-    """Run a standard autoregressive supervised training loop.
-
-    Args:
-        model: The PyTorch model to train.
-        optimizer: The optimizer.
-        train_loader: DataLoader for training data.
-        train_config: Training configuration (max_iters, grad_clip, log_interval, eval_interval).
-        device: Device to train on.
-        ctx: Autocast context.
-        scaler: Gradient scaler.
-        lr_fn: Learning rate schedule function (iter_num -> lr).
-        desc: Description for progress bar.
-        log_fn: Optional callback (iter_num, last_loss_value, epoch_float) for custom logging.
-        eval_fn: Callback (model, iter_num) -> dict of eval metrics.
-        eval_log_fn: Callback to log eval metrics.
-        val_loader: DataLoader for validation data.
-
-    Returns:
-        The last loss value observed during training.
-    """
+    dinfo = dist_info or DistributedInfo(False, 0, 1, 0)
+    master = dinfo.is_master
     max_iters = train_config.max_iters
     steps_per_epoch = train_config.steps_per_epoch
     grad_clip = train_config.grad_clip
@@ -210,10 +191,14 @@ def run_supervised_training(
         desc=f"{desc} (~{est_epochs:.2f} ep)",
         unit="iter",
         dynamic_ncols=True,
+        disable=not master,
     )
 
     model.train()
+    epoch = 0
     while iter_num < max_iters:
+        if train_sampler is not None:
+            train_sampler.set_epoch(epoch)
         for x, y in train_loader:
             lr = lr_fn(iter_num)
             for param_group in optimizer.param_groups:
@@ -236,8 +221,7 @@ def run_supervised_training(
             scaler.update()
             optimizer.zero_grad(set_to_none=True)
 
-            # logging training metrics
-            if iter_num % log_interval == 0:
+            if master and iter_num % log_interval == 0:
                 epoch_float = iter_num / max(steps_per_epoch, 1)
                 pbar.set_postfix(
                     loss=f"{loss.item():.4f}",
@@ -247,22 +231,21 @@ def run_supervised_training(
                 if log_fn is not None:
                     log_fn(iter_num, last_loss_value, epoch_float)
 
-            # running evaluation and logging eval metrics
-            if iter_num % eval_interval == 0:
+            if master and iter_num % eval_interval == 0:
                 raw_model = unwrap_model(model)
                 raw_model.eval()
-                val_loss_sum = 0.0
-                val_batches = 0
                 with torch.inference_mode():
-                    for x_val, y_val in val_loader:
-                        x_val = x_val.to(device, non_blocking=True)
-                        y_val = y_val.to(device, non_blocking=True)
-                        _, loss = raw_model(x_val, y_val, ignore_index=LOSS_IGNORE_INDEX)
-                        val_loss_sum += loss.item()
-                        val_batches += 1
+                    val_losses = [
+                        raw_model(
+                            xv.to(device, non_blocking=True),
+                            yv.to(device, non_blocking=True),
+                            ignore_index=LOSS_IGNORE_INDEX,
+                        )[1].item()
+                        for xv, yv in val_loader
+                    ]
                 raw_model.train()
-
-                eval_metrics = {"val_loss": val_loss_sum / val_batches}
+                n_val = len(val_losses)
+                eval_metrics = {"val_loss": sum(val_losses) / n_val if n_val else float("nan")}
                 eval_metrics.update(eval_fn(model, iter_num))
                 eval_log_fn(iter_num, eval_metrics)
 
@@ -270,10 +253,11 @@ def run_supervised_training(
             iter_num += 1
             if iter_num >= max_iters:
                 break
+        epoch += 1
 
     pbar.close()
-
-    final_metrics = eval_fn(model, iter_num)
-    eval_log_fn(iter_num, final_metrics)
-
+    if master:
+        eval_log_fn(iter_num, eval_fn(model, iter_num))
+    if dinfo.enabled:
+        dist.barrier()
     return last_loss_value

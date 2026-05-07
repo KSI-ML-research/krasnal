@@ -68,6 +68,8 @@ just pretrain model=large train=cuda
 - `model` - model size (small, medium, large)
 - `train` - training backend (cuda, mps, cpu)
 
+**Multi-GPU** (`torchrun`): use one process per GPU, e.g. `torchrun --standalone --nproc_per_node=2 $(which uv) run scripts/training/pretrain.py ...`. Config `train.batch_size` is **per GPU**; effective batch size is `batch_size × world_size`. W&B, checkpoint writes, and eval games run on rank 0 only.
+
 **Output:** Model checkpoints in `artifacts/pretrain/`
 
 Pretraining reads `data/2_tokenized/move_vocab.json` directly. It fails before training if the file is missing or if `piece_aware_moves` / `side_prefixed_moves` do not match the manifest.

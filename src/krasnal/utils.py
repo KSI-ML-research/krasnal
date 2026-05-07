@@ -91,6 +91,19 @@ def format_eval_metric_key(key: str) -> str:
     return f"eval/game/{key}"
 
 
+def log_eval_metrics_to_wandb(metrics: dict[str, Any], *, step: int | None = None) -> None:
+    payload = {format_eval_metric_key(k): v for k, v in metrics.items()}
+    qa_key = "qa/what_is_on/accuracy_matrix"
+    if qa_key in metrics:
+        heatmap = metrics[qa_key]
+        payload[format_eval_metric_key(qa_key)] = heatmap
+        wandb.run.summary["eval/qa/what_is_on/accuracy_matrix"] = heatmap  # type: ignore[index]
+    if step is None:
+        wandb.log(payload)
+    else:
+        wandb.log(payload, step=step)
+
+
 REQUIRED_CONFIG_KEYS = {"block_size", "n_layer", "n_head", "n_embd"}
 
 

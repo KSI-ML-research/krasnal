@@ -5,7 +5,7 @@ from pathlib import Path
 import torch
 
 from krasnal.config import TrainConfig
-from krasnal.trainer import save_model_state
+from krasnal.trainer import DistributedInfo, save_model_state
 
 _MODULE_PATH = Path(__file__).resolve().parents[1] / "scripts" / "training" / "sft_train.py"
 _SPEC = util.spec_from_file_location("sft_train_module", _MODULE_PATH)
@@ -103,6 +103,7 @@ def test_build_run_config_includes_move_vocab_flags():
         normal_dataset_path=Path(cfg.normal_dataset),
         vocab_size=32,
         total_iters=17,
+        dist_info=DistributedInfo(False, 0, 1, 0),
     )
 
     assert run_config["piece_aware_moves"] is True
