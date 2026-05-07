@@ -4,6 +4,7 @@ from typing import Any
 import plotly.graph_objects as go
 import torch
 from loguru import logger
+from omegaconf import OmegaConf
 
 import wandb
 from krasnal.dataset import ChessDataset
@@ -35,7 +36,7 @@ from krasnal.utils import set_seed
 
 from .metrics import METRIC_REGISTRY
 from .metrics.context import EvalContext
-from .stockfish import StockfishClient
+from .stockfish import StockfishClient, get_stockfish_client
 
 
 class ChessEvaluator:
@@ -580,3 +581,16 @@ class ChessEvaluator:
     @staticmethod
     def _extract_generated_think_tokens(tokens: list[int]) -> list[int]:
         return extract_think_tokens(tokens)
+
+
+def chess_evaluator_from_config(
+    cfg: Any, *, metrics: list[str], cot: bool = False
+) -> ChessEvaluator:
+    return ChessEvaluator(
+        metrics=metrics,
+        cot=cot,
+        stockfish=get_stockfish_client(depth=cfg.eval.stockfish.depth),
+        seed=cfg.seed,
+        acpl_sample_size=cfg.eval.stockfish.acpl_sample_size,
+        qa_config=OmegaConf.to_container(cfg.eval.qa, resolve=True),
+    )

@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-05-07
+
+- Optional NCCL DDP for pretrain and SFT: use `torchrun` with `WORLD_SIZE>1`; single-process runs unchanged. `train.batch_size` is per GPU when distributed.
+
 ## 2026-05-06
 
 *Squashed changes from 2026-04-28 - 2026-05-06*

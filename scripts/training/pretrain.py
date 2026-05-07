@@ -4,7 +4,9 @@ from datetime import datetime
 import hydra
 import torch
 from omegaconf import DictConfig, OmegaConf
+from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data import DataLoader
+from torch.utils.data.distributed import DistributedSampler
 
 import wandb
 from krasnal.config import (
@@ -16,19 +18,22 @@ from krasnal.config import (
     TrainConfig,
 )
 from krasnal.dataset import ChessDataset, make_collate_fn
-from krasnal.eval import ChessEvaluator, get_stockfish_client
+from krasnal.eval import chess_evaluator_from_config
 from krasnal.tokens import get_vocab_size, load_move_vocab
 from krasnal.trainer import (
+    DistributedInfo,
     build_model,
     cosine_warmup_lr,
     run_supervised_training,
     save_model_state,
+    setup_distributed,
     setup_runtime,
+    teardown_distributed,
     unwrap_model,
 )
 from krasnal.utils import (
-    format_eval_metric_key,
     init_wandb,
+    log_eval_metrics_to_wandb,
     print_model_config,
     save_wandb_run,
     set_seed,
@@ -39,6 +44,14 @@ torch.set_float32_matmul_precision("high")
 
 @hydra.main(version_base=None, config_path="../../config", config_name="pretrain")
 def main(cfg: DictConfig) -> None:
+    dist_info = setup_distributed()
+    try:
+        _main(cfg, dist_info)
+    finally:
+        teardown_distributed(dist_info)
+
+
+def _main(cfg: DictConfig, dist_info: DistributedInfo) -> None:
     piece_aware_moves = bool(cfg.get("piece_aware_moves", False))
     side_prefixed_moves = bool(cfg.get("side_prefixed_moves", True))
     load_move_vocab(
@@ -46,7 +59,7 @@ def main(cfg: DictConfig) -> None:
         piece_aware_moves=piece_aware_moves,
         side_prefixed_moves=side_prefixed_moves,
     )
-    set_seed(cfg.seed)
+    set_seed(cfg.seed + dist_info.rank)
 
     if not PRETRAIN_DATASET_PATH.exists():
         raise FileNotFoundError(
@@ -66,54 +79,60 @@ def main(cfg: DictConfig) -> None:
     if tconf.epochs <= 0:
         raise ValueError("TrainConfig.epochs must be > 0")
 
-    device, dtype, ctx, scaler = setup_runtime()
+    train_device = torch.device("cuda", dist_info.local_rank) if dist_info.enabled else None
+    device, dtype, ctx, scaler = setup_runtime(device=train_device)
 
     params_M = model.get_num_params() / 1_000_000
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    artifact_dir = ARTIFACTS_DIR / "pretrain" / timestamp
-    artifact_dir.mkdir(parents=True, exist_ok=True)
+    artifact_dir = None
+    wandb_run_url = ""
+    wandb_config: dict = {}
 
-    wandb_config = {
-        "stage": "pretrain",
-        "params_M": params_M,
-        "vocab_size": vocab_size,
-        "block_size": mconf.block_size,
-        "n_layer": mconf.n_layer,
-        "n_head": mconf.n_head,
-        "n_embd": mconf.n_embd,
-        "dropout": mconf.dropout,
-        "epochs": tconf.epochs,
-        "batch_size": tconf.batch_size,
-        "learning_rate": tconf.learning_rate,
-        "seed": cfg.seed,
-        "piece_aware_moves": piece_aware_moves,
-        "side_prefixed_moves": side_prefixed_moves,
-        "gpt_model_name": cfg.model.get("name", "custom"),
-        "move_vocab_path": str(MOVE_VOCAB_PATH),
-        "dataset_mtime": dataset_mtime,
-        "dataset_size": len(train_dataset),
-        "model_repr": repr(model),
-    }
+    if dist_info.is_master:
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        artifact_dir = ARTIFACTS_DIR / "pretrain" / timestamp
+        artifact_dir.mkdir(parents=True, exist_ok=True)
+        wandb_config = {
+            "stage": "pretrain",
+            "params_M": params_M,
+            "vocab_size": vocab_size,
+            "block_size": mconf.block_size,
+            "n_layer": mconf.n_layer,
+            "n_head": mconf.n_head,
+            "n_embd": mconf.n_embd,
+            "dropout": mconf.dropout,
+            "epochs": tconf.epochs,
+            "batch_size": tconf.batch_size,
+            "learning_rate": tconf.learning_rate,
+            "seed": cfg.seed,
+            "piece_aware_moves": piece_aware_moves,
+            "side_prefixed_moves": side_prefixed_moves,
+            "gpt_model_name": cfg.model.get("name", "custom"),
+            "move_vocab_path": str(MOVE_VOCAB_PATH),
+            "dataset_mtime": dataset_mtime,
+            "dataset_size": len(train_dataset),
+            "model_repr": repr(model),
+            "world_size": dist_info.world_size,
+            "ddp": dist_info.enabled,
+        }
+        run_id, entity, project = init_wandb(
+            project=cfg.wandb_project,
+            config=wandb_config,
+            stage="pretrain",
+        )
+        wandb_run_url = f"https://wandb.ai/{entity}/{project}/runs/{run_id}"
 
-    run_id, entity, project = init_wandb(
-        project=cfg.wandb_project,
-        config=wandb_config,
-        stage="pretrain",
-    )
-    wandb_run_url = f"https://wandb.ai/{entity}/{project}/runs/{run_id}"
-
-    print_model_config(
-        stage="Pretrain",
-        params_m=params_M,
-        dataset_size=len(train_dataset),
-        dataset_label="games",
-        config=mconf,
-        vocab_size=vocab_size,
-        device=device,
-        dtype=dtype,
-        compile_enabled=tconf.compile,
-        artifact_dir=artifact_dir,
-    )
+        print_model_config(
+            stage="Pretrain",
+            params_m=params_M,
+            dataset_size=len(train_dataset),
+            dataset_label="games",
+            config=mconf,
+            vocab_size=vocab_size,
+            device=device,
+            dtype=dtype,
+            compile_enabled=tconf.compile,
+            artifact_dir=artifact_dir,
+        )
 
     optimizer = model.configure_optimizers(
         weight_decay=tconf.weight_decay,
@@ -123,7 +142,6 @@ def main(cfg: DictConfig) -> None:
     )
 
     model.to(device)
-
     if tconf.compile and device.type == "cuda":
         model = torch.compile(
             model,
@@ -131,10 +149,24 @@ def main(cfg: DictConfig) -> None:
             dynamic=tconf.compile_dynamic,
             fullgraph=tconf.compile_fullgraph,
         )
+    if dist_info.enabled:
+        model = DDP(model, device_ids=[dist_info.local_rank])
 
+    train_sampler = (
+        DistributedSampler(
+            train_dataset,
+            num_replicas=dist_info.world_size,
+            rank=dist_info.rank,
+            shuffle=True,
+            seed=cfg.seed,
+        )
+        if dist_info.enabled
+        else None
+    )
     train_loader = DataLoader(
         train_dataset,
-        shuffle=True,
+        shuffle=train_sampler is None,
+        sampler=train_sampler,
         pin_memory=tconf.pin_memory,
         batch_size=tconf.batch_size,
         num_workers=tconf.num_workers,
@@ -162,29 +194,18 @@ def main(cfg: DictConfig) -> None:
         collate_fn=collate,
     )
 
-    stockfish = get_stockfish_client(depth=cfg.eval.stockfish.depth)
-    evaluator = ChessEvaluator(
-        metrics=list(cfg.eval.metrics),
-        stockfish=stockfish,
-        seed=cfg.seed,
-        acpl_sample_size=cfg.eval.stockfish.acpl_sample_size,
-        qa_config=OmegaConf.to_container(cfg.eval.qa, resolve=True),
+    evaluator = (
+        chess_evaluator_from_config(cfg, metrics=list(cfg.eval.metrics))
+        if dist_info.is_master
+        else None
     )
     eval_device = torch.device(device)
 
     def eval_fn(model, _iter_num):
         raw_model = unwrap_model(model)
+        if evaluator is None:
+            return {}
         return evaluator.evaluate(raw_model, eval_dataset, tconf.eval_num_games, eval_device)
-
-    def eval_log_fn(_iter_num, metrics):
-        payload = {}
-        for k, v in metrics.items():
-            payload[format_eval_metric_key(k)] = v
-        if "qa/what_is_on/accuracy_matrix" in metrics:
-            heatmap = metrics["qa/what_is_on/accuracy_matrix"]
-            payload[format_eval_metric_key("qa/what_is_on/accuracy_matrix")] = heatmap
-            wandb.run.summary["eval/qa/what_is_on/accuracy_matrix"] = heatmap  # type: ignore[index]
-        wandb.log(payload)
 
     run_supervised_training(
         model=model,
@@ -198,24 +219,28 @@ def main(cfg: DictConfig) -> None:
         desc="train",
         log_fn=log_fn,
         eval_fn=eval_fn,
-        eval_log_fn=eval_log_fn,
+        eval_log_fn=lambda _i, m: log_eval_metrics_to_wandb(m),
         val_loader=val_loader,
+        dist_info=dist_info,
+        train_sampler=train_sampler,
     )
 
-    print("Training finished.")
-    model_path = artifact_dir / "model.pt"
-    save_model_state(unwrap_model(model), model_path, move_vocab_path=MOVE_VOCAB_PATH)
-    print(f"Model saved to {model_path}")
+    if dist_info.is_master:
+        print("Training finished.")
+        assert artifact_dir is not None
+        model_path = artifact_dir / "model.pt"
+        save_model_state(unwrap_model(model), model_path, move_vocab_path=MOVE_VOCAB_PATH)
+        print(f"Model saved to {model_path}")
 
-    save_wandb_run(
-        artifact_dir=artifact_dir,
-        run_config=wandb_config,
-        wandb_run_url=wandb_run_url,
-        artifact_name="pretrain",
-        artifact_type="model",
-    )
+        save_wandb_run(
+            artifact_dir=artifact_dir,
+            run_config=wandb_config,
+            wandb_run_url=wandb_run_url,
+            artifact_name="pretrain",
+            artifact_type="model",
+        )
 
-    wandb.finish()
+        wandb.finish()
 
 
 if __name__ == "__main__":
