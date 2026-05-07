@@ -36,10 +36,10 @@ metrics:
   - illegal_mass_when_gives_check
   - illegal_mass_when_in_check
 
-  - acpl
-  - blunder_rate
+  # - acpl
+  # - blunder_rate
   - mrr
-  - stockfish_top1
+  # - stockfish_top1
 
   # - target_piece_acc
   # - target_piece_top1_legal
