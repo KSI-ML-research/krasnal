@@ -7,7 +7,7 @@ qa:
     enabled: true
     confusion_matrix: false
   piece_type_moved:
-    enabled: true
+    enabled: false
     f1_per_piece: false
     confusion_matrix: false
   what_is_on:
