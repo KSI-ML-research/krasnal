@@ -14,6 +14,7 @@ _SPEC.loader.exec_module(_MODULE)
 
 _compute_check_qa_probs = _MODULE._compute_check_qa_probs
 build_move_vocab_from_corpus = _MODULE.build_move_vocab_from_corpus
+_resolve_preprocess_workers = _MODULE._resolve_preprocess_workers
 
 
 def test_compute_check_qa_probs_balances_yes_no_average():
@@ -74,3 +75,13 @@ def test_build_move_vocab_from_corpus_fails_on_malformed_piece_moved(tmp_path):
             side_prefixed_moves=True,
             output_path=tmp_path / "move_vocab.json",
         )
+
+
+def test_resolve_preprocess_workers_allows_explicit_worker_count():
+    assert _resolve_preprocess_workers({"preprocess_workers": 24}, shard_count=3) == 24
+
+
+def test_resolve_preprocess_workers_caps_auto_mode_at_eight(monkeypatch):
+    monkeypatch.setattr(_MODULE.os, "cpu_count", lambda: 64)
+
+    assert _resolve_preprocess_workers({"preprocess_workers": 0}, shard_count=32) == 8
