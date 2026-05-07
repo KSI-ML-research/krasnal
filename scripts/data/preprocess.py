@@ -665,6 +665,13 @@ def one_row_one_game(lazy_df: pl.LazyFrame, block_size: int) -> pl.LazyFrame:
     return lazy_df.select(pl.col("token_ids").list.slice(0, window_size).alias("token_ids"))
 
 
+def _resolve_preprocess_workers(cfg: DictConfig, shard_count: int) -> int:
+    workers_cfg = int(cfg.get("preprocess_workers", 0) or 0)
+    if workers_cfg > 0:
+        return workers_cfg
+    return min(min(shard_count, os.cpu_count() or 1), 8)
+
+
 @hydra.main(version_base=None, config_path="../../config", config_name="preprocess")
 def main(cfg: DictConfig) -> None:
     piece_aware_moves = bool(cfg.get("piece_aware_moves", False))
@@ -725,10 +732,7 @@ def main(cfg: DictConfig) -> None:
     temp_dir.mkdir(parents=True, exist_ok=True)
 
     total_games = 0
-    workers_cfg = int(cfg.get("preprocess_workers", 0) or 0)
-    max_workers = min(
-        workers_cfg if workers_cfg > 0 else min(len(parquet_files), os.cpu_count() or 1), 8
-    )
+    max_workers = _resolve_preprocess_workers(cfg, len(parquet_files))
     logger.info("Processing {} shards with {} workers", len(parquet_files), max_workers)
 
     with ProcessPoolExecutor(
