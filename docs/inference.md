@@ -80,3 +80,5 @@ struct StatelessBatchInferenceSession {
 - **`Game`**: Owns prompt metadata, board state, move history, and token list. If the game exists, its internal state is perfectly synchronized and legal. Mutations fail if they break these invariants.
 - **`InferenceSession`**: Handles tensorization, window truncation, optional KV-caching, and legality masking (masking illegal move logits to `-inf`).
 - **`Model`**: Owns NN weights and computation. Strictly avoids token decoding, board state, or move validation logic.
+- **Vocabulary**: Model artifacts carry `move_vocab.json`. Inference loads it at startup and verifies that `piece_aware_moves` and `side_prefixed_moves` match the artifact config before play begins.
+- **Failure handling**: unrecoverable provider/model errors are converted to a UCI resignation (`bestmove resign`) instead of guessing from a corrupted state.

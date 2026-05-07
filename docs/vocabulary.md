@@ -18,40 +18,38 @@ ELO tokens control model difficulty level.
 
 ## UCI Move Tokens
 
-By default, UCI moves use format `w:e2e4` for white and `b:e7e5` for black.
+Default (side-prefixed & piece-aware): `w:pawn:e2e4`, `b:knight:g8f6`
+Ablations:
+- `side_prefixed_moves: false` → `pawn:e2e4`, `knight:g8f6` (no side prefix)
+- `piece_aware_moves: false` → `w:e2e4`, `b:g8f6` (no piece type)
+Promotion suffixes remain in UCI string (e.g., `e7e8q` ≠ `e7e8r`)
 
-White: `w:e2e4`, `w:d2d4`, ...
-Black: `b:e7e5`, `b:d7d5`, ...
+## Generated Move Vocabulary
 
-For ablations, `side_prefixed_moves: false` switches to a shared move vocabulary without side prefix:
+Preprocessing builds `data/2_tokenized/move_vocab.json` from the full `data/1_filtered/` corpus before the train/eval split. Move token strings are sorted before IDs are assigned, so IDs are deterministic for a fixed corpus and config.
 
-`e2e4`, `e7e5`, ...
+The file is the source of truth for move IDs during preprocessing, pretraining, and inference. It has:
+- `manifest`: `piece_aware_moves`, `side_prefixed_moves`, `generation_timestamp`, `vocab_size`
+- `vocab`: token string to integer ID mapping, including special tokens and generated move tokens
 
-## Annotation Tokens
+`just preprocess` always overwrites this file. `just pretrain` and model inference fail at startup if the runtime config does not match the manifest.
 
-Annotation tokens help the model learn chess rules and board representation during the training.
+## Q&A Tokens
 
-`<is_check>` asks if the just-played move gives check.
+Q&A tokens help the model learn chess rules and board representation during training.
 
-`<yes_check>`, `<no_check>` are answer tokens.
+Question tokens (loss-masked):
+- `<is_check>` → answers: `<yes_check>`, `<no_check>`
+- `<piece_type_moved>` → answers: `<pawn>`, `<knight>`, `<bishop>`, `<rook>`, `<queen>`, `<king>`
 
-`<piece_type_moved>` asks what piece type just moved.
+Training format examples:
+- `... w:h5f7 <is_check> <yes_check> ...`
+- `... b:a7a6 <is_check> <no_check> ...`
+- `... w:e2e4 <piece_type_moved> <pawn> ...`
 
-`<pawn>`, `<knight>`, `<bishop>`, `<rook>`, `<queen>`, `<king>` are answer tokens.
-
-Training format around a move can be:
-
-`... w:h5f7 <is_check> <yes_check> ...`
-
-or
-
-`... b:a7a6 <is_check> <no_check> ...`
-
-`... w:e2e4 <piece_type_moved> <pawn> ...`
-
-Question tokens are loss-masked, so model learns answers and chess continuation, not question timing.
-
-`<whats_on_a1>` ... `<whats_on_h8>` — merged prompts ("what is on square XX?"). Answers are `<empty>` or `<w:pawn>` ... `<b:king>`. During preprocessing and eval, which square is asked is drawn deterministically from **post-move FEN**, a **per-game key** (same space-separated UCI string as dataset `uci_moves`), **ply**, and the run **seed**.
+Square queries:
+- `<whats_on_a1>` ... `<whats_on_h8>` — answers: `<empty>` or `<w:pawn>` ... `<b:king>`
+- During preprocessing/eval, square is drawn from post-move FEN, per-game key (space-separated UCI string), ply, and run seed
 
 ## CoT Tokens (future)
 

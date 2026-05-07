@@ -8,7 +8,7 @@ qa:
     enabled: true
     prob: 0.5
   piece_type_moved:
-    enabled: true
+    enabled: false
     king_base_prob: 0.1
   what_is_on:
     enabled: true

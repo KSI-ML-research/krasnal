@@ -1,4 +1,5 @@
 import math
+import shutil
 from collections.abc import Callable, Iterable
 from contextlib import AbstractContextManager, nullcontext
 from pathlib import Path
@@ -8,9 +9,10 @@ import torch
 from tqdm.auto import tqdm
 
 from krasnal.config import ARTIFACTS_DIR, GPTConfig, TrainConfig
-from krasnal.dataset import LOSS_IGNORE_INDEX, ChessDataset, make_collate_fn
+from krasnal.dataset import ChessDataset, make_collate_fn
 from krasnal.model import GPT
-from krasnal.tokens import get_vocab_size, save_to_json
+from krasnal.supervised_target_mask import LOSS_IGNORE_INDEX
+from krasnal.tokens import get_vocab_size
 
 
 def build_model(model_config: GPTConfig) -> GPT:
@@ -145,12 +147,18 @@ def unwrap_model(model: torch.nn.Module) -> torch.nn.Module:
     return model._orig_mod if hasattr(model, "_orig_mod") else model
 
 
-def save_model_state(model: torch.nn.Module, out_path: Path) -> None:
-    """Save model state_dict and vocabulary."""
+def save_model_state(
+    model: torch.nn.Module,
+    out_path: Path,
+    *,
+    move_vocab_path: Path | None = None,
+) -> None:
+    """Save model state_dict and the generated move vocabulary when supplied."""
     out_path.parent.mkdir(parents=True, exist_ok=True)
     raw_model = unwrap_model(model)
     torch.save(raw_model.state_dict(), out_path)
-    save_to_json(out_path.parent / "vocab.json")
+    if move_vocab_path is not None:
+        shutil.copyfile(move_vocab_path, out_path.parent / "move_vocab.json")
 
 
 def run_supervised_training(

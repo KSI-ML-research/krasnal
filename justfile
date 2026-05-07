@@ -24,8 +24,6 @@ LICHESS_BOT_REF := "96a8f74d87a42db8039e847548fec0d9528bb079"
     @echo "  just download-games [target=5000000] - download & filter Aix DB (DuckDB)"
     @echo "  just preprocess [args]                - tokenize Aix-filtered games for training"
     @echo "  just pretrain model=large train=cuda  - run pretraining stage"
-    @echo "  just generate-sft-cot [args]          - generate CoT shards"
-    @echo "  just train-sft-cot [args]             - train offline SFT on CoT shards"
 
 # Install dependencies and setup pre-commit hooks
 setup:
@@ -79,13 +77,6 @@ preprocess *args:
 pretrain *args:
     uv run scripts/training/pretrain.py {{args}} seed={{SEED}}
 
-# Stage 2a: Generate CoT shards for offline training
-generate-sft-cot *args:
-    uv run scripts/training/sft_generate.py {{args}} stockfish_path="$(which stockfish)" seed={{SEED}}
-
-# Stage 2b: Consume generated shards in an offline SFT pass
-train-sft-cot *args:
-    uv run scripts/training/sft_train.py {{args}} seed={{SEED}} latest_pretrain=true
 
 # Download and setup lichess-bot client
 bot-setup:
@@ -143,3 +134,6 @@ bot-clean:
 # Remvoe dataset hf-cache
 hf-cache-clean:
     hf cache rm dataset/thomasd1/aix-lichess-database -y
+
+clean:
+    rm -rf *.log wandb/ artifacts/ outputs/ .uv_cache/ .hf_cache/ .hydra/ .ruff_cache/ .pytest_cache

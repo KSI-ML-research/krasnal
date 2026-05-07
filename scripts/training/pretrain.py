@@ -10,13 +10,14 @@ import wandb
 from krasnal.config import (
     ARTIFACTS_DIR,
     EVAL_DATASET_PATH,
+    MOVE_VOCAB_PATH,
     PRETRAIN_DATASET_PATH,
     GPTConfig,
     TrainConfig,
 )
 from krasnal.dataset import ChessDataset, make_collate_fn
 from krasnal.eval import ChessEvaluator, get_stockfish_client
-from krasnal.tokens import get_vocab_size, set_side_prefixed_moves
+from krasnal.tokens import get_vocab_size, load_move_vocab
 from krasnal.trainer import (
     build_model,
     cosine_warmup_lr,
@@ -38,7 +39,13 @@ torch.set_float32_matmul_precision("high")
 
 @hydra.main(version_base=None, config_path="../../config", config_name="pretrain")
 def main(cfg: DictConfig) -> None:
-    set_side_prefixed_moves(bool(cfg.get("side_prefixed_moves", True)))
+    piece_aware_moves = bool(cfg.get("piece_aware_moves", False))
+    side_prefixed_moves = bool(cfg.get("side_prefixed_moves", True))
+    load_move_vocab(
+        MOVE_VOCAB_PATH,
+        piece_aware_moves=piece_aware_moves,
+        side_prefixed_moves=side_prefixed_moves,
+    )
     set_seed(cfg.seed)
 
     if not PRETRAIN_DATASET_PATH.exists():
@@ -79,7 +86,10 @@ def main(cfg: DictConfig) -> None:
         "batch_size": tconf.batch_size,
         "learning_rate": tconf.learning_rate,
         "seed": cfg.seed,
+        "piece_aware_moves": piece_aware_moves,
+        "side_prefixed_moves": side_prefixed_moves,
         "gpt_model_name": cfg.model.get("name", "custom"),
+        "move_vocab_path": str(MOVE_VOCAB_PATH),
         "dataset_mtime": dataset_mtime,
         "dataset_size": len(train_dataset),
         "model_repr": repr(model),
@@ -194,7 +204,7 @@ def main(cfg: DictConfig) -> None:
 
     print("Training finished.")
     model_path = artifact_dir / "model.pt"
-    save_model_state(unwrap_model(model), model_path)
+    save_model_state(unwrap_model(model), model_path, move_vocab_path=MOVE_VOCAB_PATH)
     print(f"Model saved to {model_path}")
 
     save_wandb_run(

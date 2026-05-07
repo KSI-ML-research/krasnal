@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Iterable
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Final
+from typing import Any, Final
 
 import bulletchess
 
-from krasnal.config import MOVES_FILE
+from krasnal.config import MOVE_VOCAB_PATH
 
 GAME_START_ID = 0
 GAME_END_ID = 1
@@ -54,8 +56,23 @@ for _color in ["w", "b"]:
 
 WHITE_PREFIX = "w:"
 BLACK_PREFIX = "b:"
+PIECE_AWARE_MOVES_DEFAULT: Final[bool] = False
 SIDE_PREFIXED_MOVES_DEFAULT: Final[bool] = True
+PIECE_AWARE_MOVES = PIECE_AWARE_MOVES_DEFAULT
 SIDE_PREFIXED_MOVES = SIDE_PREFIXED_MOVES_DEFAULT
+
+PIECE_TYPE_ALIASES: Final[dict[str, tuple[str, ...]]] = {
+    "pawn": ("pawn", "p"),
+    "knight": ("knight", "n"),
+    "bishop": ("bishop", "b"),
+    "rook": ("rook", "r"),
+    "queen": ("queen", "q"),
+    "king": ("king", "k"),
+}
+PIECE_TYPES: Final[tuple[str, ...]] = tuple(PIECE_TYPE_ALIASES)
+PIECE_TYPE_LOOKUP: Final[dict[str, str]] = {
+    alias: canonical for canonical, aliases in PIECE_TYPE_ALIASES.items() for alias in aliases
+}
 
 OUTCOME_TOKENS = {
     "<white_won>": WHITE_WON_ID,
@@ -122,40 +139,260 @@ SPECIAL_TOKENS = {
     **THINKING_TOKENS,
 }
 
-
-def _load_vocabulary(*, side_prefixed_moves: bool) -> tuple[dict[str, int], dict[int, str]]:
-    move_to_id = dict(SPECIAL_TOKENS)
-
-    with open(MOVES_FILE) as f:
-        all_uci_moves = [line.strip() for line in f if line.strip()]
-
-    next_id = max(SPECIAL_TOKENS.values()) + 1
-    for move in all_uci_moves:
-        if side_prefixed_moves:
-            move_to_id[WHITE_PREFIX + move] = next_id
-            next_id += 1
-            move_to_id[BLACK_PREFIX + move] = next_id
-        else:
-            move_to_id[move] = next_id
-        next_id += 1
-
-    id_to_move = {v: k for k, v in move_to_id.items()}
-    return move_to_id, id_to_move
-
-
-MOVE_TO_ID, ID_TO_MOVE = _load_vocabulary(side_prefixed_moves=SIDE_PREFIXED_MOVES)
+MOVE_TO_ID = dict(SPECIAL_TOKENS)
+ID_TO_MOVE = {v: k for k, v in MOVE_TO_ID.items()}
 VOCAB_SIZE = len(MOVE_TO_ID)
+MOVE_VOCAB_MANIFEST: dict[str, Any] | None = None
+MOVE_VOCAB_SOURCE_PATH: Path | None = None
 
 
-def set_side_prefixed_moves(enabled: bool) -> None:
-    global SIDE_PREFIXED_MOVES, VOCAB_SIZE
-    SIDE_PREFIXED_MOVES = bool(enabled)
-    move_to_id, id_to_move = _load_vocabulary(side_prefixed_moves=SIDE_PREFIXED_MOVES)
+def _now_timestamp() -> str:
+    return datetime.now(UTC).isoformat().replace("+00:00", "Z")
+
+
+def normalize_piece_type(piece_type: object) -> str:
+    if piece_type is None:
+        raise ValueError("piece_moved is missing")
+    normalized = str(piece_type).strip().lower()
+    if not normalized:
+        raise ValueError("piece_moved is empty")
+    try:
+        return PIECE_TYPE_LOOKUP[normalized]
+    except KeyError as exc:
+        raise ValueError(f"Unsupported piece_moved value: {piece_type!r}") from exc
+
+
+def _side_prefix_for(ply: int | None, turn: object | None) -> str:
+    if ply is not None and turn is not None:
+        raise ValueError("Provide either ply or turn, not both")
+    if ply is not None:
+        if ply < 0:
+            raise ValueError(f"ply must be >= 0, got {ply}")
+        return WHITE_PREFIX if ply % 2 == 0 else BLACK_PREFIX
+    if turn is None:
+        raise ValueError("side-prefixed move keys require ply or turn")
+
+    turn_str = str(turn).strip().lower()
+    if turn_str == "white":
+        return WHITE_PREFIX
+    if turn_str == "black":
+        return BLACK_PREFIX
+    raise ValueError(f"Unsupported board turn: {turn!r}")
+
+
+def build_move_key(
+    uci: str,
+    mover_piece_type: object,
+    *,
+    ply: int | None = None,
+    turn: object | None = None,
+    piece_aware_moves: bool | None = None,
+    side_prefixed_moves: bool | None = None,
+) -> str:
+    key = str(uci).strip()
+    if not key:
+        raise ValueError("uci move is empty")
+
+    use_piece_aware_moves = (
+        PIECE_AWARE_MOVES if piece_aware_moves is None else bool(piece_aware_moves)
+    )
+    use_side_prefix = (
+        SIDE_PREFIXED_MOVES if side_prefixed_moves is None else bool(side_prefixed_moves)
+    )
+
+    if use_piece_aware_moves:
+        key = f"{normalize_piece_type(mover_piece_type)}:{key}"
+    if use_side_prefix:
+        key = f"{_side_prefix_for(ply, turn)}{key}"
+    return key
+
+
+def _build_vocabulary(move_keys: Iterable[str]) -> dict[str, int]:
+    vocab = dict(SPECIAL_TOKENS)
+    next_id = max(SPECIAL_TOKENS.values()) + 1
+    for token in sorted(set(move_keys)):
+        if token in vocab:
+            raise ValueError(f"Move token collides with special token: {token}")
+        vocab[token] = next_id
+        next_id += 1
+    return vocab
+
+
+def make_move_vocab_artifact(
+    move_keys: Iterable[str],
+    *,
+    piece_aware_moves: bool,
+    side_prefixed_moves: bool,
+    generation_timestamp: str | None = None,
+) -> dict[str, Any]:
+    vocab = _build_vocabulary(move_keys)
+    return {
+        "manifest": {
+            "piece_aware_moves": bool(piece_aware_moves),
+            "side_prefixed_moves": bool(side_prefixed_moves),
+            "generation_timestamp": generation_timestamp or _now_timestamp(),
+            "vocab_size": len(vocab),
+        },
+        "vocab": vocab,
+    }
+
+
+def _validate_move_vocab_artifact(artifact: object) -> tuple[dict[str, Any], dict[str, int]]:
+    if not isinstance(artifact, dict):
+        raise ValueError("move_vocab.json must contain a JSON object")
+    if set(artifact) != {"manifest", "vocab"}:
+        raise ValueError("move_vocab.json must contain exactly 'manifest' and 'vocab'")
+
+    manifest = artifact["manifest"]
+    vocab = artifact["vocab"]
+    if not isinstance(manifest, dict):
+        raise ValueError("move_vocab.json manifest must be an object")
+    if not isinstance(vocab, dict):
+        raise ValueError("move_vocab.json vocab must be an object")
+
+    required_manifest_keys = {
+        "piece_aware_moves",
+        "side_prefixed_moves",
+        "generation_timestamp",
+        "vocab_size",
+    }
+    if set(manifest) != required_manifest_keys:
+        raise ValueError(
+            "move_vocab.json manifest must contain only: "
+            f"{', '.join(sorted(required_manifest_keys))}"
+        )
+
+    normalized_vocab: dict[str, int] = {}
+    seen_ids: set[int] = set()
+    for token, token_id in vocab.items():
+        if not isinstance(token, str):
+            raise ValueError(f"Vocabulary token must be a string, got {token!r}")
+        if not isinstance(token_id, int):
+            raise ValueError(f"Vocabulary id for {token!r} must be an integer")
+        if token_id in seen_ids:
+            raise ValueError(f"Duplicate vocabulary id: {token_id}")
+        seen_ids.add(token_id)
+        normalized_vocab[token] = token_id
+
+    for token, token_id in SPECIAL_TOKENS.items():
+        if normalized_vocab.get(token) != token_id:
+            raise ValueError(f"Vocabulary has invalid id for special token {token!r}")
+
+    manifest_vocab_size = manifest["vocab_size"]
+    if not isinstance(manifest_vocab_size, int):
+        raise ValueError("move_vocab.json manifest vocab_size must be an integer")
+    if manifest_vocab_size != len(normalized_vocab):
+        raise ValueError(
+            "move_vocab.json manifest vocab_size does not match vocab length: "
+            f"{manifest_vocab_size} != {len(normalized_vocab)}"
+        )
+    if not isinstance(manifest["piece_aware_moves"], bool):
+        raise ValueError("move_vocab.json manifest piece_aware_moves must be a boolean")
+    if not isinstance(manifest["side_prefixed_moves"], bool):
+        raise ValueError("move_vocab.json manifest side_prefixed_moves must be a boolean")
+    if not isinstance(manifest["generation_timestamp"], str):
+        raise ValueError("move_vocab.json manifest generation_timestamp must be a string")
+
+    return dict(manifest), normalized_vocab
+
+
+def _validate_manifest_match(
+    manifest: dict[str, Any],
+    *,
+    piece_aware_moves: bool,
+    side_prefixed_moves: bool,
+) -> None:
+    expected = {
+        "piece_aware_moves": bool(piece_aware_moves),
+        "side_prefixed_moves": bool(side_prefixed_moves),
+    }
+    actual = {
+        "piece_aware_moves": manifest["piece_aware_moves"],
+        "side_prefixed_moves": manifest["side_prefixed_moves"],
+    }
+    if actual != expected:
+        raise ValueError(
+            "move_vocab.json manifest does not match runtime config: "
+            f"expected {expected}, found {actual}"
+        )
+
+
+def install_move_vocab_artifact(
+    artifact: object,
+    *,
+    source_path: Path | None = None,
+    piece_aware_moves: bool | None = None,
+    side_prefixed_moves: bool | None = None,
+    require_manifest_match: bool = True,
+) -> None:
+    manifest, vocab = _validate_move_vocab_artifact(artifact)
+    expected_piece_aware_moves = (
+        manifest["piece_aware_moves"] if piece_aware_moves is None else bool(piece_aware_moves)
+    )
+    expected_side_prefixed = (
+        manifest["side_prefixed_moves"]
+        if side_prefixed_moves is None
+        else bool(side_prefixed_moves)
+    )
+    if require_manifest_match:
+        _validate_manifest_match(
+            manifest,
+            piece_aware_moves=expected_piece_aware_moves,
+            side_prefixed_moves=expected_side_prefixed,
+        )
+
+    global PIECE_AWARE_MOVES, SIDE_PREFIXED_MOVES, VOCAB_SIZE, MOVE_VOCAB_MANIFEST
+    global MOVE_VOCAB_SOURCE_PATH
+
+    PIECE_AWARE_MOVES = bool(manifest["piece_aware_moves"])
+    SIDE_PREFIXED_MOVES = bool(manifest["side_prefixed_moves"])
     MOVE_TO_ID.clear()
-    MOVE_TO_ID.update(move_to_id)
+    MOVE_TO_ID.update(vocab)
     ID_TO_MOVE.clear()
-    ID_TO_MOVE.update(id_to_move)
+    ID_TO_MOVE.update({v: k for k, v in vocab.items()})
     VOCAB_SIZE = len(MOVE_TO_ID)
+    MOVE_VOCAB_MANIFEST = manifest
+    MOVE_VOCAB_SOURCE_PATH = source_path
+
+
+def load_move_vocab(
+    path: Path = MOVE_VOCAB_PATH,
+    *,
+    piece_aware_moves: bool,
+    side_prefixed_moves: bool,
+) -> None:
+    if not path.exists():
+        raise FileNotFoundError(
+            f"Move vocabulary not found at {path}. Run preprocessing to generate it."
+        )
+    with path.open() as f:
+        artifact = json.load(f)
+    install_move_vocab_artifact(
+        artifact,
+        source_path=path,
+        piece_aware_moves=piece_aware_moves,
+        side_prefixed_moves=side_prefixed_moves,
+        require_manifest_match=True,
+    )
+
+
+def save_move_vocab(
+    path: Path,
+    move_keys: Iterable[str],
+    *,
+    piece_aware_moves: bool,
+    side_prefixed_moves: bool,
+) -> dict[str, Any]:
+    artifact = make_move_vocab_artifact(
+        move_keys,
+        piece_aware_moves=piece_aware_moves,
+        side_prefixed_moves=side_prefixed_moves,
+    )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w") as f:
+        json.dump(artifact, f, indent=2, sort_keys=True)
+        f.write("\n")
+    return artifact
 
 
 def get_vocab_size() -> int:
@@ -188,11 +425,6 @@ def result_to_token_id(result: str | int) -> int:
     raise ValueError(f"Unsupported game result: {result!r}")
 
 
-def save_to_json(path: Path) -> None:
-    with open(path, "w") as f:
-        json.dump(MOVE_TO_ID, f)
-
-
 def get_moves_only(token_ids: list[int]) -> list[int]:
     moves: list[int] = []
     in_think = False
@@ -210,51 +442,103 @@ def get_moves_only(token_ids: list[int]) -> list[int]:
     return moves
 
 
-def to_uci(token_id: int) -> str:
-    token = ID_TO_MOVE.get(token_id, "")
+def _token_string_to_uci(token: str) -> str:
     if token.startswith(WHITE_PREFIX):
-        return token[len(WHITE_PREFIX) :]
-    if token.startswith(BLACK_PREFIX):
-        return token[len(BLACK_PREFIX) :]
+        token = token[len(WHITE_PREFIX) :]
+    elif token.startswith(BLACK_PREFIX):
+        token = token[len(BLACK_PREFIX) :]
+
+    piece_prefix, sep, uci = token.partition(":")
+    if sep and piece_prefix in PIECE_TYPES:
+        return uci
     return token
 
 
-def move_key_for_ply(uci: str, ply: int) -> str:
-    if not SIDE_PREFIXED_MOVES:
-        return uci
-    prefix = WHITE_PREFIX if ply % 2 == 0 else BLACK_PREFIX
-    return prefix + uci
+def to_uci(token_id: int) -> str:
+    token = ID_TO_MOVE.get(token_id, "")
+    return _token_string_to_uci(token)
 
 
-def move_key_for_turn(uci: str, turn: object) -> str:
-    if not SIDE_PREFIXED_MOVES:
-        return uci
-    prefix = WHITE_PREFIX if str(turn) == "White" else BLACK_PREFIX
-    return prefix + uci
+def move_key_for_ply(
+    uci: str,
+    ply: int,
+    mover_piece_type: object | None = None,
+    *,
+    piece_aware_moves: bool | None = None,
+    side_prefixed_moves: bool | None = None,
+) -> str:
+    return build_move_key(
+        uci,
+        mover_piece_type,
+        ply=ply,
+        piece_aware_moves=piece_aware_moves,
+        side_prefixed_moves=side_prefixed_moves,
+    )
 
 
-def move_token_id_for_ply(uci: str, ply: int) -> int | None:
-    return MOVE_TO_ID.get(move_key_for_ply(uci, ply))
+def move_key_for_turn(
+    uci: str,
+    turn: object,
+    mover_piece_type: object | None = None,
+    *,
+    piece_aware_moves: bool | None = None,
+    side_prefixed_moves: bool | None = None,
+) -> str:
+    return build_move_key(
+        uci,
+        mover_piece_type,
+        turn=turn,
+        piece_aware_moves=piece_aware_moves,
+        side_prefixed_moves=side_prefixed_moves,
+    )
 
 
-def move_token_id_for_turn(uci: str, turn: object) -> int | None:
-    return MOVE_TO_ID.get(move_key_for_turn(uci, turn))
+def move_token_id_for_ply(
+    uci: str,
+    ply: int,
+    mover_piece_type: object | None = None,
+) -> int | None:
+    return MOVE_TO_ID.get(move_key_for_ply(uci, ply, mover_piece_type))
+
+
+def move_token_id_for_turn(
+    uci: str,
+    turn: object,
+    mover_piece_type: object | None = None,
+) -> int | None:
+    return MOVE_TO_ID.get(move_key_for_turn(uci, turn, mover_piece_type))
 
 
 def token_to_uci(token_id: int) -> str | None:
     token = ID_TO_MOVE.get(token_id)
     if token is None:
         return None
-    return to_uci(token_id)
+    return _token_string_to_uci(token)
 
 
-def uci_to_token_id(uci: str, turn: object) -> int | None:
-    return move_token_id_for_turn(uci, turn)
+def uci_to_token_id(
+    uci: str,
+    turn: object,
+    mover_piece_type: object | None = None,
+) -> int | None:
+    return move_token_id_for_turn(uci, turn, mover_piece_type)
+
+
+def _piece_type_for_board_move(board: bulletchess.Board, move: bulletchess.Move) -> str:
+    piece = board[move.origin]
+    if piece is None:
+        raise ValueError(f"No piece on move origin for legal move {move.uci()}")
+    return normalize_piece_type(piece.piece_type)
 
 
 def legal_token_ids(board: bulletchess.Board) -> list[int]:
-    return [
-        token_id
-        for move in board.legal_moves()
-        if (uci := move.uci()) and (token_id := move_token_id_for_turn(uci, board.turn)) is not None
-    ]
+    token_ids: list[int] = []
+    for move in board.legal_moves():
+        uci = move.uci()
+        if not uci:
+            continue
+        piece_type = _piece_type_for_board_move(board, move)
+        token_id = move_token_id_for_turn(uci, board.turn, piece_type)
+        if token_id is not None:
+            token_ids.append(token_id)
+    return token_ids

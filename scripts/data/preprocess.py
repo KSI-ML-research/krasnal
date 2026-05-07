@@ -1,3 +1,4 @@
+import multiprocessing
 import os
 import shutil
 from concurrent.futures import ProcessPoolExecutor, as_completed
@@ -11,6 +12,7 @@ from omegaconf import DictConfig
 
 from krasnal.config import (
     EVAL_DATASET_PATH,
+    MOVE_VOCAB_PATH,
     PRETRAIN_DATASET_PATH,
     RAW_UCI_DIR,
 )
@@ -34,9 +36,10 @@ from krasnal.tokens import (
     KING_ID,
     KNIGHT_ID,
     NO_CHECK_ID,
-    PAD_ID,
     PAWN_ID,
+    PIECE_TYPE_ALIASES,
     PIECE_TYPE_MOVED_ID,
+    PIECE_TYPES,
     QUEEN_ID,
     ROOK_ID,
     SPECIAL_TOKENS,
@@ -46,21 +49,15 @@ from krasnal.tokens import (
     WHITE_WON_ID,
     YES_CHECK_ID,
     get_elo_bucket,
+    load_move_vocab,
+    move_key_for_ply,
     move_token_id_for_ply,
+    normalize_piece_type,
     result_to_token_id,
-    set_side_prefixed_moves,
+    save_move_vocab,
 )
 
-PIECE_ROLE_ALIASES: dict[str, tuple[str, ...]] = {
-    "pawn": ("pawn", "p"),
-    "knight": ("knight", "n"),
-    "bishop": ("bishop", "b"),
-    "rook": ("rook", "r"),
-    "queen": ("queen", "q"),
-    "king": ("king", "k"),
-}
-
-PIECE_ROLE_TO_TOKEN_ID: dict[str, int] = {
+PIECE_TYPE_TO_TOKEN_ID: dict[str, int] = {
     "pawn": PAWN_ID,
     "knight": KNIGHT_ID,
     "bishop": BISHOP_ID,
@@ -69,19 +66,24 @@ PIECE_ROLE_TO_TOKEN_ID: dict[str, int] = {
     "king": KING_ID,
 }
 
-PIECE_ROLES = tuple(PIECE_ROLE_TO_TOKEN_ID)
 
-
-def _normalize_piece_role(role: object) -> str | None:
-    if role is None:
-        return None
-    normalized = str(role).strip().lower()
-    if not normalized:
-        return None
-    for canonical, aliases in PIECE_ROLE_ALIASES.items():
-        if normalized in aliases:
-            return canonical
-    return None
+def _validated_piece_moved(
+    piece_moved: object,
+    moves_list: list[str],
+    *,
+    context: str,
+) -> list[str]:
+    if not isinstance(piece_moved, list):
+        raise ValueError(f"{context}: piece_moved must be a list")
+    if len(piece_moved) != len(moves_list):
+        raise ValueError(
+            f"{context}: piece_moved length {len(piece_moved)} does not match "
+            f"uci_moves length {len(moves_list)}"
+        )
+    try:
+        return [normalize_piece_type(piece) for piece in piece_moved]
+    except ValueError as exc:
+        raise ValueError(f"{context}: malformed piece_moved") from exc
 
 
 def _compute_piece_sampling_probs(
@@ -90,21 +92,21 @@ def _compute_piece_sampling_probs(
     king_count = piece_counts.get("king", 0)
     if king_count <= 0:
         logger.warning("No king moves found in shard; piece Q&A sampling disabled for this shard")
-        return {role: 0.0 for role in PIECE_ROLES}
+        return {piece_type: 0.0 for piece_type in PIECE_TYPES}
 
     probs: dict[str, float] = {}
-    for role in PIECE_ROLES:
-        count = piece_counts.get(role, 0)
+    for piece_type in PIECE_TYPES:
+        count = piece_counts.get(piece_type, 0)
         if count <= 0:
-            probs[role] = 0.0
+            probs[piece_type] = 0.0
             continue
-        probs[role] = min(1.0, king_base_prob * (king_count / count))
+        probs[piece_type] = min(1.0, king_base_prob * (king_count / count))
     return probs
 
 
 def _compute_piece_counts(lf: pl.LazyFrame) -> dict[str, int]:
     count_exprs = []
-    for role, aliases in PIECE_ROLE_ALIASES.items():
+    for piece_type, aliases in PIECE_TYPE_ALIASES.items():
         count_exprs.append(
             pl.col("piece_moved")
             .list.eval(
@@ -113,11 +115,11 @@ def _compute_piece_counts(lf: pl.LazyFrame) -> dict[str, int]:
             )
             .list.sum()
             .sum()
-            .alias(f"{role}_count")
+            .alias(f"{piece_type}_count")
         )
 
     stats = lf.select(*count_exprs).collect().row(0)
-    return {role: int(stats[i] or 0) for i, role in enumerate(PIECE_ROLES)}
+    return {piece_type: int(stats[i] or 0) for i, piece_type in enumerate(PIECE_TYPES)}
 
 
 def _compute_check_qa_probs(
@@ -162,12 +164,19 @@ def _build_game_tokens(
         b = bulletchess.Board.from_fen(fen) if fen else bulletchess.Board()
 
     moves_list = uci_moves.split()
+    piece_types = _validated_piece_moved(
+        piece_moved,
+        moves_list,
+        context=f"game {uci_moves[:80]!r}",
+    )
 
     result_tokens = []
     for ply, move in enumerate(moves_list):
-        move_id = move_token_id_for_ply(move, ply)
+        piece_type = piece_types[ply]
+        move_id = move_token_id_for_ply(move, ply, piece_type)
         if move_id is None:
-            move_id = PAD_ID
+            key = move_key_for_ply(move, ply, piece_type)
+            raise ValueError(f"Move key {key!r} is missing from generated move vocab")
         result_tokens.append(move_id)
 
         if include_check_qa:
@@ -178,15 +187,11 @@ def _build_game_tokens(
             elif sample_bool(seed=seed, game_key=uci_moves, ply=ply, probability=p_no):
                 result_tokens.extend([IS_CHECK_ID, NO_CHECK_ID])
 
-        if include_piece_qa and ply < len(piece_moved):
-            piece_role = _normalize_piece_role(piece_moved[ply])
-            if piece_role is not None:
-                probability = piece_sampling_probs.get(piece_role, 0.0)
-                if sample_bool(
-                    seed=seed + 13, game_key=uci_moves, ply=ply, probability=probability
-                ):
-                    answer_token = PIECE_ROLE_TO_TOKEN_ID[piece_role]
-                    result_tokens.extend([PIECE_TYPE_MOVED_ID, answer_token])
+        if include_piece_qa:
+            probability = piece_sampling_probs.get(piece_type, 0.0)
+            if sample_bool(seed=seed + 13, game_key=uci_moves, ply=ply, probability=probability):
+                answer_token = PIECE_TYPE_TO_TOKEN_ID[piece_type]
+                result_tokens.extend([PIECE_TYPE_MOVED_ID, answer_token])
 
         if include_what_is_on_qa:
             for m in b.legal_moves():
@@ -288,8 +293,8 @@ def process_file_streaming(
     else:
         p_no = 1.0
 
-    piece_counts = {role: 0 for role in PIECE_ROLES}
-    piece_sampling_probs = {role: 0.0 for role in PIECE_ROLES}
+    piece_counts = {piece_type: 0 for piece_type in PIECE_TYPES}
+    piece_sampling_probs = {piece_type: 0.0 for piece_type in PIECE_TYPES}
     if include_piece_qa:
         piece_counts = _compute_piece_counts(lf)
         piece_sampling_probs = _compute_piece_sampling_probs(piece_counts, king_base_prob)
@@ -301,15 +306,46 @@ def process_file_streaming(
 
     def build_tokens_batch(batch: pl.DataFrame) -> pl.DataFrame:
         token_ids_list = []
-        for i in range(len(batch)):
+
+        uci_moves_list = batch.get_column("uci_moves").to_list()
+        is_check_list = batch.get_column("is_check").to_list()
+        piece_moved_list = batch.get_column("piece_moved").to_list()
+        result_list = batch.get_column("result").to_list()
+        white_rating_list = batch.get_column("white_rating").to_list()
+        black_rating_list = batch.get_column("black_rating").to_list()
+        elo_bucket_list = batch.get_column("elo_bucket").to_list()
+
+        has_fen = "fen" in batch.columns
+        fen_list = batch.get_column("fen").to_list() if has_fen else [None] * len(batch)
+
+        for (
+            uci_moves,
+            is_check,
+            piece_moved,
+            result,
+            white_rating,
+            black_rating,
+            elo_bucket,
+            fen,
+        ) in zip(
+            uci_moves_list,
+            is_check_list,
+            piece_moved_list,
+            result_list,
+            white_rating_list,
+            black_rating_list,
+            elo_bucket_list,
+            fen_list,
+            strict=True,
+        ):
             token_ids = _build_game_tokens(
-                uci_moves=batch["uci_moves"][i],
-                is_check=batch["is_check"][i],
-                piece_moved=batch["piece_moved"][i],
-                result=batch["result"][i],
-                white_rating=batch["white_rating"][i],
-                black_rating=batch["black_rating"][i],
-                elo_bucket=batch["elo_bucket"][i],
+                uci_moves=uci_moves,
+                is_check=is_check,
+                piece_moved=piece_moved,
+                result=result,
+                white_rating=white_rating,
+                black_rating=black_rating,
+                elo_bucket=elo_bucket,
                 include_check_qa=include_check_qa,
                 check_qa_prob=check_qa_prob,
                 normal_prob=normal_prob,
@@ -320,7 +356,7 @@ def process_file_streaming(
                 p_no=p_no,
                 include_piece_qa=include_piece_qa,
                 piece_sampling_probs=piece_sampling_probs,
-                fen=batch["fen"][i] if "fen" in batch.columns and batch["fen"][i] else None,
+                fen=fen,
                 include_what_is_on_qa=include_what_is_on_qa,
                 what_is_on_prob=what_is_on_prob,
             )
@@ -345,10 +381,71 @@ def process_file_streaming(
     return row_count
 
 
+def build_move_vocab_from_corpus(
+    parquet_files: list[Path],
+    *,
+    piece_aware_moves: bool,
+    side_prefixed_moves: bool,
+    output_path: Path,
+) -> dict:
+    move_keys: set[str] = set()
+    total_plies = 0
+
+    for parquet_path in parquet_files:
+        schema = pl.scan_parquet(parquet_path).collect_schema()
+        missing_columns = {"uci_moves", "piece_moved"} - set(schema.names())
+        if missing_columns:
+            raise ValueError(
+                f"{parquet_path} is missing required columns: {', '.join(sorted(missing_columns))}"
+            )
+
+        df = pl.read_parquet(parquet_path, columns=["uci_moves", "piece_moved"])
+        uci_moves_col = df.get_column("uci_moves").to_list()
+        piece_moved_col = df.get_column("piece_moved").to_list()
+
+        for row_idx, (uci_moves, piece_moved) in enumerate(
+            zip(uci_moves_col, piece_moved_col, strict=True)
+        ):
+            if not uci_moves or not piece_moved:
+                continue
+            moves_list = uci_moves.split()
+            piece_types = _validated_piece_moved(
+                piece_moved,
+                moves_list,
+                context=f"{parquet_path.name} row {row_idx}",
+            )
+
+            total_plies += len(moves_list)
+            for ply, (move, piece_type) in enumerate(zip(moves_list, piece_types, strict=True)):
+                key = move
+                if piece_aware_moves:
+                    key = f"{piece_type}:{key}"
+                if side_prefixed_moves:
+                    side = "w:" if ply % 2 == 0 else "b:"
+                    key = f"{side}{key}"
+                move_keys.add(key)
+
+    artifact = save_move_vocab(
+        output_path,
+        move_keys,
+        piece_aware_moves=piece_aware_moves,
+        side_prefixed_moves=side_prefixed_moves,
+    )
+    logger.info(
+        "Wrote {} move keys from {} plies to {}",
+        len(move_keys),
+        total_plies,
+        output_path,
+    )
+    return artifact
+
+
 def _process_one_shard(
     parquet_path: Path,
     seed: int,
     output_path: Path,
+    move_vocab_path: Path,
+    piece_aware_moves: bool,
     side_prefixed_moves: bool,
     include_check_qa: bool,
     check_qa_prob: float,
@@ -358,7 +455,11 @@ def _process_one_shard(
     include_what_is_on_qa: bool = False,
     what_is_on_prob: float = 0.0,
 ) -> tuple[str, int, str]:
-    set_side_prefixed_moves(side_prefixed_moves)
+    load_move_vocab(
+        move_vocab_path,
+        piece_aware_moves=piece_aware_moves,
+        side_prefixed_moves=side_prefixed_moves,
+    )
     count = process_file_streaming(
         parquet_path,
         seed,
@@ -566,7 +667,8 @@ def one_row_one_game(lazy_df: pl.LazyFrame, block_size: int) -> pl.LazyFrame:
 
 @hydra.main(version_base=None, config_path="../../config", config_name="preprocess")
 def main(cfg: DictConfig) -> None:
-    set_side_prefixed_moves(bool(cfg.get("side_prefixed_moves", True)))
+    piece_aware_moves = bool(cfg.get("piece_aware_moves", False))
+    side_prefixed_moves = bool(cfg.get("side_prefixed_moves", True))
     block_size = int(cfg.block_size)
     seed = int(cfg.seed)
 
@@ -604,22 +706,34 @@ def main(cfg: DictConfig) -> None:
 
     parquet_files = sorted(RAW_UCI_DIR.glob("*.parquet"))
     if not parquet_files:
-        logger.error(f"No Aix-filtered games found in {RAW_UCI_DIR}")
-        return
+        raise FileNotFoundError(f"No Aix-filtered games found in {RAW_UCI_DIR}")
 
     PRETRAIN_DATASET_PATH.parent.mkdir(parents=True, exist_ok=True)
+    build_move_vocab_from_corpus(
+        parquet_files,
+        piece_aware_moves=piece_aware_moves,
+        side_prefixed_moves=side_prefixed_moves,
+        output_path=MOVE_VOCAB_PATH,
+    )
+    load_move_vocab(
+        MOVE_VOCAB_PATH,
+        piece_aware_moves=piece_aware_moves,
+        side_prefixed_moves=side_prefixed_moves,
+    )
+
     temp_dir = PRETRAIN_DATASET_PATH.parent / "temp_preprocess"
     temp_dir.mkdir(parents=True, exist_ok=True)
 
     total_games = 0
-    side_prefixed_moves = bool(cfg.get("side_prefixed_moves", True))
     workers_cfg = int(cfg.get("preprocess_workers", 0) or 0)
     max_workers = min(
         workers_cfg if workers_cfg > 0 else min(len(parquet_files), os.cpu_count() or 1), 8
     )
     logger.info("Processing {} shards with {} workers", len(parquet_files), max_workers)
 
-    with ProcessPoolExecutor(max_workers=max_workers) as executor:
+    with ProcessPoolExecutor(
+        max_workers=max_workers, mp_context=multiprocessing.get_context("spawn")
+    ) as executor:
         futures = {}
         for idx, parquet_path in enumerate(parquet_files):
             output_path = temp_dir / f"part_{idx:04d}.parquet"
@@ -628,6 +742,8 @@ def main(cfg: DictConfig) -> None:
                 parquet_path,
                 seed,
                 output_path,
+                MOVE_VOCAB_PATH,
+                piece_aware_moves,
                 side_prefixed_moves,
                 include_check_qa,
                 check_qa_prob,
@@ -647,18 +763,17 @@ def main(cfg: DictConfig) -> None:
                 logger.info("Processed {}: {} games -> {}", done_name, count, output_name)
             except Exception as e:
                 logger.error("Failed to process {}: {}", parquet_name, e)
+                raise
 
     all_parts = list(temp_dir.glob("part_*.parquet"))
     if not all_parts:
-        logger.error("No data generated")
-        return
+        raise RuntimeError("No data generated")
 
     combined_lf = pl.concat(pl.scan_parquet(p) for p in all_parts)
 
     stats = compute_stats(combined_lf, block_size)
     if stats["total"] == 0:
-        logger.error("No games found in raw dataset.")
-        return
+        raise RuntimeError("No games found in raw dataset.")
 
     logger.info(
         "Sequence length stats: total={}, min={}, max={}, mean={:.1f}, median={}, "
@@ -754,8 +869,7 @@ def main(cfg: DictConfig) -> None:
     train_rows = pl.scan_parquet(PRETRAIN_DATASET_PATH).select(pl.len()).collect().item()
     eval_rows = pl.scan_parquet(EVAL_DATASET_PATH).select(pl.len()).collect().item()
     if train_rows == 0:
-        logger.error("Train dataset is empty. Increase input data or reduce block_size.")
-        return
+        raise RuntimeError("Train dataset is empty. Increase input data or reduce block_size.")
 
     logger.info(
         "Successfully processed {} games -> {} (one-row-one-game, train rows: {}, eval rows: {})",

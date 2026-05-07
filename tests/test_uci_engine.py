@@ -5,6 +5,28 @@ import chess
 import chess.engine
 import pytest
 
+from krasnal.uci_engine.provider import ChessModelProvider, ModelProviderError
+from krasnal.uci_engine.uci_parser import UCIParser
+
+
+class FailingProvider(ChessModelProvider):
+    def reset_session(self, outcome_token: int) -> None:
+        self.outcome_token = outcome_token
+
+    def get_best_move(self, _uci_moves: str) -> str:
+        raise ModelProviderError("model crashed")
+
+
+def test_uci_resigns_on_unrecoverable_model_provider_error(capsys):
+    parser = UCIParser(FailingProvider())
+
+    parser._process_command("ucinewgame")
+    parser._process_command("go")
+
+    output = capsys.readouterr().out.splitlines()
+    assert "info string ModelProvider error: model crashed" in output
+    assert "bestmove resign" in output
+
 
 @pytest.mark.asyncio
 async def test_uci_integration():
