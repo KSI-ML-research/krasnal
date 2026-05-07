@@ -39,12 +39,12 @@ uv venv .venv --python 3.13
 uv sync
 
 # Download games
-uv run python scripts/download-games.py
+uv run python scripts/data/download_games.py
 
 # Preprocess games
-uv run python scripts/preprocess.py
+uv run python scripts/data/preprocess.py
 
 # Pretrain model
-uv run python scripts/pretrain.py \
+uv run python scripts/training/pretrain.py \
     model=$MODEL \
     train=$TRAIN_CONFIG
