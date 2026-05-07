@@ -10,6 +10,7 @@
 # IMPORTANT: Ensure WANDB_API_KEY and HF_TOKEN are set in your ~/.bashrc on HPC
 # export WANDB_API_KEY=your_key_here
 # export HF_TOKEN=your_token_here
+# export HF_HUB_ENABLE_HF_TRANSFER=1
 
 # === User & Paths ===
 USER=ijakus
@@ -17,7 +18,7 @@ USER_DIRECTORY=/Ziob/$USER
 PROJECT_ROOT=$USER_DIRECTORY/krasnal
 
 # === Config ===
-MODEL=xsmall
+MODEL=small
 TRAIN_CONFIG=cuda
 
 source ~/.bashrc
@@ -48,4 +49,6 @@ uv run python scripts/data/preprocess.py
 # Pretrain model
 uv run python scripts/training/pretrain.py \
     model=$MODEL \
-    train=$TRAIN_CONFIG
+    train=$TRAIN_CONFIG \
+    train.batch_size=64 \
+    train.num_workers=24
