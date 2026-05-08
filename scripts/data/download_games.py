@@ -85,6 +85,7 @@ WHERE white_rating >= {min_elo}
   AND result IN ('1-0', '0-1', '1/2-1/2')
   AND utc_timestamp >= '{date_start}'
   AND utc_timestamp < '{date_end}'
+{evals_condition}
 """
 
 
@@ -119,6 +120,7 @@ def filter_month(
     con: duckdb.DuckDBPyConnection,
     min_elo: int,
     min_time: int,
+    require_evals: bool,
 ) -> int:
     """
     Filter one month of Aix games and save to Parquet.
@@ -144,12 +146,15 @@ def filter_month(
         next_mon = f"{next_mon_int:02d}"
     date_end = f"{next_year}-{next_mon}-01"
 
+    evals_condition = "AND evals IS NOT NULL" if require_evals else ""
+
     query = FILTER_QUERY.format(
         parquet_path=parquet_path,
         date_start=date_start,
         date_end=date_end,
         min_elo=min_elo,
         min_time=min_time,
+        evals_condition=evals_condition,
     )
 
     logger.info(f"Filtering {month}...")
@@ -179,6 +184,7 @@ def main(cfg: DictConfig) -> None:
     min_time = cfg.min_time
     target_games = cfg.target_games
     compression = cfg.compression
+    require_evals = cfg.get("require_evals", True)
 
     months = cfg.months if cfg.months else DEFAULT_MONTHS
 
@@ -187,6 +193,7 @@ def main(cfg: DictConfig) -> None:
     logger.info(f"Compression: {compression}")
     logger.info(f"Min Elo: {min_elo}")
     logger.info(f"Min time control: {min_time}s")
+    logger.info(f"Require evals: {require_evals}")
 
     hf_transfer_status = (
         "enabled" if os.environ.get("HF_HUB_ENABLE_HF_TRANSFER") == "1" else "disabled"
@@ -218,7 +225,9 @@ def main(cfg: DictConfig) -> None:
             continue
 
         try:
-            count = filter_month(parquet_path, month, OUTPUT_DIR, con, min_elo, min_time)
+            count = filter_month(
+                parquet_path, month, OUTPUT_DIR, con, min_elo, min_time, require_evals
+            )
             total_games += count
         except Exception as e:
             logger.error(f"Failed to filter {month}: {e}")
