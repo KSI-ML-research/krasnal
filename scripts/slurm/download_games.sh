@@ -28,4 +28,4 @@ mkdir -p $HF_HOME
 uv venv .venv --python 3.13
 uv sync
 
-uv run scripts/data/download_games.py
+uv run scripts/data/download_games.py target_games=15000000
