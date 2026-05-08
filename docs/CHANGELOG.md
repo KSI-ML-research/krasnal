@@ -1,8 +1,14 @@
 # Changelog
 
+## 2026-05-08
+
+- DDP: `run_supervised_training` uses `dist.barrier()` around evaluation so non-master ranks wait while rank 0 runs val loss and custom `eval_fn`, avoiding desync / allreduce deadlocks.
+- DDP: Linear LR scaling (`× world_size`) is applied to `TrainConfig.learning_rate` and `min_lr` before the optimizer and cosine schedule, so warmup/decay match the effective step LR.
+
 ## 2026-05-07
 
 - Optional NCCL DDP for pretrain and SFT: use `torchrun` with `WORLD_SIZE>1`; single-process runs unchanged. `train.batch_size` is per GPU when distributed.
+- With DDP, apply `torch.compile` to the GPT **before** wrapping in `DistributedDataParallel` (Dynamo cannot trace compiled DDP).
 
 ## 2026-05-06
 
