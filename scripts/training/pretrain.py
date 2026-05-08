@@ -78,6 +78,10 @@ def _main(cfg: DictConfig, dist_info: DistributedInfo) -> None:
     collate = make_collate_fn(tconf.padding_bucket_sizes)
     if tconf.epochs <= 0:
         raise ValueError("TrainConfig.epochs must be > 0")
+    if dist_info.enabled:
+        scale = float(dist_info.world_size)
+        tconf.learning_rate *= scale
+        tconf.min_lr *= scale
 
     train_device = torch.device("cuda", dist_info.local_rank) if dist_info.enabled else None
     device, dtype, ctx, scaler = setup_runtime(device=train_device)

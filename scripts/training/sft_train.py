@@ -150,6 +150,10 @@ def _main(cfg: DictConfig, dist_info: DistributedInfo) -> None:
 
     tconf = TrainConfig(**OmegaConf.to_container(cfg.train, resolve=True))
     collate = make_collate_fn(tconf.padding_bucket_sizes)
+    if dist_info.enabled:
+        scale = float(dist_info.world_size)
+        tconf.learning_rate *= scale
+        tconf.min_lr *= scale
 
     cot_batch_size, normal_batch_size = compute_batch_sizes(tconf.batch_size, cfg.cot_ratio)
 

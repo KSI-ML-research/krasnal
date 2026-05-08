@@ -231,23 +231,28 @@ def run_supervised_training(
                 if log_fn is not None:
                     log_fn(iter_num, last_loss_value, epoch_float)
 
-            if master and iter_num % eval_interval == 0:
-                raw_model = unwrap_model(model)
-                raw_model.eval()
-                with torch.inference_mode():
-                    val_losses = [
-                        raw_model(
-                            xv.to(device, non_blocking=True),
-                            yv.to(device, non_blocking=True),
-                            ignore_index=LOSS_IGNORE_INDEX,
-                        )[1].item()
-                        for xv, yv in val_loader
-                    ]
-                raw_model.train()
-                n_val = len(val_losses)
-                eval_metrics = {"val_loss": sum(val_losses) / n_val if n_val else float("nan")}
-                eval_metrics.update(eval_fn(model, iter_num))
-                eval_log_fn(iter_num, eval_metrics)
+            if iter_num % eval_interval == 0:
+                if dinfo.enabled:
+                    dist.barrier()
+                if master:
+                    raw_model = unwrap_model(model)
+                    raw_model.eval()
+                    with torch.inference_mode():
+                        val_losses = [
+                            raw_model(
+                                xv.to(device, non_blocking=True),
+                                yv.to(device, non_blocking=True),
+                                ignore_index=LOSS_IGNORE_INDEX,
+                            )[1].item()
+                            for xv, yv in val_loader
+                        ]
+                    raw_model.train()
+                    n_val = len(val_losses)
+                    eval_metrics = {"val_loss": sum(val_losses) / n_val if n_val else float("nan")}
+                    eval_metrics.update(eval_fn(model, iter_num))
+                    eval_log_fn(iter_num, eval_metrics)
+                if dinfo.enabled:
+                    dist.barrier()
 
             pbar.update(1)
             iter_num += 1
@@ -256,6 +261,8 @@ def run_supervised_training(
         epoch += 1
 
     pbar.close()
+    if dinfo.enabled:
+        dist.barrier()
     if master:
         eval_log_fn(iter_num, eval_fn(model, iter_num))
     if dinfo.enabled:
