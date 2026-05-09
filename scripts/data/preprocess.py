@@ -475,9 +475,7 @@ def _process_one_shard(
     return parquet_path.name, count, output_path.name
 
 
-def compute_stats(tokenized_lf: pl.LazyFrame, block_size: int) -> dict[str, float]:
-    seq_len_lf = tokenized_lf.select(pl.col("token_ids").list.len().alias("len"))
-
+def _seq_len_stats_from_lf(seq_len_lf: pl.LazyFrame, block_size: int) -> dict[str, float]:
     stats = seq_len_lf.select(
         pl.col("len").count().alias("total"),
         pl.col("len").min().alias("min"),
@@ -504,7 +502,7 @@ def compute_stats(tokenized_lf: pl.LazyFrame, block_size: int) -> dict[str, floa
     }
 
 
-def compute_token_mix_stats(tokenized_lf: pl.LazyFrame) -> dict[str, float]:
+def _token_mix_raw_sums(tokenized_lf: pl.LazyFrame) -> tuple[int, ...]:
     result_ids = [WHITE_WON_ID, BLACK_WON_ID, DRAW_ID, UNKNOWN_RESULT_ID]
     elo_ids = [
         ELO_BELOW_1000_ID,
@@ -603,22 +601,35 @@ def compute_token_mix_stats(tokenized_lf: pl.LazyFrame) -> dict[str, float]:
         .row(0)
     )
 
-    total_tokens = int(stats[0] or 0)
-    is_check_count = int(stats[1] or 0)
-    yes_check_count = int(stats[2] or 0)
-    no_check_count = int(stats[3] or 0)
-    piece_type_moved_count = int(stats[4] or 0)
-    what_is_on_count = int(stats[5] or 0)
-    empty_count = int(stats[6] or 0)
-    pawn_count = int(stats[7] or 0)
-    knight_count = int(stats[8] or 0)
-    bishop_count = int(stats[9] or 0)
-    rook_count = int(stats[10] or 0)
-    queen_count = int(stats[11] or 0)
-    king_count = int(stats[12] or 0)
-    result_count = int(stats[13] or 0)
-    elo_count = int(stats[14] or 0)
-    special_count = int(stats[15] or 0)
+    return tuple(int(x or 0) for x in stats)
+
+
+def _merge_token_mix_raw(
+    acc: tuple[int, ...] | None,
+    part: tuple[int, ...],
+) -> tuple[int, ...]:
+    if acc is None:
+        return part
+    return tuple(a + b for a, b in zip(acc, part, strict=True))
+
+
+def _token_mix_from_raw_sums(stats: tuple[int, ...]) -> dict[str, float]:
+    total_tokens = stats[0]
+    is_check_count = stats[1]
+    yes_check_count = stats[2]
+    no_check_count = stats[3]
+    piece_type_moved_count = stats[4]
+    what_is_on_count = stats[5]
+    empty_count = stats[6]
+    pawn_count = stats[7]
+    knight_count = stats[8]
+    bishop_count = stats[9]
+    rook_count = stats[10]
+    queen_count = stats[11]
+    king_count = stats[12]
+    result_count = stats[13]
+    elo_count = stats[14]
+    special_count = stats[15]
 
     check_qa_count = is_check_count + yes_check_count + no_check_count
     piece_answer_count = (
@@ -660,9 +671,19 @@ def compute_token_mix_stats(tokenized_lf: pl.LazyFrame) -> dict[str, float]:
     }
 
 
+def compute_token_mix_stats(tokenized_lf: pl.LazyFrame) -> dict[str, float]:
+    return _token_mix_from_raw_sums(_token_mix_raw_sums(tokenized_lf))
+
+
 def one_row_one_game(lazy_df: pl.LazyFrame, block_size: int) -> pl.LazyFrame:
     window_size = block_size + 1
     return lazy_df.select(pl.col("token_ids").list.slice(0, window_size).alias("token_ids"))
+
+
+def _chunk_paths(paths: list[Path], chunk_size: int) -> list[list[Path]]:
+    if chunk_size < 1:
+        raise ValueError(f"preprocess_concat_batch_size must be >= 1, got {chunk_size}")
+    return [paths[i : i + chunk_size] for i in range(0, len(paths), chunk_size)]
 
 
 def _resolve_preprocess_workers(cfg: DictConfig, shard_count: int) -> int:
@@ -769,13 +790,43 @@ def main(cfg: DictConfig) -> None:
                 logger.error("Failed to process {}: {}", parquet_name, e)
                 raise
 
-    all_parts = list(temp_dir.glob("part_*.parquet"))
+    all_parts = sorted(temp_dir.glob("part_*.parquet"))
     if not all_parts:
         raise RuntimeError("No data generated")
 
-    combined_lf = pl.concat(pl.scan_parquet(p) for p in all_parts)
+    concat_batch_size = max(1, int(cfg.get("preprocess_concat_batch_size", 10)))
+    train_batches_dir = temp_dir / "train_batches"
+    eval_batches_dir = temp_dir / "eval_batches"
+    shutil.rmtree(train_batches_dir, ignore_errors=True)
+    shutil.rmtree(eval_batches_dir, ignore_errors=True)
+    train_batches_dir.mkdir(parents=True)
+    eval_batches_dir.mkdir(parents=True)
 
-    stats = compute_stats(combined_lf, block_size)
+    max_tokens = block_size
+    len_chunks: list[pl.DataFrame] = []
+    mix_raw: tuple[int, ...] | None = None
+
+    for batch_idx, batch_paths in enumerate(_chunk_paths(all_parts, concat_batch_size)):
+        shard_lf = pl.concat(pl.scan_parquet(p) for p in batch_paths)
+        len_chunks.append(shard_lf.select(pl.col("token_ids").list.len().alias("len")).collect())
+        filtered_lf = shard_lf.filter(pl.col("token_ids").list.len() <= max_tokens)
+        mix_raw = _merge_token_mix_raw(
+            mix_raw,
+            _token_mix_raw_sums(filtered_lf.select("token_ids")),
+        )
+        train_lf = one_row_one_game(
+            filtered_lf.filter(pl.col("split_bucket") != 0).select("token_ids"),
+            block_size=block_size,
+        )
+        eval_lf = one_row_one_game(
+            filtered_lf.filter(pl.col("split_bucket") == 0).select("token_ids"),
+            block_size=block_size,
+        )
+        train_lf.sink_parquet(train_batches_dir / f"{batch_idx:04d}.parquet")
+        eval_lf.sink_parquet(eval_batches_dir / f"{batch_idx:04d}.parquet")
+
+    seq_lens = pl.concat(len_chunks, how="vertical")
+    stats = _seq_len_stats_from_lf(seq_lens.lazy(), block_size)
     if stats["total"] == 0:
         raise RuntimeError("No games found in raw dataset.")
 
@@ -793,21 +844,20 @@ def main(cfg: DictConfig) -> None:
         stats["p999"],
     )
 
-    max_tokens = block_size
     over_block_size_count = stats.get("over_block_size", 0)
     total_count = stats["total"]
-    pct = over_block_size_count / total_count * 100
+    pct_long = over_block_size_count / total_count * 100
     logger.info(
         "Games with >{} tokens: {} ({:.2f}%) - filtering out >{}",
         max_tokens,
         over_block_size_count,
-        pct,
+        pct_long,
         max_tokens,
     )
 
-    filtered_lf = combined_lf.filter(pl.col("token_ids").list.len() <= max_tokens)
-
-    token_mix = compute_token_mix_stats(filtered_lf.select("token_ids"))
+    if mix_raw is None:
+        raise RuntimeError("Token mix aggregation failed")
+    token_mix = _token_mix_from_raw_sums(mix_raw)
     logger.info(
         "Token mix after >block_size filtering: UCI moves={} ({:.2f}%), "
         "check Q&A={} ({:.2f}%), piece Q&A={} ({:.2f}%), "
@@ -856,17 +906,10 @@ def main(cfg: DictConfig) -> None:
             token_mix["king_count"] / total_piece_answers * 100.0,
         )
 
-    train_lf = one_row_one_game(
-        filtered_lf.filter(pl.col("split_bucket") != 0).select("token_ids"),
-        block_size=block_size,
-    )
-    eval_lf = one_row_one_game(
-        filtered_lf.filter(pl.col("split_bucket") == 0).select("token_ids"),
-        block_size=block_size,
-    )
-
-    train_lf.sink_parquet(PRETRAIN_DATASET_PATH)
-    eval_lf.sink_parquet(EVAL_DATASET_PATH)
+    train_parts = sorted(train_batches_dir.glob("*.parquet"))
+    eval_parts = sorted(eval_batches_dir.glob("*.parquet"))
+    pl.concat(pl.scan_parquet(p) for p in train_parts).sink_parquet(PRETRAIN_DATASET_PATH)
+    pl.concat(pl.scan_parquet(p) for p in eval_parts).sink_parquet(EVAL_DATASET_PATH)
 
     shutil.rmtree(temp_dir)
 
