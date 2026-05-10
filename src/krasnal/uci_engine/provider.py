@@ -11,6 +11,7 @@ from loguru import logger
 
 from krasnal.inference import Game, InferenceSession, load_model
 from krasnal.inference.exceptions import NoLegalMovesError
+from krasnal.inference.move_analysis import MoveAnalysisResult, analyze_move
 from krasnal.inference.sampling import sample_token
 from krasnal.tokens import (
     legal_token_ids,
@@ -203,3 +204,14 @@ class ModelProvider(ChessModelProvider):
         except Exception as exc:
             logger.exception("ModelProvider.get_best_move failed")
             raise ModelProviderError(f"{type(exc).__name__}: {exc}") from exc
+
+    def get_move_analysis(self, uci_moves: str) -> MoveAnalysisResult:
+        move_list = normalize_history_uci_moves(uci_moves)
+        session = self._sync_session_history(move_list)
+
+        legal_probs = session.get_legal_probs()
+        if torch.isnan(legal_probs).any():
+            raise ModelProviderError("Could not produce legal move probabilities")
+
+        ply = session.game.len_tokens()
+        return analyze_move(legal_probs, ply)
