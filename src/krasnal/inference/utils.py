@@ -27,7 +27,9 @@ def load_model(model_path: str, device: torch.device, config: GPTConfig) -> GPT:
     if config.vocab_size is None:
         config.vocab_size = get_vocab_size()
     model = GPT(config)
-    model.load_state_dict(torch.load(model_path, map_location=device, weights_only=True))
+    model.load_state_dict(
+        torch.load(model_path, map_location=device, weights_only=True), strict=False
+    )
     model.to(device)
     model.eval()
     return model

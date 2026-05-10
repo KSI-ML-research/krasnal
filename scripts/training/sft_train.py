@@ -79,7 +79,9 @@ def main(cfg: DictConfig) -> None:
     model_cfg.pop("name", None)
     mconf = GPTConfig(vocab_size=get_vocab_size(), **model_cfg)
     model = build_model(model_config=mconf)
-    model.load_state_dict(torch.load(checkpoint_path, map_location="cpu", weights_only=True))
+    model.load_state_dict(
+        torch.load(checkpoint_path, map_location="cpu", weights_only=True), strict=False
+    )
 
     tconf = TrainConfig(**OmegaConf.to_container(cfg.train, resolve=True))
     collate = make_collate_fn(tconf.padding_bucket_sizes)
