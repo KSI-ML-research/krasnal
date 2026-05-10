@@ -203,6 +203,9 @@ class GPT(nn.Module):
             )
         )
         self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
+        self.stockfish_eval_head = nn.Linear(
+            config.n_embd, config.stockfish_eval_buckets, bias=False
+        )
 
         # https://paperswithcode.com/method/weight-tying
         self.transformer.wte.weight = self.lm_head.weight
@@ -228,7 +231,14 @@ class GPT(nn.Module):
         elif isinstance(module, nn.Embedding):
             torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
 
-    def forward(self, idx, targets=None, ignore_index=-1, past_kv: KVCache | None = None):
+    def forward(
+        self,
+        idx,
+        targets=None,
+        stockfish_targets=None,
+        ignore_index=-1,
+        past_kv: KVCache | None = None,
+    ):
         _b, t = idx.size()
         assert t <= self.config.block_size, (
             f"Cannot forward sequence of length {t}, block size is only {self.config.block_size}"
@@ -247,11 +257,22 @@ class GPT(nn.Module):
         if targets is not None:
             # if we are given some desired targets also calculate the loss
             logits = self.lm_head(x)
-            loss = F.cross_entropy(
+            loss_lm = F.cross_entropy(
                 logits.view(-1, logits.size(-1)),
                 targets.view(-1),
                 ignore_index=ignore_index,
             )
+
+            if stockfish_targets is not None:
+                logits_stockfish = self.stockfish_eval_head(x)
+                loss_stockfish = F.cross_entropy(
+                    logits_stockfish.view(-1, logits_stockfish.size(-1)),
+                    stockfish_targets.view(-1),
+                    ignore_index=ignore_index,
+                )
+                loss = (loss_lm, loss_stockfish)
+            else:
+                loss = loss_lm
         else:
             # inference-time mini-optimization: only forward the lm_head on the very last position
             logits = self.lm_head(x[:, [-1], :])  # note: using list [-1] to preserve the time dim

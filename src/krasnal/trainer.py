@@ -52,7 +52,7 @@ def evaluate_loss(
     batch_size: int,
     num_workers: int,
     device: str,
-) -> float:
+) -> dict[str, float]:
     eval_dataset = ChessDataset(dataset_path)
     collate = make_collate_fn()
     loader = torch.utils.data.DataLoader(
@@ -65,20 +65,36 @@ def evaluate_loss(
     )
 
     model.eval()
-    total_loss = 0.0
+    total_loss_lm = 0.0
+    total_loss_sf = 0.0
     total_tokens = 0
+    total_sf_tokens = 0
     with torch.inference_mode():
-        for x, y in loader:
+        for x, y_tokens, y_stockfish_evals in loader:
             x = x.to(device, non_blocking=True)
-            y = y.to(device, non_blocking=True)
-            _, loss = model(x, y, ignore_index=LOSS_IGNORE_INDEX)
-            valid_tokens = (y != LOSS_IGNORE_INDEX).sum().item()
-            total_loss += float(loss.item()) * valid_tokens
+            y_tokens = y_tokens.to(device, non_blocking=True)
+            y_stockfish_evals = y_stockfish_evals.to(device, non_blocking=True)
+            _, (loss_lm, loss_sf) = model(
+                x,
+                targets=y_tokens,
+                stockfish_targets=y_stockfish_evals,
+                ignore_index=LOSS_IGNORE_INDEX,
+            )
+            valid_tokens = (y_tokens != LOSS_IGNORE_INDEX).sum().item()
+            valid_sf_tokens = (y_stockfish_evals != LOSS_IGNORE_INDEX).sum().item()
+            total_loss_lm += float(loss_lm.item()) * valid_tokens
             total_tokens += valid_tokens
+            total_loss_sf += float(loss_sf.item()) * valid_sf_tokens
+            total_sf_tokens += valid_sf_tokens
     model.train()
     if total_tokens == 0:
         raise ValueError("Eval dataset has no valid tokens")
-    return total_loss / total_tokens
+
+    return {
+        "val_loss": total_loss_lm / total_tokens,
+        "val_loss_lm": total_loss_lm / total_tokens,
+        "val_loss_stockfish": total_loss_sf / max(total_sf_tokens, 1),
+    }
 
 
 def setup_runtime() -> tuple[
@@ -164,7 +180,7 @@ def run_supervised_training(
     scaler: torch.amp.GradScaler,
     lr_fn: Callable[[int], float],
     desc: str,
-    log_fn: Callable[[int, float, float], None] | None = None,
+    log_fn: Callable[[int, dict[str, float], float], None] | None = None,
     eval_fn: Callable[[torch.nn.Module, int], dict[str, Any]],
     eval_log_fn: Callable[[int, dict[str, Any]], None],
     val_loader: Iterable,
@@ -181,7 +197,7 @@ def run_supervised_training(
         scaler: Gradient scaler.
         lr_fn: Learning rate schedule function (iter_num -> lr).
         desc: Description for progress bar.
-        log_fn: Optional callback (iter_num, last_loss_value, epoch_float) for custom logging.
+        log_fn: Optional callback (iter_num, metrics_dict, epoch_float) for custom logging.
         eval_fn: Callback (model, iter_num) -> dict of eval metrics.
         eval_log_fn: Callback to log eval metrics.
         val_loader: DataLoader for validation data.
@@ -206,16 +222,25 @@ def run_supervised_training(
 
     model.train()
     while iter_num < max_iters:
-        for x, y in train_loader:
+        for x, y_tokens, y_stockfish_evals in train_loader:
             lr = lr_fn(iter_num)
             for param_group in optimizer.param_groups:
                 param_group["lr"] = lr
 
             x = x.to(device, non_blocking=True)
-            y = y.to(device, non_blocking=True)
+            y_tokens = y_tokens.to(device, non_blocking=True)
+            y_stockfish_evals = y_stockfish_evals.to(device, non_blocking=True)
 
             with ctx:
-                _, loss = model(x, y, ignore_index=LOSS_IGNORE_INDEX)
+                _, loss_tuple = model(
+                    x,
+                    targets=y_tokens,
+                    stockfish_targets=y_stockfish_evals,
+                    ignore_index=LOSS_IGNORE_INDEX,
+                )
+                loss_lm, loss_stockfish = loss_tuple
+                loss = loss_lm + train_config.stockfish_loss_weight * loss_stockfish
+
             last_loss_value = float(loss.item())
 
             scaler.scale(loss).backward()
@@ -237,24 +262,44 @@ def run_supervised_training(
                     epoch=f"{epoch_float:.2f}",
                 )
                 if log_fn is not None:
-                    log_fn(iter_num, last_loss_value, epoch_float)
+                    log_fn(
+                        iter_num,
+                        {
+                            "train_loss": last_loss_value,
+                            "loss_lm": float(loss_lm.item()),
+                            "loss_stockfish": float(loss_stockfish.item()),
+                        },
+                        epoch_float,
+                    )
 
             # running evaluation and logging eval metrics
             if iter_num % eval_interval == 0:
                 raw_model = unwrap_model(model)
                 raw_model.eval()
-                val_loss_sum = 0.0
+                val_loss_lm_sum = 0.0
+                val_loss_sf_sum = 0.0
                 val_batches = 0
                 with torch.inference_mode():
-                    for x_val, y_val in val_loader:
+                    for x_val, y_val_tokens, y_val_evals in val_loader:
                         x_val = x_val.to(device, non_blocking=True)
-                        y_val = y_val.to(device, non_blocking=True)
-                        _, loss = raw_model(x_val, y_val, ignore_index=LOSS_IGNORE_INDEX)
-                        val_loss_sum += loss.item()
+                        y_val_tokens = y_val_tokens.to(device, non_blocking=True)
+                        y_val_evals = y_val_evals.to(device, non_blocking=True)
+                        _, (loss_lm, loss_sf) = raw_model(
+                            x_val,
+                            targets=y_val_tokens,
+                            stockfish_targets=y_val_evals,
+                            ignore_index=LOSS_IGNORE_INDEX,
+                        )
+                        val_loss_lm_sum += loss_lm.item()
+                        val_loss_sf_sum += loss_sf.item()
                         val_batches += 1
                 raw_model.train()
 
-                eval_metrics = {"val_loss": val_loss_sum / val_batches}
+                eval_metrics = {
+                    "val_loss": val_loss_lm_sum / val_batches,
+                    "val_loss_lm": val_loss_lm_sum / val_batches,
+                    "val_loss_stockfish": val_loss_sf_sum / val_batches,
+                }
                 eval_metrics.update(eval_fn(model, iter_num))
                 eval_log_fn(iter_num, eval_metrics)
 

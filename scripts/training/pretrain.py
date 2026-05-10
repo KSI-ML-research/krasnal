@@ -133,8 +133,8 @@ def main(cfg: DictConfig) -> None:
     tconf.max_iters = total_iters
     tconf.steps_per_epoch = steps_per_epoch
 
-    def log_fn(_iter_num, last_loss_value, epoch_float):
-        wandb.log({"train_loss": last_loss_value, "epoch": epoch_float})
+    def log_fn(_iter_num, metrics: dict[str, float], epoch_float):
+        wandb.log({"epoch": epoch_float, **metrics})
 
     eval_dataset = ChessDataset(EVAL_DATASET_PATH)
     val_loader = DataLoader(

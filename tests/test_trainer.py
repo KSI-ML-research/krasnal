@@ -23,11 +23,13 @@ class MockModel(torch.nn.Module):
         super().__init__()
         self.linear = torch.nn.Linear(8, 10)
 
-    def forward(self, x, y, ignore_index=-100):
+    def forward(self, x, targets=None, stockfish_targets=None, ignore_index=-100):
         logits = self.linear(x)
         loss = torch.nn.functional.cross_entropy(
-            logits.view(-1, logits.size(-1)), y.view(-1), ignore_index=ignore_index
+            logits.view(-1, logits.size(-1)), targets.view(-1), ignore_index=ignore_index
         )
+        if stockfish_targets is not None:
+            return logits, (loss, loss)
         return logits, loss
 
 
@@ -76,7 +78,9 @@ def test_max_less_than_warmup_validation():
 def test_run_training_smoke():
     from krasnal.config import TrainConfig
 
-    dataset = TensorDataset(torch.randn(20, 8), torch.randint(0, 10, (20,)))
+    dataset = TensorDataset(
+        torch.randn(20, 8), torch.randint(0, 10, (20,)), torch.randint(0, 10, (20,))
+    )
     loader = DataLoader(dataset, batch_size=4)
 
     model = MockModel()

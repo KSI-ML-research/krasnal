@@ -203,8 +203,8 @@ def main(cfg: DictConfig) -> None:
     )
     eval_device = torch.device(device)
 
-    def log_fn(iter_num: int, last_loss_value: float, epoch_float: float) -> None:
-        wandb.log({"train_loss": last_loss_value, "epoch": epoch_float}, step=iter_num)
+    def log_fn(iter_num: int, metrics: dict[str, float], epoch_float: float) -> None:
+        wandb.log({"epoch": epoch_float, **metrics}, step=iter_num)
 
     def eval_fn(model: torch.nn.Module, _iter_num: int) -> dict[str, Any]:
         raw_model = unwrap_model(model)

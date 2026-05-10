@@ -23,6 +23,7 @@ class GPTConfig:
     n_embd: int
     vocab_size: int | None = None
     dropout: float = 0.0
+    stockfish_eval_buckets: int = SF_EVAL_BUCKETS
 
 
 @dataclass
@@ -57,3 +58,4 @@ class TrainConfig:
     compile_dynamic: bool = False  # False since we use explicit padding buckets
     compile_fullgraph: bool = True  # captures the entire model into a single graph if True
     padding_bucket_sizes: tuple[int, ...] = ()
+    stockfish_loss_weight: float = 0.1
