@@ -28,6 +28,9 @@ from huggingface_hub import hf_hub_download
 from loguru import logger
 from omegaconf import DictConfig
 
+from krasnal import configure_logging
+
+configure_logging()
 logging.getLogger("httpx").setLevel(logging.WARNING)
 
 # ─── Configuration ───────────────────────────────────────────────────────────
