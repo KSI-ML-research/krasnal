@@ -15,7 +15,7 @@ from krasnal.eval.metrics.filtered import (
     WhenGivesCheckMetric,
     WhenInCheckMetric,
 )
-from krasnal.tokens import ELO_1500_1999_ID, ELO_2000_2499_ID
+from krasnal.tokens import ELO_1500_1599_ID, ELO_2000_2099_ID
 
 
 def test_top1_legal_returns_1_when_top_is_legal():
@@ -144,24 +144,24 @@ def test_by_phase_ignores_non_matching_phases():
 
 
 def test_by_elo_finalizes_by_player_elo_bucket():
-    metric = ByEloMetric(AccuracyCore(), ELO_1500_1999_ID)
+    metric = ByEloMetric(AccuracyCore(), ELO_1500_1599_ID)
     metric.compute(
         EvalContext(
-            player_elo_token=ELO_1500_1999_ID,
+            player_elo_token=ELO_1500_1599_ID,
             probs=torch.tensor([0.9, 0.1]),
             actual_token=0,
         )
     )
     metric.compute(
         EvalContext(
-            player_elo_token=ELO_1500_1999_ID,
+            player_elo_token=ELO_1500_1599_ID,
             probs=torch.tensor([0.9, 0.1]),
             actual_token=1,
         )
     )
     metric.compute(
         EvalContext(
-            player_elo_token=ELO_2000_2499_ID,
+            player_elo_token=ELO_2000_2099_ID,
             probs=torch.tensor([0.9, 0.1]),
             actual_token=0,
         )
@@ -169,7 +169,7 @@ def test_by_elo_finalizes_by_player_elo_bucket():
 
     result = metric.finalize()
 
-    assert result["acc/acc_elo_1500_1999"] == 0.5
+    assert result["acc/acc_elo_1500_1599"] == 0.5
 
 
 def test_per_piece_buffers_by_piece_type():

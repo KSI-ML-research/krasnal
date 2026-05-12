@@ -64,7 +64,9 @@ def main() -> None:
 
     artifact_dir = args.artifact_dir
     provider = ModelProvider.from_artifact_dir(artifact_dir)
-    dataset = ChessDataset(args.dataset)
+    dataset = ChessDataset(
+        args.dataset, include_elo=provider.artifact_config.get("include_elo", True)
+    )
     stockfish = get_stockfish_client(
         depth=args.stockfish_depth if args.stockfish_nodes is None else None,
         nodes=args.stockfish_nodes,

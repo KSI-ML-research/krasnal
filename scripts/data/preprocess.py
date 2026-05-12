@@ -22,12 +22,7 @@ from krasnal.tokens import (
     BLACK_WON_ID,
     COLORED_PIECE_TOKENS,
     DRAW_ID,
-    ELO_1000_1499_ID,
-    ELO_1500_1999_ID,
-    ELO_2000_2499_ID,
-    ELO_2500_2999_ID,
-    ELO_ABOVE_3000_ID,
-    ELO_BELOW_1000_ID,
+    ELO_TOKENS,
     ELO_UNKNOWN_ID,
     EMPTY_ID,
     GAME_END_ID,
@@ -504,103 +499,99 @@ def _seq_len_stats_from_lf(seq_len_lf: pl.LazyFrame, block_size: int) -> dict[st
 
 def _token_mix_raw_sums(tokenized_lf: pl.LazyFrame) -> tuple[int, ...]:
     result_ids = [WHITE_WON_ID, BLACK_WON_ID, DRAW_ID, UNKNOWN_RESULT_ID]
-    elo_ids = [
-        ELO_BELOW_1000_ID,
-        ELO_1000_1499_ID,
-        ELO_1500_1999_ID,
-        ELO_2000_2499_ID,
-        ELO_2500_2999_ID,
-        ELO_ABOVE_3000_ID,
-        ELO_UNKNOWN_ID,
-    ]
+    elo_ids = list(ELO_TOKENS.values())
     special_ids = list(SPECIAL_TOKENS.values())
 
-    stats = (
-        tokenized_lf.select(
-            pl.col("token_ids").list.len().sum().alias("total_tokens"),
-            pl.col("token_ids")
-            .list.eval((pl.element() == IS_CHECK_ID).cast(pl.UInt32), parallel=True)
-            .list.sum()
-            .sum()
-            .alias("is_check_count"),
-            pl.col("token_ids")
-            .list.eval((pl.element() == YES_CHECK_ID).cast(pl.UInt32), parallel=True)
-            .list.sum()
-            .sum()
-            .alias("yes_check_count"),
-            pl.col("token_ids")
-            .list.eval((pl.element() == NO_CHECK_ID).cast(pl.UInt32), parallel=True)
-            .list.sum()
-            .sum()
-            .alias("no_check_count"),
-            pl.col("token_ids")
-            .list.eval((pl.element() == PIECE_TYPE_MOVED_ID).cast(pl.UInt32), parallel=True)
-            .list.sum()
-            .sum()
-            .alias("piece_type_moved_count"),
-            pl.col("token_ids")
-            .list.eval(
-                pl.element().is_in(list(WHATS_ON_SQUARE_TOKEN_IDS)).cast(pl.UInt32),
-                parallel=True,
-            )
-            .list.sum()
-            .sum()
-            .alias("what_is_on_count"),
-            pl.col("token_ids")
-            .list.eval((pl.element() == EMPTY_ID).cast(pl.UInt32), parallel=True)
-            .list.sum()
-            .sum()
-            .alias("empty_count"),
-            pl.col("token_ids")
-            .list.eval((pl.element() == PAWN_ID).cast(pl.UInt32), parallel=True)
-            .list.sum()
-            .sum()
-            .alias("pawn_count"),
-            pl.col("token_ids")
-            .list.eval((pl.element() == KNIGHT_ID).cast(pl.UInt32), parallel=True)
-            .list.sum()
-            .sum()
-            .alias("knight_count"),
-            pl.col("token_ids")
-            .list.eval((pl.element() == BISHOP_ID).cast(pl.UInt32), parallel=True)
-            .list.sum()
-            .sum()
-            .alias("bishop_count"),
-            pl.col("token_ids")
-            .list.eval((pl.element() == ROOK_ID).cast(pl.UInt32), parallel=True)
-            .list.sum()
-            .sum()
-            .alias("rook_count"),
-            pl.col("token_ids")
-            .list.eval((pl.element() == QUEEN_ID).cast(pl.UInt32), parallel=True)
-            .list.sum()
-            .sum()
-            .alias("queen_count"),
-            pl.col("token_ids")
-            .list.eval((pl.element() == KING_ID).cast(pl.UInt32), parallel=True)
-            .list.sum()
-            .sum()
-            .alias("king_count"),
-            pl.col("token_ids")
-            .list.eval(pl.element().is_in(result_ids).cast(pl.UInt32), parallel=True)
-            .list.sum()
-            .sum()
-            .alias("result_count"),
-            pl.col("token_ids")
-            .list.eval(pl.element().is_in(elo_ids).cast(pl.UInt32), parallel=True)
-            .list.sum()
-            .sum()
-            .alias("elo_count"),
-            pl.col("token_ids")
-            .list.eval(pl.element().is_in(special_ids).cast(pl.UInt32), parallel=True)
-            .list.sum()
-            .sum()
-            .alias("special_count"),
+    exprs = [
+        pl.col("token_ids").list.len().sum().alias("total_tokens"),
+        pl.col("token_ids")
+        .list.eval((pl.element() == IS_CHECK_ID).cast(pl.UInt32), parallel=True)
+        .list.sum()
+        .sum()
+        .alias("is_check_count"),
+        pl.col("token_ids")
+        .list.eval((pl.element() == YES_CHECK_ID).cast(pl.UInt32), parallel=True)
+        .list.sum()
+        .sum()
+        .alias("yes_check_count"),
+        pl.col("token_ids")
+        .list.eval((pl.element() == NO_CHECK_ID).cast(pl.UInt32), parallel=True)
+        .list.sum()
+        .sum()
+        .alias("no_check_count"),
+        pl.col("token_ids")
+        .list.eval((pl.element() == PIECE_TYPE_MOVED_ID).cast(pl.UInt32), parallel=True)
+        .list.sum()
+        .sum()
+        .alias("piece_type_moved_count"),
+        pl.col("token_ids")
+        .list.eval(
+            pl.element().is_in(list(WHATS_ON_SQUARE_TOKEN_IDS)).cast(pl.UInt32), parallel=True
         )
-        .collect()
-        .row(0)
-    )
+        .list.sum()
+        .sum()
+        .alias("what_is_on_count"),
+        pl.col("token_ids")
+        .list.eval((pl.element() == EMPTY_ID).cast(pl.UInt32), parallel=True)
+        .list.sum()
+        .sum()
+        .alias("empty_count"),
+        pl.col("token_ids")
+        .list.eval((pl.element() == PAWN_ID).cast(pl.UInt32), parallel=True)
+        .list.sum()
+        .sum()
+        .alias("pawn_count"),
+        pl.col("token_ids")
+        .list.eval((pl.element() == KNIGHT_ID).cast(pl.UInt32), parallel=True)
+        .list.sum()
+        .sum()
+        .alias("knight_count"),
+        pl.col("token_ids")
+        .list.eval((pl.element() == BISHOP_ID).cast(pl.UInt32), parallel=True)
+        .list.sum()
+        .sum()
+        .alias("bishop_count"),
+        pl.col("token_ids")
+        .list.eval((pl.element() == ROOK_ID).cast(pl.UInt32), parallel=True)
+        .list.sum()
+        .sum()
+        .alias("rook_count"),
+        pl.col("token_ids")
+        .list.eval((pl.element() == QUEEN_ID).cast(pl.UInt32), parallel=True)
+        .list.sum()
+        .sum()
+        .alias("queen_count"),
+        pl.col("token_ids")
+        .list.eval((pl.element() == KING_ID).cast(pl.UInt32), parallel=True)
+        .list.sum()
+        .sum()
+        .alias("king_count"),
+        pl.col("token_ids")
+        .list.eval(pl.element().is_in(result_ids).cast(pl.UInt32), parallel=True)
+        .list.sum()
+        .sum()
+        .alias("result_count"),
+        pl.col("token_ids")
+        .list.eval(pl.element().is_in(elo_ids).cast(pl.UInt32), parallel=True)
+        .list.sum()
+        .sum()
+        .alias("elo_count"),
+        pl.col("token_ids")
+        .list.eval(pl.element().is_in(special_ids).cast(pl.UInt32), parallel=True)
+        .list.sum()
+        .sum()
+        .alias("special_count"),
+    ]
+    for bucket_name, bucket_id in ELO_TOKENS.items():
+        exprs.append(
+            pl.col("token_ids")
+            .list.eval((pl.element() == bucket_id).cast(pl.UInt32), parallel=True)
+            .list.sum()
+            .sum()
+            .alias(f"elo_{bucket_name}_count")
+        )
 
+    stats = tokenized_lf.select(*exprs).collect().row(0)
     return tuple(int(x or 0) for x in stats)
 
 
@@ -642,7 +633,7 @@ def _token_mix_from_raw_sums(stats: tuple[int, ...]) -> dict[str, float]:
     def pct(count: int) -> float:
         return (count / total_tokens * 100.0) if total_tokens > 0 else 0.0
 
-    return {
+    result = {
         "total_tokens": total_tokens,
         "uci_move_count": uci_move_count,
         "check_qa_count": check_qa_count,
@@ -669,6 +660,13 @@ def _token_mix_from_raw_sums(stats: tuple[int, ...]) -> dict[str, float]:
         "empty_count": empty_count,
         "occupied_count": what_is_on_count - empty_count,
     }
+
+    idx = 16
+    for bucket_name in ELO_TOKENS:
+        result[f"elo_{bucket_name}_count"] = float(stats[idx])
+        idx += 1
+
+    return result
 
 
 def compute_token_mix_stats(tokenized_lf: pl.LazyFrame) -> dict[str, float]:
@@ -905,6 +903,14 @@ def main(cfg: DictConfig) -> None:
             token_mix["queen_count"] / total_piece_answers * 100.0,
             token_mix["king_count"] / total_piece_answers * 100.0,
         )
+
+    logger.info("ELO Bucket Distribution:")
+    total_elo = sum(token_mix[f"elo_{b}_count"] for b in ELO_TOKENS)
+    if total_elo > 0:
+        for bucket_name in ELO_TOKENS:
+            count = token_mix[f"elo_{bucket_name}_count"]
+            pct = (count / total_elo) * 100.0
+            logger.info("  {}: {:.2f}%", bucket_name, pct)
 
     train_parts = sorted(train_batches_dir.glob("*.parquet"))
     eval_parts = sorted(eval_batches_dir.glob("*.parquet"))

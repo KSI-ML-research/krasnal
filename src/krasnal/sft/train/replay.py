@@ -42,8 +42,10 @@ def split_shard_paths(
 class RandomTokenSource:
     """Sample token sequences uniformly from parquet-backed datasets."""
 
-    def __init__(self, paths: Path | list[Path], *, seed: int = 42) -> None:
-        self.dataset = ChessDataset(paths)
+    def __init__(
+        self, paths: Path | list[Path], *, seed: int = 42, include_elo: bool = True
+    ) -> None:
+        self.dataset = ChessDataset(paths, include_elo=include_elo)
         self.rng = random.Random(seed)
 
     def __len__(self) -> int:
@@ -62,9 +64,9 @@ class RandomTokenSource:
 class CotReplaySource(RandomTokenSource):
     """Read previously saved CoT rows from a shard directory."""
 
-    def __init__(self, shards_dir: Path, *, seed: int = 42) -> None:
+    def __init__(self, shards_dir: Path, *, seed: int = 42, include_elo: bool = True) -> None:
         self.shard_paths = resolve_shard_paths(shards_dir)
-        super().__init__(self.shard_paths, seed=seed)
+        super().__init__(self.shard_paths, seed=seed, include_elo=include_elo)
         self.order = list(range(len(self.dataset)))
         self.rng.shuffle(self.order)
         self.index = 0

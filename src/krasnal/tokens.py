@@ -23,32 +23,40 @@ THINK_START_ID = 7
 THINK_END_ID = 8
 
 ELO_BELOW_1000_ID = 9
-ELO_1000_1499_ID = 10
-ELO_1500_1999_ID = 11
-ELO_2000_2499_ID = 12
-ELO_2500_2999_ID = 13
-ELO_ABOVE_3000_ID = 14
-ELO_UNKNOWN_ID = 15
+ELO_1000_1099_ID = 10
+ELO_1100_1199_ID = 11
+ELO_1200_1299_ID = 12
+ELO_1300_1399_ID = 13
+ELO_1400_1499_ID = 14
+ELO_1500_1599_ID = 15
+ELO_1600_1699_ID = 16
+ELO_1700_1799_ID = 17
+ELO_1800_1899_ID = 18
+ELO_1900_1999_ID = 19
+ELO_2000_2099_ID = 20
+ELO_2100_2199_ID = 21
+ELO_ABOVE_2200_ID = 22
+ELO_UNKNOWN_ID = 23
 
-IS_CHECK_ID = 16
-YES_CHECK_ID = 17
-NO_CHECK_ID = 18
-PIECE_TYPE_MOVED_ID = 19
-PAWN_ID = 20
-KNIGHT_ID = 21
-BISHOP_ID = 22
-ROOK_ID = 23
-QUEEN_ID = 24
-KING_ID = 25
-EMPTY_ID = 26
+IS_CHECK_ID = 24
+YES_CHECK_ID = 25
+NO_CHECK_ID = 26
+PIECE_TYPE_MOVED_ID = 27
+PAWN_ID = 28
+KNIGHT_ID = 29
+BISHOP_ID = 30
+ROOK_ID = 31
+QUEEN_ID = 32
+KING_ID = 33
+EMPTY_ID = 34
 
 WHATS_ON_SQUARE = {
-    f"<whats_on_{chr(f + 97)}{r + 1}>": 27 + r * 8 + f for r in range(8) for f in range(8)
+    f"<whats_on_{chr(f + 97)}{r + 1}>": 35 + r * 8 + f for r in range(8) for f in range(8)
 }
 WHATS_ON_SQUARE_TOKEN_IDS = frozenset(WHATS_ON_SQUARE.values())
 
 COLORED_PIECE_TOKENS = {}
-_next_id = 91
+_next_id = 99
 for _color in ["w", "b"]:
     for _piece in ["pawn", "knight", "bishop", "rook", "queen", "king"]:
         COLORED_PIECE_TOKENS[f"<{_color}:{_piece}>"] = _next_id
@@ -83,21 +91,38 @@ OUTCOME_TOKENS = {
 
 ELO_TOKENS = {
     "<elo_below_1000>": ELO_BELOW_1000_ID,
-    "<elo_1000_1499>": ELO_1000_1499_ID,
-    "<elo_1500_1999>": ELO_1500_1999_ID,
-    "<elo_2000_2499>": ELO_2000_2499_ID,
-    "<elo_2500_2999>": ELO_2500_2999_ID,
-    "<elo_above_3000>": ELO_ABOVE_3000_ID,
+    "<elo_1000_1099>": ELO_1000_1099_ID,
+    "<elo_1100_1199>": ELO_1100_1199_ID,
+    "<elo_1200_1299>": ELO_1200_1299_ID,
+    "<elo_1300_1399>": ELO_1300_1399_ID,
+    "<elo_1400_1499>": ELO_1400_1499_ID,
+    "<elo_1500_1599>": ELO_1500_1599_ID,
+    "<elo_1600_1699>": ELO_1600_1699_ID,
+    "<elo_1700_1799>": ELO_1700_1799_ID,
+    "<elo_1800_1899>": ELO_1800_1899_ID,
+    "<elo_1900_1999>": ELO_1900_1999_ID,
+    "<elo_2000_2099>": ELO_2000_2099_ID,
+    "<elo_2100_2199>": ELO_2100_2199_ID,
+    "<elo_above_2200>": ELO_ABOVE_2200_ID,
     "<elo_unknown>": ELO_UNKNOWN_ID,
 }
 
 ELO_BUCKETS = {
     ELO_BELOW_1000_ID: "below_1000",
-    ELO_1000_1499_ID: "1000_1499",
-    ELO_1500_1999_ID: "1500_1999",
-    ELO_2000_2499_ID: "2000_2499",
-    ELO_2500_2999_ID: "2500_2999",
-    ELO_ABOVE_3000_ID: "above_3000",
+    ELO_1000_1099_ID: "1000_1099",
+    ELO_1100_1199_ID: "1100_1199",
+    ELO_1200_1299_ID: "1200_1299",
+    ELO_1300_1399_ID: "1300_1399",
+    ELO_1400_1499_ID: "1400_1499",
+    ELO_1500_1599_ID: "1500_1599",
+    ELO_1600_1699_ID: "1600_1699",
+    ELO_1700_1799_ID: "1700_1799",
+    ELO_1800_1899_ID: "1800_1899",
+    ELO_1900_1999_ID: "1900_1999",
+    ELO_2000_2099_ID: "2000_2099",
+    ELO_2100_2199_ID: "2100_2199",
+    ELO_ABOVE_2200_ID: "above_2200",
+    ELO_UNKNOWN_ID: "unknown",
 }
 
 # Loss-mask targets: model always receives result + Elo as a fixed prefix at inference.
@@ -402,15 +427,13 @@ def get_vocab_size() -> int:
 def get_elo_bucket(elo: int) -> int:
     if elo < 1000:
         return ELO_BELOW_1000_ID
-    if elo < 1500:
-        return ELO_1000_1499_ID
-    if elo < 2000:
-        return ELO_1500_1999_ID
-    if elo < 2500:
-        return ELO_2000_2499_ID
-    if elo < 3000:
-        return ELO_2500_2999_ID
-    return ELO_ABOVE_3000_ID
+    if elo >= 2200:
+        return ELO_ABOVE_2200_ID
+
+    # Map [1000, 2199] to 100-point buckets
+    bucket_index = (elo - 1000) // 100
+    # The IDs are sequential starting from 10
+    return 10 + bucket_index
 
 
 def result_to_token_id(result: str | int) -> int:

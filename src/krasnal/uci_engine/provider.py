@@ -88,6 +88,7 @@ class ModelProvider(ChessModelProvider):
         model: torch.nn.Module,
         device: torch.device,
         artifact_dir: Path | None = None,
+        artifact_config: dict | None = None,
     ) -> None:
         self.model = model
         self.device = device
@@ -101,6 +102,7 @@ class ModelProvider(ChessModelProvider):
         self.top_p = float(os.environ.get("KRASNAL_TOP_P", "1.0"))
         self.outcome_token: int | None = None
         self.session: InferenceSession | None = None
+        self.artifact_config = artifact_config or {}
 
     @classmethod
     def from_artifact_dir(
@@ -127,6 +129,7 @@ class ModelProvider(ChessModelProvider):
             model=model,
             device=runtime_device,
             artifact_dir=artifact_dir,
+            artifact_config=artifact_config,
         )
 
     def reset_session(self, outcome_token: int) -> None:

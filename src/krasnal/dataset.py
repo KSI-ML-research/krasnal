@@ -35,7 +35,7 @@ class ChessDataset(Dataset[torch.Tensor]):
     effectively solving memory usage issues during multi-process training.
     """
 
-    def __init__(self, parquet_path: Path | list[Path]):
+    def __init__(self, parquet_path: Path | list[Path], include_elo: bool = True):
         paths = (
             [str(path) for path in parquet_path]
             if isinstance(parquet_path, list)
@@ -46,6 +46,11 @@ class ChessDataset(Dataset[torch.Tensor]):
         self.dataset = HFDataset.from_parquet(paths, cache_dir=str(cache_dir))
         self.dataset.set_format(type="torch", columns=["token_ids"])
 
+        self.include_elo = include_elo
+        from krasnal.tokens import ELO_TOKENS
+
+        self.elo_tensor = torch.tensor(list(ELO_TOKENS.values()), dtype=torch.long)
+
     def __len__(self):
         return len(self.dataset)
 
@@ -53,6 +58,11 @@ class ChessDataset(Dataset[torch.Tensor]):
         tokens = self.dataset[idx]["token_ids"].to(torch.long)
         if tokens.min() < 0:
             raise ValueError(f"Invalid negative tokens found at index {idx}: {tokens[tokens < 0]}")
+
+        if not self.include_elo:
+            mask = ~torch.isin(tokens, self.elo_tensor)
+            tokens = tokens[mask]
+
         return tokens
 
 

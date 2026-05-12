@@ -67,7 +67,7 @@ def _main(cfg: DictConfig, dist_info: DistributedInfo) -> None:
             "Run scripts/preprocess.py first to generate it."
         )
 
-    train_dataset = ChessDataset(PRETRAIN_DATASET_PATH)
+    train_dataset = ChessDataset(PRETRAIN_DATASET_PATH, include_elo=cfg.get("include_elo", True))
     dataset_mtime = int(PRETRAIN_DATASET_PATH.stat().st_mtime)
     model_cfg = OmegaConf.to_container(cfg.model, resolve=True)
     model_cfg.pop("name", None)
@@ -188,7 +188,7 @@ def _main(cfg: DictConfig, dist_info: DistributedInfo) -> None:
     def log_fn(_iter_num, last_loss_value, epoch_float):
         wandb.log({"train_loss": last_loss_value, "epoch": epoch_float})
 
-    eval_dataset = ChessDataset(EVAL_DATASET_PATH)
+    eval_dataset = ChessDataset(EVAL_DATASET_PATH, include_elo=cfg.get("include_elo", True))
     val_loader = DataLoader(
         eval_dataset,
         shuffle=False,

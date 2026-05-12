@@ -7,7 +7,7 @@ from torch.utils.data import DataLoader, TensorDataset
 
 from krasnal.dataset import make_collate_fn
 from krasnal.tokens import (
-    ELO_2000_2499_ID,
+    ELO_2000_2099_ID,
     IS_CHECK_ID,
     MOVE_TO_ID,
     PAWN_ID,
@@ -126,9 +126,9 @@ def test_run_training_smoke():
 
 def test_collate_masks_conditioning_metadata_targets():
     collate = make_collate_fn()
-    x, y = collate([torch.tensor([0, WHITE_WON_ID, ELO_2000_2499_ID, 500], dtype=torch.long)])
+    x, y = collate([torch.tensor([0, WHITE_WON_ID, ELO_2000_2099_ID, 500], dtype=torch.long)])
 
-    assert x.tolist() == [[0, WHITE_WON_ID, ELO_2000_2499_ID]]
+    assert x.tolist() == [[0, WHITE_WON_ID, ELO_2000_2099_ID]]
     assert y.tolist() == [[-100, -100, 500]]
 
 

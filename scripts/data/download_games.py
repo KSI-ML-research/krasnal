@@ -5,7 +5,7 @@ Download Aix-compatible Lichess database files and filter them with DuckDB + Aix
 Filters:
     - Both players >= min_elo (configured in download.yaml)
     - Time control >= min_time seconds base (5+0 and above)
-    - Games must have Stockfish evals
+    - Stockfish evals only when require_evals is enabled
     - Normal termination only
     - Date range: 2013-01 to 2026-03 (configurable)
 
@@ -184,7 +184,7 @@ def main(cfg: DictConfig) -> None:
     min_time = cfg.min_time
     target_games = cfg.target_games
     compression = cfg.compression
-    require_evals = cfg.get("require_evals", True)
+    require_evals = cfg.get("require_evals", False)
 
     months = cfg.months if cfg.months else DEFAULT_MONTHS
 
