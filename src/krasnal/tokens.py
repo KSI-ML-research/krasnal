@@ -38,6 +38,13 @@ ELO_2100_2199_ID = 21
 ELO_ABOVE_2200_ID = 22
 ELO_UNKNOWN_ID = 23
 
+TC_BLITZ_NO_INC_ID = 111
+TC_BLITZ_INC_ID = 112
+TC_RAPID_NO_INC_ID = 113
+TC_RAPID_INC_ID = 114
+TC_CLASSICAL_ID = 115
+TC_UNKNOWN_ID = 116
+
 IS_CHECK_ID = 24
 YES_CHECK_ID = 25
 NO_CHECK_ID = 26
@@ -107,6 +114,15 @@ ELO_TOKENS = {
     "<elo_unknown>": ELO_UNKNOWN_ID,
 }
 
+TC_TOKENS = {
+    "<tc_blitz_no_inc>": TC_BLITZ_NO_INC_ID,
+    "<tc_blitz_inc>": TC_BLITZ_INC_ID,
+    "<tc_rapid_no_inc>": TC_RAPID_NO_INC_ID,
+    "<tc_rapid_inc>": TC_RAPID_INC_ID,
+    "<tc_classical>": TC_CLASSICAL_ID,
+    "<tc_unknown>": TC_UNKNOWN_ID,
+}
+
 ELO_BUCKETS = {
     ELO_BELOW_1000_ID: "below_1000",
     ELO_1000_1099_ID: "1000_1099",
@@ -125,9 +141,9 @@ ELO_BUCKETS = {
     ELO_UNKNOWN_ID: "unknown",
 }
 
-# Loss-mask targets: model always receives result + Elo as a fixed prefix at inference.
+# Loss-mask targets: model always receives result, Elo, and time control as a fixed prefix.
 CONDITIONING_METADATA_TARGET_MASK_IDS: Final[frozenset[int]] = frozenset(
-    (*OUTCOME_TOKENS.values(), *ELO_TOKENS.values())
+    (*OUTCOME_TOKENS.values(), *ELO_TOKENS.values(), *TC_TOKENS.values())
 )
 
 THINKING_TOKENS = {
@@ -161,6 +177,7 @@ SPECIAL_TOKENS = {
     **QA_TOKENS,
     **OUTCOME_TOKENS,
     **ELO_TOKENS,
+    **TC_TOKENS,
     **THINKING_TOKENS,
 }
 
@@ -434,6 +451,24 @@ def get_elo_bucket(elo: int) -> int:
     bucket_index = (elo - 1000) // 100
     # The IDs are sequential starting from 10
     return 10 + bucket_index
+
+
+def get_time_control_bucket(
+    time_initial: int | float | None,
+    time_increment: int | float | None,
+) -> int:
+    if time_initial is None or time_increment is None:
+        return TC_UNKNOWN_ID
+
+    initial = int(time_initial)
+    increment = int(time_increment)
+    estimated_duration = initial + 40 * increment
+
+    if estimated_duration < 480:
+        return TC_BLITZ_NO_INC_ID if increment == 0 else TC_BLITZ_INC_ID
+    if estimated_duration < 1500:
+        return TC_RAPID_NO_INC_ID if increment == 0 else TC_RAPID_INC_ID
+    return TC_CLASSICAL_ID
 
 
 def result_to_token_id(result: str | int) -> int:

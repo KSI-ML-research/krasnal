@@ -9,6 +9,7 @@ from krasnal.tokens import (
     ELO_UNKNOWN_ID,
     GAME_START_ID,
     OUTCOME_TOKENS,
+    TC_UNKNOWN_ID,
     normalize_piece_type,
     token_to_uci,
     uci_to_token_id,
@@ -19,6 +20,7 @@ from krasnal.tokens import (
 class Game:
     white_elo_token: int = ELO_UNKNOWN_ID
     black_elo_token: int = ELO_UNKNOWN_ID
+    time_control_token: int = TC_UNKNOWN_ID
     target_outcome_token: int = DRAW_ID
     moves_uci: list[str] = field(default_factory=list)
     tokens: list[int] = field(default_factory=list)
@@ -34,6 +36,7 @@ class Game:
         """Return prompt tokens plus synchronized move tokens."""
         return [
             GAME_START_ID,
+            self.time_control_token,
             self.target_outcome_token,
             self.white_elo_token,
             self.black_elo_token,

@@ -6,19 +6,24 @@ from krasnal.tokens import (
     GAME_END_ID,
     GAME_START_ID,
     OUTCOME_TOKENS,
+    TC_TOKENS,
 )
 
 
 @dataclass
 class GameTokens:
     outcome_token: int
+    time_control_token: int | None
     white_elo_token: int | None
     black_elo_token: int | None
     move_tokens: list[int]
 
     @property
     def initial_context(self) -> list[int]:
-        ctx = [GAME_START_ID, self.outcome_token]
+        ctx = [GAME_START_ID]
+        if self.time_control_token is not None:
+            ctx.append(self.time_control_token)
+        ctx.append(self.outcome_token)
         if self.white_elo_token is not None:
             ctx.append(self.white_elo_token)
         if self.black_elo_token is not None:
@@ -42,9 +47,16 @@ def parse_game_tokens(token_ids: list[int]) -> GameTokens | None:
     outcome_idx = token_ids.index(outcome_token)
     remaining_tokens = token_ids[outcome_idx + 1 : -1]
 
+    time_control_ids = set(TC_TOKENS.values())
     elo_bucket_ids = set(ELO_TOKENS.values())
+    time_control_token = None
     white_elo_token = None
     black_elo_token = None
+
+    for token_id in token_ids[1:outcome_idx]:
+        if token_id in time_control_ids:
+            time_control_token = token_id
+            break
 
     for token_id in remaining_tokens:
         if token_id in elo_bucket_ids:
@@ -56,6 +68,7 @@ def parse_game_tokens(token_ids: list[int]) -> GameTokens | None:
 
     return GameTokens(
         outcome_token=outcome_token,
+        time_control_token=time_control_token,
         white_elo_token=white_elo_token,
         black_elo_token=black_elo_token,
         move_tokens=[],

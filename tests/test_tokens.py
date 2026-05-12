@@ -27,6 +27,13 @@ from krasnal.tokens import (
     QUEEN_ID,
     ROOK_ID,
     SPECIAL_TOKENS,
+    TC_BLITZ_INC_ID,
+    TC_BLITZ_NO_INC_ID,
+    TC_CLASSICAL_ID,
+    TC_RAPID_INC_ID,
+    TC_RAPID_NO_INC_ID,
+    TC_TOKENS,
+    TC_UNKNOWN_ID,
     THINK_END_ID,
     THINK_START_ID,
     WHITE_WON_ID,
@@ -34,6 +41,7 @@ from krasnal.tokens import (
     build_move_key,
     get_elo_bucket,
     get_moves_only,
+    get_time_control_bucket,
     load_move_vocab,
     make_move_vocab_artifact,
     move_key_for_ply,
@@ -78,6 +86,19 @@ def test_elo_tokens_in_vocab():
     assert all(tok_str in MOVE_TO_ID for tok_str in ELO_TOKENS)
 
 
+def test_time_control_tokens_exist():
+    assert TC_BLITZ_NO_INC_ID in TC_TOKENS.values()
+    assert TC_BLITZ_INC_ID in TC_TOKENS.values()
+    assert TC_RAPID_NO_INC_ID in TC_TOKENS.values()
+    assert TC_RAPID_INC_ID in TC_TOKENS.values()
+    assert TC_CLASSICAL_ID in TC_TOKENS.values()
+    assert TC_UNKNOWN_ID in TC_TOKENS.values()
+
+
+def test_time_control_tokens_in_vocab():
+    assert all(tok_str in MOVE_TO_ID for tok_str in TC_TOKENS)
+
+
 def test_elo_bucket_function():
     assert get_elo_bucket(999) == ELO_BELOW_1000_ID
     assert get_elo_bucket(1000) == ELO_1000_1099_ID
@@ -90,6 +111,15 @@ def test_elo_bucket_function():
     assert get_elo_bucket(2200) == ELO_ABOVE_2200_ID
     assert get_elo_bucket(2500) == ELO_ABOVE_2200_ID
     assert get_elo_bucket(3000) == ELO_ABOVE_2200_ID
+
+
+def test_time_control_bucket_function():
+    assert get_time_control_bucket(None, 0) == TC_UNKNOWN_ID
+    assert get_time_control_bucket(300, 0) == TC_BLITZ_NO_INC_ID
+    assert get_time_control_bucket(180, 3) == TC_BLITZ_INC_ID
+    assert get_time_control_bucket(600, 0) == TC_RAPID_NO_INC_ID
+    assert get_time_control_bucket(600, 5) == TC_RAPID_INC_ID
+    assert get_time_control_bucket(900, 15) == TC_CLASSICAL_ID
 
 
 def test_get_moves_only_basic():
