@@ -25,7 +25,7 @@ mkdir -p $XDG_RUNTIME_DIR
 mkdir -p $UV_CACHE_DIR
 mkdir -p $HF_HOME
 
-uv venv .venv --python 3.13
+test -d .venv || uv venv .venv --python 3.13
 uv sync
 
 uv run scripts/data/download_games.py target_games=15000000 require_evals=false

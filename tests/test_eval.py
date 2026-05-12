@@ -10,8 +10,8 @@ from krasnal.eval.stockfish import StockfishAnalysis, StockfishClient
 from krasnal.tokens import (
     BLACK_PREFIX,
     DRAW_ID,
-    ELO_1500_1999_ID,
-    ELO_2000_2499_ID,
+    ELO_1500_1599_ID,
+    ELO_2000_2099_ID,
     MOVE_TO_ID,
     WHITE_PREFIX,
 )
@@ -121,8 +121,8 @@ def test_blunder_rate_metric_counts_large_eval_drop():
 def test_replay_game_tokens_sets_player_elo_by_side_to_move():
     game_tokens = GameTokens(
         outcome_token=DRAW_ID,
-        white_elo_token=ELO_1500_1999_ID,
-        black_elo_token=ELO_2000_2499_ID,
+        white_elo_token=ELO_1500_1599_ID,
+        black_elo_token=ELO_2000_2099_ID,
         move_tokens=[
             MOVE_TO_ID[WHITE_PREFIX + "e2e4"],
             MOVE_TO_ID[BLACK_PREFIX + "e7e5"],
@@ -132,8 +132,8 @@ def test_replay_game_tokens_sets_player_elo_by_side_to_move():
     contexts = replay_game_tokens(game_tokens)
 
     assert [ctx.player_elo_token for ctx in contexts] == [
-        ELO_1500_1999_ID,
-        ELO_2000_2499_ID,
+        ELO_1500_1599_ID,
+        ELO_2000_2099_ID,
     ]
 
 

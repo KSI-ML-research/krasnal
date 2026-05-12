@@ -157,8 +157,16 @@ def _main(cfg: DictConfig, dist_info: DistributedInfo) -> None:
 
     cot_batch_size, normal_batch_size = compute_batch_sizes(tconf.batch_size, cfg.cot_ratio)
 
-    cot_source = RandomTokenSource(cot_train_paths, seed=cfg.seed + 1 + dist_info.rank)
-    normal_source = RandomTokenSource(normal_dataset_path, seed=cfg.seed + dist_info.rank)
+    cot_source = RandomTokenSource(
+        cot_train_paths,
+        seed=cfg.seed + 1 + dist_info.rank,
+        include_elo=cfg.get("include_elo", True),
+    )
+    normal_source = RandomTokenSource(
+        normal_dataset_path,
+        seed=cfg.seed + dist_info.rank,
+        include_elo=cfg.get("include_elo", True),
+    )
 
     cot_len = len(cot_source.dataset)
     steps_per_epoch = max(1, math.ceil(cot_len / tconf.batch_size))
@@ -238,8 +246,8 @@ def _main(cfg: DictConfig, dist_info: DistributedInfo) -> None:
         collate=collate,
     )
 
-    eval_dataset = ChessDataset(EVAL_DATASET_PATH)
-    cot_eval_dataset = ChessDataset(cot_eval_paths)
+    eval_dataset = ChessDataset(EVAL_DATASET_PATH, include_elo=cfg.get("include_elo", True))
+    cot_eval_dataset = ChessDataset(cot_eval_paths, include_elo=cfg.get("include_elo", True))
     val_loader = DataLoader(
         eval_dataset,
         shuffle=False,

@@ -2,10 +2,10 @@
 #SBATCH --job-name=krasnal-pretrain-small
 #SBATCH --output=output/%j_pretrain_small.out
 #SBATCH --error=output/%j_pretrain_small.err
-#SBATCH --gres=gpu:1
+#SBATCH --gres=gpu:2
 #SBATCH --cpus-per-task=24
 #SBATCH --partition=student-nvidia
-#SBATCH --time=24:00:00
+#SBATCH --time=06:00:00
 
 # IMPORTANT: Ensure WANDB_API_KEY and HF_TOKEN are set in your ~/.bashrc on HPC
 
@@ -26,10 +26,10 @@ mkdir -p $XDG_RUNTIME_DIR
 mkdir -p $UV_CACHE_DIR
 mkdir -p $HF_HOME
 
-uv venv .venv --python 3.13
+test -d .venv || uv venv .venv --python 3.13
 uv sync
 
-uv run python scripts/training/pretrain.py \
+uv run torchrun --standalone --nproc_per_node=2 scripts/training/pretrain.py \
     model=small \
     train=cuda \
     train.batch_size=64

@@ -3,7 +3,6 @@ from dataclasses import dataclass
 from krasnal.tokens import (
     DRAW_ID,
     ELO_TOKENS,
-    ELO_UNKNOWN_ID,
     GAME_END_ID,
     GAME_START_ID,
     OUTCOME_TOKENS,
@@ -13,13 +12,18 @@ from krasnal.tokens import (
 @dataclass
 class GameTokens:
     outcome_token: int
-    white_elo_token: int
-    black_elo_token: int
+    white_elo_token: int | None
+    black_elo_token: int | None
     move_tokens: list[int]
 
     @property
     def initial_context(self) -> list[int]:
-        return [GAME_START_ID, self.outcome_token, self.white_elo_token, self.black_elo_token]
+        ctx = [GAME_START_ID, self.outcome_token]
+        if self.white_elo_token is not None:
+            ctx.append(self.white_elo_token)
+        if self.black_elo_token is not None:
+            ctx.append(self.black_elo_token)
+        return ctx
 
 
 def parse_game_tokens(token_ids: list[int]) -> GameTokens | None:
@@ -49,11 +53,6 @@ def parse_game_tokens(token_ids: list[int]) -> GameTokens | None:
             elif black_elo_token is None:
                 black_elo_token = token_id
                 break
-
-    if white_elo_token is None:
-        white_elo_token = ELO_UNKNOWN_ID
-    if black_elo_token is None:
-        black_elo_token = ELO_UNKNOWN_ID
 
     return GameTokens(
         outcome_token=outcome_token,

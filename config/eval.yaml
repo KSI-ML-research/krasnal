@@ -23,11 +23,20 @@ metrics:
   - acc_when_gives_check
   - acc_when_in_check
   - acc_elo_below_1000
-  - acc_elo_1000_1499
-  - acc_elo_1500_1999
-  - acc_elo_2000_2499
-  - acc_elo_2500_2999
-  - acc_elo_above_3000
+  - acc_elo_1000_1099
+  - acc_elo_1100_1199
+  - acc_elo_1200_1299
+  - acc_elo_1300_1399
+  - acc_elo_1400_1499
+  - acc_elo_1500_1599
+  - acc_elo_1600_1699
+  - acc_elo_1700_1799
+  - acc_elo_1800_1899
+  - acc_elo_1900_1999
+  - acc_elo_2000_2099
+  - acc_elo_2100_2199
+  - acc_elo_above_2200
+  - acc_elo_unknown
 
   - illegal_mass
   - illegal_mass_opening

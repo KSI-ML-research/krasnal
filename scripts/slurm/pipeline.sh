@@ -2,10 +2,10 @@
 #SBATCH --job-name=krasnal-pipeline
 #SBATCH --output=output/%j_pipeline.out
 #SBATCH --error=output/%j_pipeline.err
-#SBATCH --gres=gpu:1
+#SBATCH --gres=gpu:2
 #SBATCH --cpus-per-task=24
 #SBATCH --partition=student-nvidia
-#SBATCH --time=24:00:00
+#SBATCH --time=06:00:00
 
 # IMPORTANT: Ensure WANDB_API_KEY and HF_TOKEN are set in your ~/.bashrc on HPC
 # export WANDB_API_KEY=your_key_here
@@ -37,7 +37,7 @@ mkdir -p $UV_CACHE_DIR
 mkdir -p $HF_HOME
 
 # Create venv with Python 3.13 and install dependencies
-uv venv .venv --python 3.13
+test -d .venv || uv venv .venv --python 3.13
 uv sync
 
 # Download games
@@ -47,7 +47,7 @@ uv run python scripts/data/download_games.py
 uv run python scripts/data/preprocess.py preprocess_workers=24
 
 # Pretrain model
-uv run python scripts/training/pretrain.py \
+uv run torchrun --standalone --nproc_per_node=2 scripts/training/pretrain.py \
     model=$MODEL \
     train=$TRAIN_CONFIG \
     train.batch_size=64
