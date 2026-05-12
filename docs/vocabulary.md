@@ -2,7 +2,7 @@
 
 ## Example
 
-`<game_start> <white_won> <elo_2000_2499> <elo_1500_1999> <think_start> w:e2e4 b:e7e5 w:g1f3 b:b8c6 <think_end> w:d2d4 <game_end>`
+`<game_start> <tc_rapid_inc> <white_won> <elo_2000_2099> <elo_1500_1599> <think_start> w:e2e4 b:e7e5 w:g1f3 b:b8c6 <think_end> w:d2d4 <game_end>`
 
 ## Result Tokens
 
@@ -14,7 +14,19 @@ Result tokens control model's goal (which side to play for).
 
 ELO tokens control model difficulty level.
 
-`<elo_below_1000>`, `<elo_1000_1499>`, `<elo_1500_1999>`, `<elo_2000_2499>`, `<elo_2500_2999>`, `<elo_above_3000>`, `<elo_unknown>` — prepend to sequence
+`<elo_below_1000>`, 100-point buckets from `<elo_1000_1099>` through `<elo_2100_2199>`, `<elo_above_2200>`, `<elo_unknown>` — prepend to sequence
+
+## Time Control Tokens
+
+Time-control tokens condition the model on game pace.
+
+Preprocessing estimates game duration as `time_initial + 40 * time_increment` seconds, then prepends one of:
+- `<tc_blitz_no_inc>`: estimated duration below 480 seconds and no increment
+- `<tc_blitz_inc>`: estimated duration below 480 seconds with increment
+- `<tc_rapid_no_inc>`: estimated duration from 480 to 1499 seconds and no increment
+- `<tc_rapid_inc>`: estimated duration from 480 to 1499 seconds with increment
+- `<tc_classical>`: estimated duration at least 1500 seconds
+- `<tc_unknown>`: missing time control metadata
 
 ## UCI Move Tokens
 

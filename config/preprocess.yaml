@@ -21,6 +21,9 @@ unknown_elo:
   black_unknown_prob: 0.01
   both_unknown_prob: 0.01
 
+time_control:
+  enabled: true
+
 preprocess_workers: 0
 # Merge this many part_*.parquet shards at a time when writing train/eval (avoids high RAM use).
 preprocess_concat_batch_size: 10

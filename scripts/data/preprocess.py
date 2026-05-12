@@ -1,3 +1,4 @@
+import json
 import multiprocessing
 import os
 import shutil
@@ -38,12 +39,14 @@ from krasnal.tokens import (
     QUEEN_ID,
     ROOK_ID,
     SPECIAL_TOKENS,
+    TC_TOKENS,
     UNKNOWN_RESULT_ID,
     WHATS_ON_SQUARE,
     WHATS_ON_SQUARE_TOKEN_IDS,
     WHITE_WON_ID,
     YES_CHECK_ID,
     get_elo_bucket,
+    get_time_control_bucket,
     load_move_vocab,
     move_key_for_ply,
     move_token_id_for_ply,
@@ -138,6 +141,9 @@ def _build_game_tokens(
     white_rating: int,
     black_rating: int,
     elo_bucket: int,
+    time_initial: int | None,
+    time_increment: int | None,
+    time_control_enabled: bool,
     include_check_qa: bool,
     check_qa_prob: float,
     normal_prob: float,
@@ -247,10 +253,10 @@ def _build_game_tokens(
 
     prefix_tokens = [
         GAME_START_ID,
-        result_to_token_id(result),
-        white_elo,
-        black_elo,
     ]
+    if time_control_enabled:
+        prefix_tokens.append(get_time_control_bucket(time_initial, time_increment))
+    prefix_tokens.extend([result_to_token_id(result), white_elo, black_elo])
     return prefix_tokens + result_tokens + [GAME_END_ID]
 
 
@@ -263,6 +269,7 @@ def process_file_streaming(
     include_piece_qa: bool,
     king_base_prob: float,
     unknown_elo: dict[str, float],
+    time_control_enabled: bool,
     include_what_is_on_qa: bool = False,
     what_is_on_prob: float = 0.0,
 ) -> int:
@@ -309,6 +316,12 @@ def process_file_streaming(
         white_rating_list = batch.get_column("white_rating").to_list()
         black_rating_list = batch.get_column("black_rating").to_list()
         elo_bucket_list = batch.get_column("elo_bucket").to_list()
+        if time_control_enabled:
+            time_initial_list = batch.get_column("time_initial").to_list()
+            time_increment_list = batch.get_column("time_increment").to_list()
+        else:
+            time_initial_list = [None] * len(batch)
+            time_increment_list = [None] * len(batch)
 
         has_fen = "fen" in batch.columns
         fen_list = batch.get_column("fen").to_list() if has_fen else [None] * len(batch)
@@ -321,6 +334,8 @@ def process_file_streaming(
             white_rating,
             black_rating,
             elo_bucket,
+            time_initial,
+            time_increment,
             fen,
         ) in zip(
             uci_moves_list,
@@ -330,6 +345,8 @@ def process_file_streaming(
             white_rating_list,
             black_rating_list,
             elo_bucket_list,
+            time_initial_list,
+            time_increment_list,
             fen_list,
             strict=True,
         ):
@@ -341,6 +358,9 @@ def process_file_streaming(
                 white_rating=white_rating,
                 black_rating=black_rating,
                 elo_bucket=elo_bucket,
+                time_initial=time_initial,
+                time_increment=time_increment,
+                time_control_enabled=time_control_enabled,
                 include_check_qa=include_check_qa,
                 check_qa_prob=check_qa_prob,
                 normal_prob=normal_prob,
@@ -447,6 +467,7 @@ def _process_one_shard(
     include_piece_qa: bool,
     king_base_prob: float,
     unknown_elo: dict[str, float],
+    time_control_enabled: bool,
     include_what_is_on_qa: bool = False,
     what_is_on_prob: float = 0.0,
 ) -> tuple[str, int, str]:
@@ -464,6 +485,7 @@ def _process_one_shard(
         include_piece_qa=include_piece_qa,
         king_base_prob=king_base_prob,
         unknown_elo=unknown_elo,
+        time_control_enabled=time_control_enabled,
         include_what_is_on_qa=include_what_is_on_qa,
         what_is_on_prob=what_is_on_prob,
     )
@@ -500,6 +522,7 @@ def _seq_len_stats_from_lf(seq_len_lf: pl.LazyFrame, block_size: int) -> dict[st
 def _token_mix_raw_sums(tokenized_lf: pl.LazyFrame) -> tuple[int, ...]:
     result_ids = [WHITE_WON_ID, BLACK_WON_ID, DRAW_ID, UNKNOWN_RESULT_ID]
     elo_ids = list(ELO_TOKENS.values())
+    tc_ids = list(TC_TOKENS.values())
     special_ids = list(SPECIAL_TOKENS.values())
 
     exprs = [
@@ -577,6 +600,11 @@ def _token_mix_raw_sums(tokenized_lf: pl.LazyFrame) -> tuple[int, ...]:
         .sum()
         .alias("elo_count"),
         pl.col("token_ids")
+        .list.eval(pl.element().is_in(tc_ids).cast(pl.UInt32), parallel=True)
+        .list.sum()
+        .sum()
+        .alias("tc_count"),
+        pl.col("token_ids")
         .list.eval(pl.element().is_in(special_ids).cast(pl.UInt32), parallel=True)
         .list.sum()
         .sum()
@@ -589,6 +617,14 @@ def _token_mix_raw_sums(tokenized_lf: pl.LazyFrame) -> tuple[int, ...]:
             .list.sum()
             .sum()
             .alias(f"elo_{bucket_name}_count")
+        )
+    for bucket_name, bucket_id in TC_TOKENS.items():
+        exprs.append(
+            pl.col("token_ids")
+            .list.eval((pl.element() == bucket_id).cast(pl.UInt32), parallel=True)
+            .list.sum()
+            .sum()
+            .alias(f"tc_{bucket_name}_count")
         )
 
     stats = tokenized_lf.select(*exprs).collect().row(0)
@@ -620,14 +656,15 @@ def _token_mix_from_raw_sums(stats: tuple[int, ...]) -> dict[str, float]:
     king_count = stats[12]
     result_count = stats[13]
     elo_count = stats[14]
-    special_count = stats[15]
+    tc_count = stats[15]
+    special_count = stats[16]
 
     check_qa_count = is_check_count + yes_check_count + no_check_count
     piece_answer_count = (
         pawn_count + knight_count + bishop_count + rook_count + queen_count + king_count
     )
     piece_qa_count = piece_type_moved_count + piece_answer_count
-    outcome_prefix_count = result_count + elo_count
+    outcome_prefix_count = result_count + elo_count + tc_count
     uci_move_count = max(0, total_tokens - special_count)
 
     def pct(count: int) -> float:
@@ -652,6 +689,7 @@ def _token_mix_from_raw_sums(stats: tuple[int, ...]) -> dict[str, float]:
         "king_count": king_count,
         "result_count": result_count,
         "elo_count": elo_count,
+        "tc_count": tc_count,
         "uci_move_pct": pct(uci_move_count),
         "check_qa_pct": pct(check_qa_count),
         "piece_qa_pct": pct(piece_qa_count),
@@ -661,9 +699,12 @@ def _token_mix_from_raw_sums(stats: tuple[int, ...]) -> dict[str, float]:
         "occupied_count": what_is_on_count - empty_count,
     }
 
-    idx = 16
+    idx = 17
     for bucket_name in ELO_TOKENS:
         result[f"elo_{bucket_name}_count"] = float(stats[idx])
+        idx += 1
+    for bucket_name in TC_TOKENS:
+        result[f"tc_{bucket_name}_count"] = float(stats[idx])
         idx += 1
 
     return result
@@ -719,6 +760,9 @@ def main(cfg: DictConfig) -> None:
     what_is_on_prob = float(what_is_on_cfg.get("prob", 0.0))
     if not 0.0 <= what_is_on_prob <= 1.0:
         raise ValueError(f"qa.what_is_on.prob must be in [0, 1], got {what_is_on_prob}")
+
+    time_control_cfg = cfg.get("time_control", {})
+    time_control_enabled = bool(time_control_cfg.get("enabled", True))
     unknown_elo = {
         "normal_prob": float(cfg.unknown_elo.normal_prob),
         "white_unknown_prob": float(cfg.unknown_elo.white_unknown_prob),
@@ -773,6 +817,7 @@ def main(cfg: DictConfig) -> None:
                 include_piece_qa,
                 king_base_prob,
                 unknown_elo,
+                time_control_enabled,
                 include_what_is_on_qa,
                 what_is_on_prob,
             )
@@ -851,9 +896,7 @@ def main(cfg: DictConfig) -> None:
     if mix_raw is None:
         raise RuntimeError("Token mix aggregation failed")
     token_mix = _token_mix_from_raw_sums(mix_raw)
-    logger.info(
-        "Token distribution:"
-    )
+    logger.info("Token distribution:")
     logger.info("  total: 100.00% ({})", token_mix["total_tokens"])
     logger.info(
         "  moves: {:.2f}% ({})",
@@ -890,6 +933,19 @@ def main(cfg: DictConfig) -> None:
             count = token_mix[f"elo_{bucket_name}_count"]
             pct = (count / total_elo) * 100.0
             logger.info("  {}: {:.2f}%", bucket_name, pct)
+
+    logger.info("Time Control Bucket Distribution:")
+    total_tc = sum(token_mix[f"tc_{b}_count"] for b in TC_TOKENS)
+    if total_tc > 0:
+        for bucket_name in TC_TOKENS:
+            count = token_mix[f"tc_{bucket_name}_count"]
+            pct = (count / total_tc) * 100.0
+            logger.info("  {}: {:.2f}%", bucket_name, pct)
+
+    token_mix_path = PRETRAIN_DATASET_PATH.parent / "token_mix_stats.json"
+    with token_mix_path.open("w") as f:
+        json.dump(token_mix, f, indent=2, sort_keys=True)
+        f.write("\n")
 
     train_parts = sorted(train_batches_dir.glob("*.parquet"))
     eval_parts = sorted(eval_batches_dir.glob("*.parquet"))

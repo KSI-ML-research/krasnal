@@ -13,6 +13,7 @@ from krasnal.tokens import (
     ELO_UNKNOWN_ID,
     GAME_START_ID,
     QA_TOKEN_IDS,
+    TC_UNKNOWN_ID,
     THINK_END_ID,
     THINK_START_ID,
     legal_token_ids,
@@ -35,6 +36,7 @@ class InferenceSession:
         outcome_token: int | None = None,
         white_elo_token: int = ELO_UNKNOWN_ID,
         black_elo_token: int = ELO_UNKNOWN_ID,
+        time_control_token: int = TC_UNKNOWN_ID,
     ):
         self.model = model
         self.device = device
@@ -46,6 +48,7 @@ class InferenceSession:
             game = Game(
                 white_elo_token=white_elo_token,
                 black_elo_token=black_elo_token,
+                time_control_token=time_control_token,
                 target_outcome_token=outcome_token,
             )
 
@@ -56,12 +59,14 @@ class InferenceSession:
         outcome_token: int,
         white_elo_token: int = ELO_UNKNOWN_ID,
         black_elo_token: int = ELO_UNKNOWN_ID,
+        time_control_token: int = TC_UNKNOWN_ID,
     ) -> None:
         """Backward-compatible reset that rebuilds the underlying Game."""
         self.new_game(
             Game(
                 white_elo_token=white_elo_token,
                 black_elo_token=black_elo_token,
+                time_control_token=time_control_token,
                 target_outcome_token=outcome_token,
             )
         )
