@@ -829,14 +829,10 @@ def main(cfg: DictConfig) -> None:
         raise RuntimeError("No games found in raw dataset.")
 
     logger.info(
-        "Sequence length stats: total={}, min={}, max={}, mean={:.1f}, median={}, "
-        "std={:.1f}, p95={}, p99={}, p999={}",
-        stats["total"],
+        "Sequence length stats: min={}, max={}, mean={:.1f}, p95={}, p99={}, p999={}",
         stats["min"],
         stats["max"],
         stats["mean"],
-        stats["median"],
-        stats["std"],
         stats["p95"],
         stats["p99"],
         stats["p999"],
@@ -846,63 +842,46 @@ def main(cfg: DictConfig) -> None:
     total_count = stats["total"]
     pct_long = over_block_size_count / total_count * 100
     logger.info(
-        "Games with >{} tokens: {} ({:.2f}%) - filtering out >{}",
+        "Filtering games with >{} tokens done: removed {} games ({:.2f}%)",
         max_tokens,
         over_block_size_count,
         pct_long,
-        max_tokens,
     )
 
     if mix_raw is None:
         raise RuntimeError("Token mix aggregation failed")
     token_mix = _token_mix_from_raw_sums(mix_raw)
     logger.info(
-        "Token mix after >block_size filtering: UCI moves={} ({:.2f}%), "
-        "check Q&A={} ({:.2f}%), piece Q&A={} ({:.2f}%), "
-        "what_is_on={} ({:.2f}%), outcome prefix={} ({:.2f}%)",
-        token_mix["uci_move_count"],
+        "Token distribution:"
+    )
+    logger.info("  total: 100.00% ({})", token_mix["total_tokens"])
+    logger.info(
+        "  moves: {:.2f}% ({})",
         token_mix["uci_move_pct"],
-        token_mix["check_qa_count"],
+        token_mix["uci_move_count"],
+    )
+    logger.info(
+        "  qa_is_check: {:.2f}% ({})",
         token_mix["check_qa_pct"],
-        token_mix["piece_qa_count"],
+        token_mix["check_qa_count"],
+    )
+    logger.info(
+        "  qa_piece_type_moved: {:.2f}% ({})",
         token_mix["piece_qa_pct"],
-        token_mix["what_is_on_count"],
+        token_mix["piece_type_moved_count"],
+    )
+    logger.info(
+        "  qa_whats_on: {:.2f}% ({})",
         (token_mix["what_is_on_count"] / token_mix["total_tokens"] * 100)
         if token_mix["total_tokens"] > 0
         else 0,
-        token_mix["outcome_prefix_count"],
-        token_mix["outcome_prefix_pct"],
+        token_mix["what_is_on_count"],
     )
     logger.info(
-        "Token mix details: <is_check>={}, <yes_check>={}, <no_check>={}, "
-        "<piece_type_moved>={}, <pawn>={}, <knight>={}, <bishop>={}, <rook>={}, "
-        "<queen>={}, <king>={}, result_tokens={}, elo_tokens={}, total_tokens={}",
-        token_mix["is_check_count"],
-        token_mix["yes_check_count"],
-        token_mix["no_check_count"],
-        token_mix["piece_type_moved_count"],
-        token_mix["pawn_count"],
-        token_mix["knight_count"],
-        token_mix["bishop_count"],
-        token_mix["rook_count"],
-        token_mix["queen_count"],
-        token_mix["king_count"],
-        token_mix["result_count"],
-        token_mix["elo_count"],
-        token_mix["total_tokens"],
+        "  conditioning_prefix: {:.2f}% ({})",
+        token_mix["outcome_prefix_pct"],
+        token_mix["outcome_prefix_count"],
     )
-    if token_mix["piece_answer_count"] > 0:
-        total_piece_answers = token_mix["piece_answer_count"]
-        logger.info(
-            "Piece Q&A answer distribution: pawn={:.2f}%, knight={:.2f}%, bishop={:.2f}%, "
-            "rook={:.2f}%, queen={:.2f}%, king={:.2f}%",
-            token_mix["pawn_count"] / total_piece_answers * 100.0,
-            token_mix["knight_count"] / total_piece_answers * 100.0,
-            token_mix["bishop_count"] / total_piece_answers * 100.0,
-            token_mix["rook_count"] / total_piece_answers * 100.0,
-            token_mix["queen_count"] / total_piece_answers * 100.0,
-            token_mix["king_count"] / total_piece_answers * 100.0,
-        )
 
     logger.info("ELO Bucket Distribution:")
     total_elo = sum(token_mix[f"elo_{b}_count"] for b in ELO_TOKENS)
@@ -925,7 +904,7 @@ def main(cfg: DictConfig) -> None:
         raise RuntimeError("Train dataset is empty. Increase input data or reduce block_size.")
 
     logger.info(
-        "Successfully processed {} games -> {} (one-row-one-game, train rows: {}, eval rows: {})",
+        "Successfully processed {} games -> {} (train rows: {}, eval rows: {})",
         stats["total"],
         PRETRAIN_DATASET_PATH.parent,
         train_rows,
