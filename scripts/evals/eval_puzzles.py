@@ -7,6 +7,7 @@ from pathlib import Path
 import torch
 
 from krasnal.eval.puzzles import evaluate_model_on_puzzle_file
+from krasnal.puzzle_cache import source_game_cache_path_for
 from krasnal.uci_engine.provider import ModelProvider
 
 
@@ -57,6 +58,12 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Include diagnostic counts such as totals and skipped puzzles.",
     )
+    parser.add_argument(
+        "--source-game-cache",
+        type=Path,
+        default=None,
+        help="Optional path to the offline puzzle source-game cache.",
+    )
     return parser.parse_args()
 
 
@@ -74,6 +81,15 @@ def main() -> None:
         puzzle_path=args.puzzles,
         sample_size=args.sample_size,
         seed=args.seed,
+        source_game_cache_path=(
+            args.source_game_cache
+            if args.source_game_cache is not None
+            else source_game_cache_path_for(
+                args.puzzles,
+                sample_size=args.sample_size,
+                seed=args.seed,
+            )
+        ),
     )
     metrics = metrics.to_metrics(
         log_mrr=args.log_mrr,

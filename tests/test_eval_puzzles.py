@@ -1,6 +1,6 @@
 from pathlib import Path
-from typing import ClassVar
 
+import bulletchess
 import torch
 
 from krasnal.eval.puzzles import (
@@ -146,44 +146,25 @@ def test_extract_lichess_game_id_handles_pgn_url():
 def test_build_game_from_source_game_reconstructs_prefix(monkeypatch):
     from krasnal.eval import puzzles as puzzles_mod
 
-    class _FakeMove:
-        def __init__(self, uci: str):
-            self._uci = uci
+    board = bulletchess.Board()
+    board.apply(bulletchess.Move.from_uci("e2e4"))
+    board.apply(bulletchess.Move.from_uci("e7e5"))
 
-        def uci(self) -> str:
-            return self._uci
-
-    class _FakeBoard:
-        def __init__(self):
-            self.moves: list[str] = []
-
-        def push(self, move):
-            self.moves.append(move.uci())
-
-        def fen(self):
-            if self.moves == ["e2e4", "e7e5"]:
-                return "puzzle-fen"
-            return "start-fen"
-
-    class _FakePGNGame:
-        headers: ClassVar[dict[str, str]] = {
-            "Result": "1-0",
-            "WhiteElo": "2000",
-            "BlackElo": "2100",
-        }
-
-        def board(self):
-            return _FakeBoard()
-
-        def mainline_moves(self):
-            return [_FakeMove("e2e4"), _FakeMove("e7e5")]
-
-    monkeypatch.setattr(puzzles_mod.chess.pgn, "read_game", lambda _fh: _FakePGNGame())
-    monkeypatch.setattr(puzzles_mod, "_fetch_lichess_pgn", lambda _url: "fake-pgn")
+    monkeypatch.setattr(
+        puzzles_mod,
+        "_load_source_game_record",
+        lambda _url: puzzles_mod.SourceGameRecord(
+            game_id="abc123",
+            result="1-0",
+            white_elo="2000",
+            black_elo="2100",
+            moves_uci=("e2e4", "e7e5"),
+        ),
+    )
 
     game = _build_game_from_source_game(
         game_url="https://lichess.org/abc123/white#42",
-        puzzle_fen="puzzle-fen",
+        puzzle_fen=board.fen(),
     )
 
     assert game.moves_uci == ["e2e4", "e7e5"]

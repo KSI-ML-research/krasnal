@@ -17,6 +17,7 @@ import torch
 from loguru import logger
 
 from krasnal.inference import Game, InferenceSession
+from krasnal.puzzle_cache import source_game_cache_path_for
 from krasnal.tokens import (
     ELO_UNKNOWN_ID,
     MOVE_TO_ID,
@@ -138,6 +139,50 @@ class PuzzleEvalResult:
         return metrics
 
 
+@dataclass(frozen=True)
+class SourceGameRecord:
+    game_id: str
+    result: str | None
+    white_elo: str | None
+    black_elo: str | None
+    moves_uci: tuple[str, ...]
+
+    @classmethod
+    def from_json(cls, payload: dict[str, Any]) -> SourceGameRecord:
+        game_id = str(payload.get("game_id") or "")
+        if not game_id:
+            raise ValueError("Missing game_id in source-game cache record")
+        moves = tuple(str(move) for move in payload.get("moves_uci") or ())
+        return cls(
+            game_id=game_id,
+            result=payload.get("result"),
+            white_elo=payload.get("white_elo"),
+            black_elo=payload.get("black_elo"),
+            moves_uci=moves,
+        )
+
+    def to_json(self) -> dict[str, Any]:
+        return {
+            "game_id": self.game_id,
+            "result": self.result,
+            "white_elo": self.white_elo,
+            "black_elo": self.black_elo,
+            "moves_uci": list(self.moves_uci),
+        }
+
+    def to_game(self, *, puzzle_fen: str) -> Game:
+        game = Game(
+            target_outcome_token=_outcome_token_from_header(self.result),
+            white_elo_token=_elo_token_from_header(self.white_elo),
+            black_elo_token=_elo_token_from_header(self.black_elo),
+        )
+        for move in self.moves_uci:
+            game.feed_uci(move)
+            if game.board.fen() == puzzle_fen:
+                return game
+        raise ValueError(f"Puzzle FEN not found in cached source game: {self.game_id}")
+
+
 def load_puzzles_jsonl(puzzle_path: Path, limit: int | None = None) -> list[dict[str, Any]]:
     puzzles: list[dict[str, Any]] = []
     with puzzle_path.open() as f:
@@ -148,6 +193,56 @@ def load_puzzles_jsonl(puzzle_path: Path, limit: int | None = None) -> list[dict
     if not puzzles:
         raise ValueError(f"No puzzles found in {puzzle_path}")
     return puzzles
+
+
+def load_source_game_cache(cache_path: Path) -> dict[str, SourceGameRecord]:
+    cache_path = Path(cache_path)
+    if not cache_path.exists():
+        return {}
+
+    cache: dict[str, SourceGameRecord] = {}
+    try:
+        with cache_path.open() as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                record = SourceGameRecord.from_json(json.loads(line))
+                cache[record.game_id] = record
+    except Exception as exc:
+        logger.warning("Failed to load puzzle source-game cache from {}: {}", cache_path, exc)
+        return {}
+    return cache
+
+
+def build_source_game_cache(puzzles: list[dict[str, Any]], output_path: Path) -> int:
+    output_path = Path(output_path)
+    unique_game_urls: dict[str, str] = {}
+    for puzzle in puzzles:
+        game_url = puzzle.get("game_url")
+        if not game_url:
+            continue
+        try:
+            game_id = _extract_lichess_game_id(str(game_url))
+        except ValueError as exc:
+            logger.warning("Skipping puzzle with invalid game_url {}: {}", game_url, exc)
+            continue
+        unique_game_urls.setdefault(game_id, str(game_url))
+
+    records: dict[str, SourceGameRecord] = {}
+    for game_id in sorted(unique_game_urls):
+        game_url = unique_game_urls[game_id]
+        try:
+            records[game_id] = _load_source_game_record(game_url)
+        except Exception as exc:
+            logger.warning("Skipping source-game cache entry for {}: {}", game_url, exc)
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with output_path.open("w") as f:
+        for game_id in sorted(records):
+            f.write(json.dumps(records[game_id].to_json(), sort_keys=True))
+            f.write("\n")
+    return len(records)
 
 
 def sample_puzzles(
@@ -203,25 +298,24 @@ def _outcome_token_from_header(raw_result: Any) -> int:
 
 
 def _build_game_from_source_game(*, game_url: str, puzzle_fen: str) -> Game:
+    source_game = _load_source_game_record(game_url)
+    return source_game.to_game(puzzle_fen=puzzle_fen)
+
+
+def _load_source_game_record(game_url: str) -> SourceGameRecord:
+    game_id = _extract_lichess_game_id(game_url)
     pgn_text = _fetch_lichess_pgn(game_url)
     pgn_game = chess.pgn.read_game(StringIO(pgn_text))
     if pgn_game is None:
         raise ValueError(f"Could not parse PGN for {game_url}")
 
-    game = Game(
-        target_outcome_token=_outcome_token_from_header(pgn_game.headers.get("Result")),
-        white_elo_token=_elo_token_from_header(pgn_game.headers.get("WhiteElo")),
-        black_elo_token=_elo_token_from_header(pgn_game.headers.get("BlackElo")),
+    return SourceGameRecord(
+        game_id=game_id,
+        result=pgn_game.headers.get("Result"),
+        white_elo=pgn_game.headers.get("WhiteElo"),
+        black_elo=pgn_game.headers.get("BlackElo"),
+        moves_uci=tuple(move.uci() for move in pgn_game.mainline_moves()),
     )
-
-    board = pgn_game.board()
-    for move in pgn_game.mainline_moves():
-        board.push(move)
-        game.feed_uci(move.uci())
-        if board.fen() == puzzle_fen:
-            return game
-
-    raise ValueError(f"Puzzle FEN not found in source game: {game_url}")
 
 
 def estimate_pseudo_elo(
@@ -260,6 +354,7 @@ def evaluate_model_on_puzzles(
     device: torch.device,
     puzzles: list[dict[str, Any]],
     buckets: tuple[PuzzleBucket, ...] = DEFAULT_PUZZLE_BUCKETS,
+    source_game_cache: dict[str, SourceGameRecord] | None = None,
 ) -> PuzzleEvalResult:
     bucket_stats = {bucket.name: _BucketStats() for bucket in buckets}
     overall_stats = _BucketStats()
@@ -292,12 +387,13 @@ def evaluate_model_on_puzzles(
                 bucket.record_skip()
             continue
 
+        source_game = _source_game_for_puzzle(puzzle, source_game_cache)
+        game = _game_for_puzzle(board=board, source_game=source_game)
         predicted_move, mrr = _predict_puzzle_move(
             model=model,
             device=device,
-            board=board,
+            game=game,
             solution=solution,
-            game_url=puzzle.get("game_url"),
         )
         if predicted_move is None:
             overall_stats.record_skip()
@@ -368,14 +464,28 @@ def evaluate_model_on_puzzle_file(
     sample_size: int | None = None,
     seed: int = 42,
     buckets: tuple[PuzzleBucket, ...] = DEFAULT_PUZZLE_BUCKETS,
+    source_game_cache_path: Path | None = None,
 ) -> PuzzleEvalResult:
     puzzles = load_puzzles_jsonl(puzzle_path)
     sampled_puzzles = sample_puzzles(puzzles, sample_size, seed=seed)
+    cache_path = (
+        Path(source_game_cache_path)
+        if source_game_cache_path is not None
+        else source_game_cache_path_for(puzzle_path, sample_size=sample_size, seed=seed)
+    )
+    source_game_cache = load_source_game_cache(cache_path)
+    if not source_game_cache:
+        logger.warning(
+            "Puzzle source-game cache not found or empty at {}. Falling back to FEN-only context. "
+            "Run `just prepare-puzzles` to generate the offline cache.",
+            cache_path,
+        )
     result = evaluate_model_on_puzzles(
         model=model,
         device=device,
         puzzles=sampled_puzzles,
         buckets=buckets,
+        source_game_cache=source_game_cache,
     )
     result.overall["overall/source_total"] = len(puzzles)
     result.overall["overall/sample_total"] = len(sampled_puzzles)
@@ -411,28 +521,9 @@ def _predict_puzzle_move(
     *,
     model: torch.nn.Module,
     device: torch.device,
-    board: bulletchess.Board,
+    game: Game,
     solution: str,
-    game_url: str | None,
 ) -> tuple[str | None, float]:
-    try:
-        if game_url:
-            game = _build_game_from_source_game(game_url=game_url, puzzle_fen=board.fen())
-        else:
-            raise ValueError("missing game_url")
-    except Exception as exc:
-        logger.warning(
-            "Puzzle source-game reconstruction failed for {}: {}; falling back to FEN-only context",
-            game_url or "<missing>",
-            exc,
-        )
-        game = Game(
-            target_outcome_token=UNKNOWN_RESULT_ID,
-            white_elo_token=ELO_UNKNOWN_ID,
-            black_elo_token=ELO_UNKNOWN_ID,
-            board=board,
-        )
-
     session = InferenceSession(model, device, game=game)
     legal_ids = legal_token_ids(session.game.board)
     if not legal_ids:
@@ -441,7 +532,7 @@ def _predict_puzzle_move(
     legal_ranks = torch.argsort(legal_probs[legal_ids], descending=True)
     predicted_token = int(legal_ids[int(legal_ranks[0].item())])
     predicted_move = to_uci(predicted_token)
-    solution_token = _solution_token_id(solution=solution, turn=board.turn)
+    solution_token = _solution_token_id(solution=solution, turn=game.board.turn)
     if solution_token is None:
         return predicted_move, 0.0
 
@@ -457,3 +548,42 @@ def _predict_puzzle_move(
 def _solution_token_id(*, solution: str, turn: object) -> int | None:
     prefix = "w:" if str(turn) == "White" else "b:"
     return MOVE_TO_ID.get(prefix + solution)
+
+
+def _source_game_for_puzzle(
+    puzzle: dict[str, Any],
+    source_game_cache: dict[str, SourceGameRecord] | None,
+) -> SourceGameRecord | None:
+    if not source_game_cache:
+        return None
+
+    game_url = puzzle.get("game_url")
+    if not game_url:
+        return None
+
+    try:
+        game_id = _extract_lichess_game_id(str(game_url))
+    except ValueError:
+        return None
+
+    return source_game_cache.get(game_id)
+
+
+def _game_for_puzzle(*, board: bulletchess.Board, source_game: SourceGameRecord | None) -> Game:
+    if source_game is not None:
+        try:
+            return source_game.to_game(puzzle_fen=board.fen())
+        except Exception as exc:
+            logger.warning(
+                "Puzzle source-game reconstruction failed for {}: {}; "
+                "falling back to FEN-only context",
+                source_game.game_id,
+                exc,
+            )
+
+    return Game(
+        target_outcome_token=UNKNOWN_RESULT_ID,
+        white_elo_token=ELO_UNKNOWN_ID,
+        black_elo_token=ELO_UNKNOWN_ID,
+        board=board,
+    )

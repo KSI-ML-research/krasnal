@@ -235,6 +235,7 @@ def main(cfg: DictConfig) -> None:
                 puzzle_path=puzzle_eval.path,
                 sample_size=puzzle_eval.sample_size,
                 seed=puzzle_eval.seed,
+                source_game_cache_path=puzzle_eval.source_game_cache_path(),
             )
             metrics.update(
                 puzzle_result.to_metrics(

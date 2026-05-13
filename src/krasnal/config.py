@@ -1,6 +1,8 @@
 from dataclasses import dataclass
 from pathlib import Path
 
+from krasnal.puzzle_cache import source_game_cache_path_for
+
 _PACKAGE_ROOT = Path(__file__).resolve().parent
 
 DATA_DIR = Path("data")
@@ -60,10 +62,13 @@ class TrainConfig:
 class PuzzleEvalConfig:
     enabled: bool = True
     path: Path = DATA_DIR / "puzzles_filtered.jsonl"
-    sample_size: int | None = None
+    sample_size: int | None = 64
     seed: int = 42
     log_mrr: bool = True
     log_bucket_metrics: bool = True
 
     def __post_init__(self) -> None:
         self.path = Path(self.path)
+
+    def source_game_cache_path(self) -> Path:
+        return source_game_cache_path_for(self.path, sample_size=self.sample_size, seed=self.seed)

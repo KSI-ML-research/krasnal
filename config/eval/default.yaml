@@ -49,7 +49,7 @@ acpl_sample_size: 100
 puzzle_eval:
   enabled: true
   path: data/puzzles_filtered.jsonl
-  sample_size: null
+  sample_size: 64
   seed: 42
   log_mrr: true
   log_bucket_metrics: true
