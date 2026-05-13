@@ -168,3 +168,26 @@ def test_build_game_from_source_game_reconstructs_prefix(monkeypatch):
     )
 
     assert game.moves_uci == ["e2e4", "e7e5"]
+
+
+def test_build_game_from_source_game_normalizes_en_passant(monkeypatch):
+    from krasnal.eval import puzzles as puzzles_mod
+
+    monkeypatch.setattr(
+        puzzles_mod,
+        "_load_source_game_record",
+        lambda _url: puzzles_mod.SourceGameRecord(
+            game_id="abc123",
+            result="1-0",
+            white_elo="2000",
+            black_elo="2100",
+            moves_uci=("e2e4", "e7e5"),
+        ),
+    )
+
+    game = _build_game_from_source_game(
+        game_url="https://lichess.org/abc123/white#42",
+        puzzle_fen="rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 2",
+    )
+
+    assert game.moves_uci == ["e2e4", "e7e5"]

@@ -171,6 +171,7 @@ class SourceGameRecord:
         }
 
     def to_game(self, *, puzzle_fen: str) -> Game:
+        target_fen = _normalized_fen(puzzle_fen)
         game = Game(
             target_outcome_token=_outcome_token_from_header(self.result),
             white_elo_token=_elo_token_from_header(self.white_elo),
@@ -178,7 +179,7 @@ class SourceGameRecord:
         )
         for move in self.moves_uci:
             game.feed_uci(move)
-            if game.board.fen() == puzzle_fen:
+            if _normalized_fen(game.board.fen()) == target_fen:
                 return game
         raise ValueError(f"Puzzle FEN not found in cached source game: {self.game_id}")
 
@@ -548,6 +549,10 @@ def _predict_puzzle_move(
 def _solution_token_id(*, solution: str, turn: object) -> int | None:
     prefix = "w:" if str(turn) == "White" else "b:"
     return MOVE_TO_ID.get(prefix + solution)
+
+
+def _normalized_fen(fen: str) -> str:
+    return chess.Board(fen).fen(en_passant="legal")
 
 
 def _source_game_for_puzzle(
