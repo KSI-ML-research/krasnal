@@ -1,7 +1,7 @@
 //! Filter the Lichess puzzle database by rating and export to JSONL.
 //!
 //! Reads the compressed CSV from `data/lichess_db_puzzle.csv.zst`, filters
-//! puzzles by minimum rating (default: 2000), and writes the results to
+//! puzzles by minimum rating (default: 1000), and writes the results to
 //! `data/puzzles_filtered.jsonl`.
 //!
 //! Each output record contains:
@@ -22,7 +22,7 @@ use std::path::Path;
 
 use indicatif::{ProgressBar, ProgressStyle};
 
-const MIN_RATING: u32 = 2000;
+const MIN_RATING: u32 = 1000;
 const INPUT_PATH: &str = "data/lichess_db_puzzle.csv.zst";
 const OUTPUT_PATH: &str = "data/puzzles_filtered.jsonl";
 

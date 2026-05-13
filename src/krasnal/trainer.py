@@ -252,11 +252,11 @@ def run_supervised_training(
                         _, loss = raw_model(x_val, y_val, ignore_index=LOSS_IGNORE_INDEX)
                         val_loss_sum += loss.item()
                         val_batches += 1
-                raw_model.train()
 
                 eval_metrics = {"val_loss": val_loss_sum / val_batches}
                 eval_metrics.update(eval_fn(model, iter_num))
                 eval_log_fn(iter_num, eval_metrics)
+                raw_model.train()
 
             pbar.update(1)
             iter_num += 1
@@ -265,6 +265,8 @@ def run_supervised_training(
 
     pbar.close()
 
+    raw_model = unwrap_model(model)
+    raw_model.eval()
     final_metrics = eval_fn(model, iter_num)
     eval_log_fn(iter_num, final_metrics)
 

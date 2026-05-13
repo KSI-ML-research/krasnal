@@ -149,6 +149,7 @@ def test_build_game_from_source_game_reconstructs_prefix(monkeypatch):
     board = bulletchess.Board()
     board.apply(bulletchess.Move.from_uci("e2e4"))
     board.apply(bulletchess.Move.from_uci("e7e5"))
+    board.apply(bulletchess.Move.from_uci("g1f3"))
 
     monkeypatch.setattr(
         puzzles_mod,
@@ -158,7 +159,7 @@ def test_build_game_from_source_game_reconstructs_prefix(monkeypatch):
             result="1-0",
             white_elo="2000",
             black_elo="2100",
-            moves_uci=("e2e4", "e7e5"),
+            moves_uci=("e2e4", "e7e5", "g1f3"),
         ),
     )
 
@@ -167,7 +168,7 @@ def test_build_game_from_source_game_reconstructs_prefix(monkeypatch):
         puzzle_fen=board.fen(),
     )
 
-    assert game.moves_uci == ["e2e4", "e7e5"]
+    assert game.moves_uci == ["e2e4", "e7e5", "g1f3"]
 
 
 def test_build_game_from_source_game_normalizes_en_passant(monkeypatch):
@@ -181,13 +182,13 @@ def test_build_game_from_source_game_normalizes_en_passant(monkeypatch):
             result="1-0",
             white_elo="2000",
             black_elo="2100",
-            moves_uci=("e2e4", "e7e5"),
+            moves_uci=("e2e4", "e7e5", "g1f3"),
         ),
     )
 
     game = _build_game_from_source_game(
         game_url="https://lichess.org/abc123/white#42",
-        puzzle_fen="rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 2",
+        puzzle_fen="rnbqkbnr/pppp1ppp/8/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R b KQkq - 1 2",
     )
 
-    assert game.moves_uci == ["e2e4", "e7e5"]
+    assert game.moves_uci == ["e2e4", "e7e5", "g1f3"]

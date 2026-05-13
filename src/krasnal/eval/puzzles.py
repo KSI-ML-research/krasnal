@@ -177,9 +177,12 @@ class SourceGameRecord:
             white_elo_token=_elo_token_from_header(self.white_elo),
             black_elo_token=_elo_token_from_header(self.black_elo),
         )
-        for move in self.moves_uci:
+        for move_idx, move in enumerate(self.moves_uci):
             game.feed_uci(move)
             if _normalized_fen(game.board.fen()) == target_fen:
+                next_move_idx = move_idx + 1
+                if next_move_idx < len(self.moves_uci):
+                    game.feed_uci(self.moves_uci[next_move_idx])
                 return game
         raise ValueError(f"Puzzle FEN not found in cached source game: {self.game_id}")
 
@@ -390,6 +393,12 @@ def evaluate_model_on_puzzles(
 
         source_game = _source_game_for_puzzle(puzzle, source_game_cache)
         game = _game_for_puzzle(board=board, source_game=source_game)
+        legal_moves = {move.uci() for move in game.board.legal_moves()}
+        if not legal_moves:
+            overall_stats.record_skip()
+            if bucket is not None:
+                bucket.record_skip()
+            continue
         predicted_move, mrr = _predict_puzzle_move(
             model=model,
             device=device,
