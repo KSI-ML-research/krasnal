@@ -1,3 +1,4 @@
+import contextlib
 import re
 import subprocess
 import time
@@ -128,17 +129,29 @@ class StockfishClient:
         return StockfishAnalysis(bestmove=bestmove, score_cp=cp_score)
 
     def close(self) -> None:
-        if self._process is None:
+        process = self._process
+        if process is None:
             return
 
         try:
-            if self._process.poll() is None:
+            if process.poll() is None:
                 self._send_command("quit")
-                self._process.wait(timeout=1)
+                process.wait(timeout=1)
         except Exception:
-            self._process.kill()
+            with contextlib.suppress(Exception):
+                process.kill()
         finally:
+            self._close_stream(process.stdin)
+            self._close_stream(process.stdout)
+            self._close_stream(process.stderr)
             self._process = None
+
+    @staticmethod
+    def _close_stream(stream) -> None:
+        if stream is None:
+            return
+        with contextlib.suppress(BrokenPipeError, OSError):
+            stream.close()
 
 
 def get_stockfish_client(
