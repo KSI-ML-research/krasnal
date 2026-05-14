@@ -97,12 +97,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         };
 
         // Lichess `Moves` field layout:
-        //   - token 0: "setup" move (opponent's last move before the puzzle starts)
-        //   - tokens 1..: solution moves for the side to play
+        //   - token 0: first solution move for the puzzle
+        //   - tokens 1..: remaining solution moves
         //
-        // We keep ONLY the first solution move (token 1). Many puzzles have
+        // We keep ONLY the first solution move (token 0). Many puzzles have
         // multi-move solutions, but this script evaluates just the first move.
-        let solution_first_move_uci = match record.get(2).and_then(|m| m.split_whitespace().nth(1)) {
+        let solution_first_move_uci = match record.get(2).and_then(|m| m.split_whitespace().next()) {
             Some(m) => m.to_string(),
             None => {
                 eprintln!("Skipping record #{total}: missing Moves");

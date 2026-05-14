@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import json
 import random
+import time
 from dataclasses import dataclass, field
 from functools import lru_cache
 from io import StringIO
 from pathlib import Path
 from typing import Any
+from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 
@@ -177,12 +179,9 @@ class SourceGameRecord:
             white_elo_token=_elo_token_from_header(self.white_elo),
             black_elo_token=_elo_token_from_header(self.black_elo),
         )
-        for move_idx, move in enumerate(self.moves_uci):
+        for move in self.moves_uci:
             game.feed_uci(move)
             if _normalized_fen(game.board.fen()) == target_fen:
-                next_move_idx = move_idx + 1
-                if next_move_idx < len(self.moves_uci):
-                    game.feed_uci(self.moves_uci[next_move_idx])
                 return game
         raise ValueError(f"Puzzle FEN not found in cached source game: {self.game_id}")
 
@@ -240,6 +239,7 @@ def build_source_game_cache(puzzles: list[dict[str, Any]], output_path: Path) ->
             records[game_id] = _load_source_game_record(game_url)
         except Exception as exc:
             logger.warning("Skipping source-game cache entry for {}: {}", game_url, exc)
+        time.sleep(0.25)
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with output_path.open("w") as f:
@@ -281,8 +281,20 @@ def _fetch_lichess_pgn(game_url: str) -> str:
     game_id = _extract_lichess_game_id(game_url)
     export_url = f"https://lichess.org/game/export/{game_id}.pgn"
     request = Request(export_url, headers={"User-Agent": "krasnal-puzzle-eval/1.0"})
-    with urlopen(request, timeout=10) as response:
-        return response.read().decode("utf-8")
+    delay = 1.0
+    for attempt in range(5):
+        try:
+            with urlopen(request, timeout=10) as response:
+                return response.read().decode("utf-8")
+        except HTTPError as exc:
+            if exc.code != 429 or attempt == 4:
+                raise
+        except URLError:
+            if attempt == 4:
+                raise
+        time.sleep(delay)
+        delay = min(delay * 2.0, 30.0)
+    raise RuntimeError(f"Failed to fetch PGN for {game_url}")
 
 
 def _elo_token_from_header(raw_elo: Any) -> int:

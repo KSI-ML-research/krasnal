@@ -24,7 +24,8 @@ LICHESS_BOT_REF := "96a8f74d87a42db8039e847548fec0d9528bb079"
     @echo "  just download-games [target=5000000] - download & filter Aix DB (DuckDB)"
     @echo "  just preprocess [args]                - tokenize Aix-filtered games for training"
     @echo "  just download-puzzles                 - download Lichess puzzle CSV"
-    @echo "  just prepare-puzzles                  - filter puzzles to JSONL + cache"
+    @echo "  just prepare-puzzles                  - filter puzzles to JSONL"
+    @echo "  just prepare-puzzle-cache             - build optional source-game cache"
     @echo "  just eval-puzzles [args]              - run puzzle evaluation"
     @echo "  just pretrain model=large train=cuda  - run pretraining stage"
     @echo "  just generate-sft-cot [args]          - generate CoT shards"
@@ -159,6 +160,9 @@ download-puzzles:
 # Filter puzzles by rating and export to JSONL
 prepare-puzzles:
     cargo run --release --bin prepare-puzzles
+
+# Optional offline source-game cache for puzzle eval
+prepare-puzzle-cache:
     PYTHONPATH=src uv run scripts/data/prepare_puzzle_cache.py
 
 # Evaluate model on prepared puzzles
