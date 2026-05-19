@@ -1,12 +1,10 @@
 # load .env variables for every command
 set dotenv-load := true
 
-SEED := "42"
-PREPROCESS_WORKERS := "0"
-# 0 lets preprocess auto-pick worker count (capped in script)
 export UV_CACHE_DIR := ".uv_cache"
 export HF_HUB_ENABLE_HF_TRANSFER := "1"
 export POLARS_MAX_THREADS := "2"
+
 LICHESS_BOT_REPO := "https://github.com/lichess-bot-devs/lichess-bot.git"
 # pinned lichess bot commit so that the setup is deterministic
 LICHESS_BOT_REF := "96a8f74d87a42db8039e847548fec0d9528bb079"
@@ -15,21 +13,14 @@ LICHESS_BOT_REF := "96a8f74d87a42db8039e847548fec0d9528bb079"
 # Print common project commands
 @help:
     @echo "Usage:"
-    @echo "  just setup                            - install deps, hooks"
     @echo "  just lint [args]                      - run Ruff"
     @echo "  just format [args]                    - format Python code"
     @echo "  just test [args]                      - run Python tests"
     @echo "  just pre-commit                       - run all pre-commit hooks"
     @echo "  just pipeline                         - run full training pipeline"
-    @echo "  just download-games [target=5000000] - download & filter Aix DB (DuckDB)"
-    @echo "  just preprocess [args]                - tokenize Aix-filtered games for training"
+    @echo "  just download-games [args]            - download & filter games"
+    @echo "  just preprocess                       - tokenize Aix-filtered games for training"
     @echo "  just pretrain model=large train=cuda  - run pretraining stage"
-
-# Install dependencies and setup pre-commit hooks
-setup:
-    uv sync
-    uv run pre-commit install
-
 
 # Run linters for Python code
 lint *args:
@@ -43,39 +34,31 @@ format *args:
 test *args:
     uv run pytest {{args}}
 
-# Run tests with coverage for Python code
-test-cov *args:
-    uv run pytest --cov=src/krasnal --cov-report=term-missing --cov-report=xml {{args}}
-
 # Run all pre-commit hooks
 pre-commit:
     uv run pre-commit run --all-files
 
 
-# Run full training pipeline: download games, preprocess, pretrain, evaluate
+# Run full training pipeline: download games, preprocess, pretrain
 pipeline:
     uv sync
     just download-games
     just preprocess
     just pretrain
-    # just generate-sft-cot --depth 10
-    # just train-sft-cot
-
 
 # Download & filter Aix Lichess database for high-quality games with evals
 # Uses DuckDB + Aix extension for fast SQL-based filtering
 # Uses cached files first, downloads missing ones automatically
-# Target: ~5M games by default (configurable)
 download-games *args:
     uv run scripts/data/download_games.py {{args}}
 
 # Preprocess downloaded games into training dataset
 preprocess *args:
-    uv run scripts/data/preprocess.py {{args}} seed={{SEED}} preprocess_workers={{PREPROCESS_WORKERS}}
+    uv run scripts/data/preprocess.py {{args}}
 
-# Stage 1: Pretrain model on large dataset of chess games
+# Pretrain model on large dataset of chess games
 pretrain *args:
-    uv run scripts/training/pretrain.py {{args}} seed={{SEED}}
+    uv run scripts/training/pretrain.py {{args}}
 
 
 # Download and setup lichess-bot client
@@ -95,10 +78,9 @@ bot-setup:
 
 # Run the bot locally (requires .env with LICHESS_BOT_TOKEN)
 # Usage:
-#   just bot-run                       # uses mock (random moves), prints WARNING
 #   just bot-run artifacts/pretrain/... # uses model from artifact directory
 # Notes:
-#   - model_path must be a directory containing model.pt and config.json
+#   - model_path must be a directory with model.pt, config.json, move_vocab.json (written at run start + checkpoint save)
 #   - path is resolved relative to project root, then passed as absolute path
 bot-run +model_path='':
     @if [ ! -x "lichess-bot/.venv/bin/python" ]; then \
@@ -131,7 +113,7 @@ bot-clean:
     @echo "Cleaning lichess-bot runtime artifacts and repository..."
     @rm -rf lichess-bot
 
-# Remvoe dataset hf-cache
+# Remove dataset hf-cache
 hf-cache-clean:
     hf cache rm dataset/thomasd1/aix-lichess-database -y
 

@@ -7,23 +7,15 @@ qa:
   check:
     enabled: true
     prob: 0.5
-  piece_type_moved:
-    enabled: false
-    king_base_prob: 0.1
   what_is_on:
     enabled: true
     prob: 0.1
 
-# Probability of hiding Elo information for one/both players
-unknown_elo:
-  normal_prob: 0.97
-  white_unknown_prob: 0.01
-  black_unknown_prob: 0.01
-  both_unknown_prob: 0.01
+
 
 time_control:
   enabled: true
 
-preprocess_workers: 0
+preprocess_workers: 4
 # Merge this many part_*.parquet shards at a time when writing train/eval (avoids high RAM use).
 preprocess_concat_batch_size: 10

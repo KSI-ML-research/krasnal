@@ -2,28 +2,40 @@ from __future__ import annotations
 
 import contextlib
 
+import bulletchess
 import torch
 import torch.nn.functional as F
 
+from krasnal.config import CLOCK_IGNORE_ID
 from krasnal.inference.game import Game
 from krasnal.inference.kv_cache import KVCache
 from krasnal.inference.utils import create_amp_context
 from krasnal.model import GPT
+from krasnal.time_conditioning import (
+    clock_pair_for_input_index,
+    new_clock_tracks,
+    sync_prefix_clock_tracks,
+)
 from krasnal.tokens import (
-    ELO_UNKNOWN_ID,
+    ELO_ABOVE_2200_ID,
     GAME_START_ID,
     QA_TOKEN_IDS,
     TC_UNKNOWN_ID,
     legal_token_ids,
 )
+from krasnal.uci_engine.go_params import GoParams, uci_ms_to_clock_seconds
 
 
 class InferenceSession:
     """Concrete inference session that incrementally decodes with KV cache when possible.
 
-    The session owns a synchronized `Game` for chess state and a raw `context`
-    token stream for actual model input. Non-move tokens (for example CoT
-    control tokens) are preserved in the raw context without mutating `Game`.
+    token stream for actual model input. Non-move tokens are preserved
+    in the raw context without mutating `Game`.
+
+    When ``use_time_conditioning`` is enabled, clock tensors follow the same
+    shift as training collate: input token at global index ``g`` is paired with
+    the clock row stored for token ``g + 1``; the leaf step uses clocks from
+    ``prepare_go_clocks`` (UCI ``wtime`` / ``btime``).
     """
 
     def __init__(
@@ -32,8 +44,8 @@ class InferenceSession:
         device: torch.device,
         game: Game | None = None,
         outcome_token: int | None = None,
-        white_elo_token: int = ELO_UNKNOWN_ID,
-        black_elo_token: int = ELO_UNKNOWN_ID,
+        white_elo_token: int = ELO_ABOVE_2200_ID,
+        black_elo_token: int = ELO_ABOVE_2200_ID,
         time_control_token: int = TC_UNKNOWN_ID,
     ):
         self.model = model
@@ -55,8 +67,8 @@ class InferenceSession:
     def reset(
         self,
         outcome_token: int,
-        white_elo_token: int = ELO_UNKNOWN_ID,
-        black_elo_token: int = ELO_UNKNOWN_ID,
+        white_elo_token: int = ELO_ABOVE_2200_ID,
+        black_elo_token: int = ELO_ABOVE_2200_ID,
         time_control_token: int = TC_UNKNOWN_ID,
     ) -> None:
         """Backward-compatible reset that rebuilds the underlying Game."""
@@ -69,10 +81,33 @@ class InferenceSession:
             )
         )
 
+    def _init_clock_tracks(self) -> None:
+        (
+            self._per_token_active,
+            self._per_token_opp,
+            self._go_active_sec,
+            self._go_opp_sec,
+        ) = new_clock_tracks(len(self.context), enabled=self.model.config.use_time_conditioning)
+
     def new_game(self, game: Game) -> None:
         """Replace the stored game and reset runtime-only state."""
         self.game = game
         self.context = self.game.context_tokens()
+        self._init_clock_tracks()
+        self._reset_cache_state()
+
+    def sync_prefix_tokens_from_game(self) -> None:
+        """Refresh fixed prefix tokens (Elo / TC) after ``Game`` metadata changes."""
+        prefix = self.game.context_tokens()[:5]
+        tail = self.context[5:] if len(self.context) > 5 else []
+        self.context = prefix + tail
+        if self.model.config.use_time_conditioning:
+            self._per_token_active, self._per_token_opp = sync_prefix_clock_tracks(
+                self._per_token_active,
+                self._per_token_opp,
+                prefix_len=len(prefix),
+                total_len=len(self.context),
+            )
         self._reset_cache_state()
 
     def _reset_cache_state(self) -> None:
@@ -98,23 +133,53 @@ class InferenceSession:
             dtype=self._kv_cache_dtype(),
         )
 
+    def prepare_go_clocks(self, go: GoParams | None) -> None:
+        """Set leaf clock pair from UCI ``go`` (milliseconds) for side to move."""
+        if not self.model.config.use_time_conditioning:
+            return
+        if go is None or go.wtime_ms is None or go.btime_ms is None:
+            self._go_active_sec = CLOCK_IGNORE_ID
+            self._go_opp_sec = CLOCK_IGNORE_ID
+        else:
+            w_s = uci_ms_to_clock_seconds(go.wtime_ms)
+            b_s = uci_ms_to_clock_seconds(go.btime_ms)
+            if self.game.board.turn == bulletchess.WHITE:
+                self._go_active_sec, self._go_opp_sec = w_s, b_s
+            else:
+                self._go_active_sec, self._go_opp_sec = b_s, w_s
+        self._reset_cache_state()
+
     def feed_token(self, token_id: int) -> None:
         """Append a token to model context and update game if it is a legal move token."""
         self.context.append(token_id)
+        if self.model.config.use_time_conditioning:
+            self._per_token_active.append(CLOCK_IGNORE_ID)
+            self._per_token_opp.append(CLOCK_IGNORE_ID)
         with contextlib.suppress(ValueError):
             self.game.feed_token(token_id)
         self._last_logits = None
 
-    def feed_uci(self, uci: str) -> None:
+    def feed_uci(
+        self,
+        uci: str,
+        clock_active: int | None = None,
+        clock_opponent: int | None = None,
+    ) -> None:
         """Append a UCI move, updating both game state and model context."""
         self.game.feed_uci(uci)
         self.context.append(self.game.tokens[-1])
+        if self.model.config.use_time_conditioning:
+            ca = CLOCK_IGNORE_ID if clock_active is None else int(clock_active)
+            co = CLOCK_IGNORE_ID if clock_opponent is None else int(clock_opponent)
+            self._per_token_active.append(ca)
+            self._per_token_opp.append(co)
         self._last_logits = None
 
     def get_raw_logits(self) -> torch.Tensor:
         """Return next-token logits for the current model context."""
         if not self.context:
             self.context = [GAME_START_ID]
+            self._init_clock_tracks()
 
         block_size = self.model.config.block_size
         context_window = self.context[-block_size:]  # sliding window context
@@ -147,7 +212,42 @@ class InferenceSession:
 
         x = torch.tensor([tokens_to_process], dtype=torch.long, device=self.device)
         with torch.inference_mode(), self._amp_ctx:
-            logits, _ = self.model(x, past_kv=self.kv_cache)
+            if self.model.config.use_time_conditioning:
+                first_g = len(self.context) - len(tokens_to_process)
+                act = [
+                    clock_pair_for_input_index(
+                        first_g + i,
+                        context_len=len(self.context),
+                        per_token_active=self._per_token_active,
+                        per_token_opp=self._per_token_opp,
+                        go_active_sec=self._go_active_sec,
+                        go_opp_sec=self._go_opp_sec,
+                        enabled=self.model.config.use_time_conditioning,
+                    )[0]
+                    for i in range(len(tokens_to_process))
+                ]
+                opp = [
+                    clock_pair_for_input_index(
+                        first_g + i,
+                        context_len=len(self.context),
+                        per_token_active=self._per_token_active,
+                        per_token_opp=self._per_token_opp,
+                        go_active_sec=self._go_active_sec,
+                        go_opp_sec=self._go_opp_sec,
+                        enabled=self.model.config.use_time_conditioning,
+                    )[1]
+                    for i in range(len(tokens_to_process))
+                ]
+                active_t = torch.tensor([act], dtype=torch.long, device=self.device)
+                opp_t = torch.tensor([opp], dtype=torch.long, device=self.device)
+                logits, _ = self.model(
+                    x,
+                    past_kv=self.kv_cache,
+                    active_clock_ids=active_t,
+                    opponent_clock_ids=opp_t,
+                )
+            else:
+                logits, _ = self.model(x, past_kv=self.kv_cache)
 
         self._cached_window_len = len(context_window)
         self._last_logits = logits[0, -1]

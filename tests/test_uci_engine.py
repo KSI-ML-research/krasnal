@@ -17,15 +17,15 @@ class FailingProvider(ChessModelProvider):
         raise ModelProviderError("model crashed")
 
 
-def test_uci_resigns_on_unrecoverable_model_provider_error(capsys):
+def test_uci_reports_no_move_on_unrecoverable_model_provider_error(capsys):
     parser = UCIParser(FailingProvider())
 
     parser._process_command("ucinewgame")
     parser._process_command("go")
 
     output = capsys.readouterr().out.splitlines()
-    assert "info string ModelProvider error: model crashed" in output
-    assert "bestmove resign" in output
+    assert any("krasnal-uci ModelProviderError: model crashed" in line for line in output)
+    assert "bestmove (none)" in output
 
 
 @pytest.mark.asyncio

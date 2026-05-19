@@ -71,8 +71,7 @@ def save_wandb_run(
     artifact_type: str,
 ) -> None:
     """Save config, run URL, and log artifact to wandb."""
-    with open(artifact_dir / "config.json", "w") as f:
-        json.dump(run_config, f, indent=2)
+    write_artifact_config_json(artifact_dir, run_config)
     with open(artifact_dir / "wandb_run_link.txt", "w") as f:
         f.write(f"{wandb_run_url}\n")
 
@@ -84,7 +83,7 @@ def save_wandb_run(
 def format_eval_metric_key(key: str) -> str:
     if key == "val_loss":
         return "eval/val_loss"
-    if key.startswith("qa/") or key.startswith("cot_"):
+    if key.startswith("qa/"):
         return f"eval/{key}"
     if key.startswith("acc_elo_"):
         return f"eval/game/elo/{key}"
@@ -93,18 +92,40 @@ def format_eval_metric_key(key: str) -> str:
 
 def log_eval_metrics_to_wandb(metrics: dict[str, Any], *, step: int | None = None) -> None:
     payload = {format_eval_metric_key(k): v for k, v in metrics.items()}
-    qa_key = "qa/what_is_on/accuracy_matrix"
-    if qa_key in metrics:
-        heatmap = metrics[qa_key]
-        payload[format_eval_metric_key(qa_key)] = heatmap
-        wandb.run.summary["eval/qa/what_is_on/accuracy_matrix"] = heatmap  # type: ignore[index]
+    for qa_key in ("qa/what_is_on/acc_matrix", "qa/what_is_on/acc_matrix_baseline"):
+        if qa_key in metrics:
+            heatmap = metrics[qa_key]
+            key = format_eval_metric_key(qa_key)
+            payload[key] = heatmap
+            wandb.run.summary[key] = heatmap  # type: ignore[index]
     if step is None:
         wandb.log(payload)
     else:
         wandb.log(payload, step=step)
 
 
-REQUIRED_CONFIG_KEYS = {"block_size", "n_layer", "n_head", "n_embd"}
+REQUIRED_CONFIG_KEYS = {
+    "block_size",
+    "n_layer",
+    "n_head",
+    "n_embd",
+    "vocab_size",
+    "dropout",
+    "use_time_conditioning",
+    "time_conditioning_hidden",
+}
+
+
+def write_artifact_config_json(artifact_dir: Path, run_config: dict[str, Any]) -> None:
+    """Write ``config.json`` at run start (architecture metadata before checkpoint save)."""
+    missing = REQUIRED_CONFIG_KEYS - run_config.keys()
+    if missing:
+        raise ValueError(
+            "run_config missing inference keys: " + ", ".join(sorted(missing)),
+        )
+    artifact_dir.mkdir(parents=True, exist_ok=True)
+    with (artifact_dir / "config.json").open("w") as f:
+        json.dump(run_config, f, indent=2)
 
 
 def resolve_runtime_device() -> torch.device:
@@ -116,7 +137,8 @@ def resolve_runtime_device() -> torch.device:
     return torch.device("cpu")
 
 
-def _load_artifact_config(config_path: Path) -> dict[str, Any]:
+def read_model_config_json(config_path: Path) -> dict[str, Any]:
+    """Load and validate ``config.json`` (training / inference manifest)."""
     with config_path.open() as f:
         config = json.load(f)
     missing = REQUIRED_CONFIG_KEYS - config.keys()
@@ -126,14 +148,15 @@ def _load_artifact_config(config_path: Path) -> dict[str, Any]:
     return config
 
 
-def build_gpt_config_from_artifact(artifact_dir: Path, vocab_size: int | None = None) -> GPTConfig:
-    """Build GPTConfig from an artifact directory."""
-    config = _load_artifact_config(artifact_dir / "config.json")
+def gpt_config_from_artifact_dict(config: dict[str, Any]) -> GPTConfig:
+    """Build ``GPTConfig`` from a validated artifact config dict (single source for field names)."""
     return GPTConfig(
         block_size=int(config["block_size"]),
         n_layer=int(config["n_layer"]),
         n_head=int(config["n_head"]),
         n_embd=int(config["n_embd"]),
-        vocab_size=vocab_size if vocab_size is not None else config.get("vocab_size"),
-        dropout=float(config.get("dropout", 0.0)),
+        vocab_size=int(config["vocab_size"]),
+        dropout=float(config["dropout"]),
+        use_time_conditioning=bool(config["use_time_conditioning"]),
+        time_conditioning_hidden=int(config["time_conditioning_hidden"]),
     )

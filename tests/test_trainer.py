@@ -5,12 +5,12 @@ import pytest
 import torch
 from torch.utils.data import DataLoader, TensorDataset
 
+from krasnal.config import CLOCK_IGNORE_ID
 from krasnal.dataset import make_collate_fn
 from krasnal.tokens import (
     ELO_2000_2099_ID,
     IS_CHECK_ID,
     MOVE_TO_ID,
-    PAWN_ID,
     TC_RAPID_INC_ID,
     WHATS_ON_PROMPT_TOKEN_IDS,
     WHITE_WON_ID,
@@ -32,7 +32,7 @@ class MockModel(torch.nn.Module):
         super().__init__()
         self.linear = torch.nn.Linear(8, 10)
 
-    def forward(self, x, y, ignore_index=-100):
+    def forward(self, x, y, ignore_index=-100, **_kwargs):
         logits = self.linear(x)
         loss = torch.nn.functional.cross_entropy(
             logits.view(-1, logits.size(-1)), y.view(-1), ignore_index=ignore_index
@@ -127,20 +127,22 @@ def test_run_training_smoke():
 
 def test_collate_masks_conditioning_metadata_targets():
     collate = make_collate_fn()
-    x, y = collate(
+    x, active_x, opponent_x, y = collate(
         [torch.tensor([0, TC_RAPID_INC_ID, WHITE_WON_ID, ELO_2000_2099_ID, 500], dtype=torch.long)]
     )
 
     assert x.tolist() == [[0, TC_RAPID_INC_ID, WHITE_WON_ID, ELO_2000_2099_ID]]
+    assert active_x.shape == x.shape
+    assert opponent_x.shape == x.shape
     assert y.tolist() == [[-100, -100, -100, 500]]
 
 
 def test_collate_masks_is_check_targets():
     collate = make_collate_fn()
-    x, y = collate([torch.tensor([10, IS_CHECK_ID, PAWN_ID], dtype=torch.long)])
+    x, _active_x, _opponent_x, y = collate([torch.tensor([10, IS_CHECK_ID, 500], dtype=torch.long)])
 
     assert x.tolist() == [[10, IS_CHECK_ID]]
-    assert y.tolist() == [[-100, PAWN_ID]]
+    assert y.tolist() == [[-100, 500]]
 
 
 def test_collate_masks_whats_on_prompt_tokens():
@@ -151,15 +153,32 @@ def test_collate_masks_whats_on_prompt_tokens():
     assert whats_on_e4 in WHATS_ON_PROMPT_TOKEN_IDS
     assert answer not in WHATS_ON_PROMPT_TOKEN_IDS
 
-    x, y = collate([torch.tensor([10, whats_on_e4, answer], dtype=torch.long)])
+    x, _active_x, _opponent_x, y = collate(
+        [torch.tensor([10, whats_on_e4, answer], dtype=torch.long)]
+    )
 
     assert x.tolist() == [[10, whats_on_e4]]
     assert y.tolist() == [[-100, answer]]
 
 
+def test_collate_shifts_clock_features_to_prediction_targets():
+    collate = make_collate_fn()
+    tokens = torch.tensor([500, 501, 502], dtype=torch.long)
+    active_clocks = torch.tensor([CLOCK_IGNORE_ID, 30, 20], dtype=torch.long)
+    opponent_clocks = torch.tensor([CLOCK_IGNORE_ID, 40, 35], dtype=torch.long)
+
+    x, active_x, opponent_x, y = collate([(tokens, active_clocks, opponent_clocks)])
+
+    assert x.tolist() == [[500, 501]]
+    assert active_x.tolist() == [[30, 20]]
+    assert opponent_x.tolist() == [[40, 35]]
+    assert y.tolist() == [[501, 502]]
+
+
 def test_format_eval_metric_key_groups_game_metrics():
     assert format_eval_metric_key("illegal_mass") == "eval/game/illegal_mass"
     assert format_eval_metric_key("top1_legal") == "eval/game/top1_legal"
-    key = "qa/what_is_on/accuracy_matrix"
-    assert format_eval_metric_key(key) == "eval/qa/what_is_on/accuracy_matrix"
+    assert format_eval_metric_key("acc_when_low_time") == "eval/game/acc_when_low_time"
+    key = "qa/what_is_on/acc_matrix"
+    assert format_eval_metric_key(key) == "eval/qa/what_is_on/acc_matrix"
     assert format_eval_metric_key("val_loss") == "eval/val_loss"

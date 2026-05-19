@@ -1,43 +1,45 @@
 #!/usr/bin/env -S uv run python
+"""UCI entrypoint. When lichess-bot runs ``../.venv/bin/python ../src/.../run.py``, ``src`` may
+not be on ``sys.path``; bootstrap before importing ``krasnal``."""
+
+from __future__ import annotations
 
 import os
 import sys
 from pathlib import Path
 
-from loguru import logger
+# ``run.py`` lives at ``src/krasnal/uci_engine/run.py`` — add ``src`` for ``import krasnal``.
+_SRC_DIR = Path(__file__).resolve().parent.parent.parent
+if str(_SRC_DIR) not in sys.path:
+    sys.path.insert(0, str(_SRC_DIR))
 
-from krasnal.uci_engine.provider import ModelProvider, RandomMockProvider
-from krasnal.uci_engine.uci_parser import UCIParser
+from loguru import logger  # noqa: E402
 
+from krasnal.uci_engine.uci_parser import UCIParser  # noqa: E402
 
-def build_provider():
-    requested_provider = os.environ.get("KRASNAL_ENGINE_PROVIDER", "auto").strip().lower()
-
-    if requested_provider == "mock":
-        provider = RandomMockProvider()
-        return provider, "Krasnal Mock"
-
-    artifact_dir_env = os.environ.get("KRASNAL_MODEL_ARTIFACT_DIR")
-    if not artifact_dir_env:
-        raise ValueError("Either set KRASNAL_ENGINE_PROVIDER=mock or KRASNAL_MODEL_ARTIFACT_DIR")
-    artifact_dir = Path(artifact_dir_env)
-    if not artifact_dir.exists():
-        raise ValueError(f"Model artifact directory not found: {artifact_dir}")
-    provider = ModelProvider.from_artifact_dir(artifact_dir)
-    return provider, provider.engine_name
+_UCI_LOG_FORMAT = "{time:HH:mm:ss.SSS} | {level:<8} | {name}:{function}:{line} | {message}"
 
 
-def main():
-    if os.environ.get("KRASNAL_ENGINE_PROVIDER") == "mock":
+def configure_uci_stderr_logging() -> None:
+    """Loguru to stderr: ERROR by default, DEBUG when ``KRASNAL_UCI_VERBOSE`` is set."""
+    logger.remove()
+    level = "DEBUG" if os.environ.get("KRASNAL_UCI_VERBOSE") else "ERROR"
+    logger.add(sys.stderr, level=level, format=_UCI_LOG_FORMAT)
+
+
+def main() -> None:
+    configure_uci_stderr_logging()
+
+    if os.environ.get("KRASNAL_ENGINE_PROVIDER") == "mock" and os.environ.get(
+        "KRASNAL_UCI_VERBOSE"
+    ):
         print("\n" + "=" * 60, file=sys.stderr)
-        print("⚠️  WARNING: Running in MOCK mode (random moves)", file=sys.stderr)
+        print("WARNING: Running in MOCK mode (random moves)", file=sys.stderr)
         print("=" * 60 + "\n", file=sys.stderr)
 
-    logger.info("Starting Krasnal UCI Engine")
-
-    provider, engine_name = build_provider()
-    uci = UCIParser(provider, engine_name=engine_name)
-
+    # Defer ``build_provider()`` until the first ``uci`` so python-chess gets ``uciok`` quickly
+    # while torch / weights load (lichess-bot ``silence_stderr: false`` hides stderr otherwise).
+    uci = UCIParser(lazy_start=True)
     uci.run()
 
 

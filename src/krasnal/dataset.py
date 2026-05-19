@@ -8,7 +8,9 @@ from datasets import Dataset as HFDataset
 from torch.nn.utils.rnn import pad_sequence
 from torch.utils.data import Dataset
 
+from krasnal.config import CLOCK_IGNORE_ID
 from krasnal.supervised_target_mask import apply_supervised_loss_mask
+from krasnal.time_conditioning import shift_clock_rows_for_training
 from krasnal.tokens import PAD_ID
 
 
@@ -25,7 +27,7 @@ def resolve_hf_datasets_cache_dir() -> str:
     return str(Path(".hf_cache/datasets"))
 
 
-class ChessDataset(Dataset[torch.Tensor]):
+class ChessDataset(Dataset[tuple[torch.Tensor, torch.Tensor, torch.Tensor]]):
     """
     A PyTorch Dataset for loading chess games stored in a Parquet file.
 
@@ -44,7 +46,14 @@ class ChessDataset(Dataset[torch.Tensor]):
         cache_dir = Path(resolve_hf_datasets_cache_dir())
         cache_dir.mkdir(parents=True, exist_ok=True)
         self.dataset = HFDataset.from_parquet(paths, cache_dir=str(cache_dir))
-        self.dataset.set_format(type="torch", columns=["token_ids"])
+        self.has_clock_columns = {
+            "active_clock_ids",
+            "opponent_clock_ids",
+        }.issubset(self.dataset.column_names)
+        columns = ["token_ids"]
+        if self.has_clock_columns:
+            columns.extend(["active_clock_ids", "opponent_clock_ids"])
+        self.dataset.set_format(type="torch", columns=columns)
 
         self.include_elo = include_elo
         from krasnal.tokens import ELO_TOKENS
@@ -55,15 +64,28 @@ class ChessDataset(Dataset[torch.Tensor]):
         return len(self.dataset)
 
     def __getitem__(self, idx: int):
-        tokens = self.dataset[idx]["token_ids"].to(torch.long)
+        row = self.dataset[idx]
+        tokens = row["token_ids"].to(torch.long)
         if tokens.min() < 0:
             raise ValueError(f"Invalid negative tokens found at index {idx}: {tokens[tokens < 0]}")
+
+        if self.has_clock_columns:
+            active_clocks = row["active_clock_ids"].to(torch.long)
+            opponent_clocks = row["opponent_clock_ids"].to(torch.long)
+        else:
+            active_clocks = torch.full_like(tokens, CLOCK_IGNORE_ID)
+            opponent_clocks = torch.full_like(tokens, CLOCK_IGNORE_ID)
 
         if not self.include_elo:
             mask = ~torch.isin(tokens, self.elo_tensor)
             tokens = tokens[mask]
+            active_clocks = active_clocks[mask]
+            opponent_clocks = opponent_clocks[mask]
 
-        return tokens
+        if not (tokens.size(0) == active_clocks.size(0) == opponent_clocks.size(0)):
+            raise ValueError(f"Clock/token length mismatch at index {idx}")
+
+        return tokens, active_clocks, opponent_clocks
 
 
 def _get_bucket_size(seq_len: int, bucket_sizes: tuple[int, ...]) -> int:
@@ -87,7 +109,28 @@ class CollateFn:
         The model receives x=padded[:, :-1], y=padded[:, 1:], so we pad to
         (bucket_size + 1) to keep model sequence length exactly bucket_size.
         """
-        padded = pad_sequence(batch, batch_first=True, padding_value=PAD_ID)
+        if isinstance(batch[0], tuple):
+            token_batch, active_clock_batch, opponent_clock_batch = zip(*batch, strict=True)
+        else:
+            token_batch = batch
+            active_clock_batch = [
+                torch.full_like(tokens, CLOCK_IGNORE_ID) for tokens in token_batch
+            ]
+            opponent_clock_batch = [
+                torch.full_like(tokens, CLOCK_IGNORE_ID) for tokens in token_batch
+            ]
+
+        padded = pad_sequence(token_batch, batch_first=True, padding_value=PAD_ID)
+        active_padded = pad_sequence(
+            active_clock_batch,
+            batch_first=True,
+            padding_value=CLOCK_IGNORE_ID,
+        )
+        opponent_padded = pad_sequence(
+            opponent_clock_batch,
+            batch_first=True,
+            padding_value=CLOCK_IGNORE_ID,
+        )
 
         seq_len = padded.size(1) - 1
         if seq_len > 0 and self.bucket_sizes:
@@ -96,10 +139,13 @@ class CollateFn:
             if padded.size(1) < target_total_len:
                 pad_size = target_total_len - padded.size(1)
                 padded = F.pad(padded, (0, pad_size), value=PAD_ID)
+                active_padded = F.pad(active_padded, (0, pad_size), value=CLOCK_IGNORE_ID)
+                opponent_padded = F.pad(opponent_padded, (0, pad_size), value=CLOCK_IGNORE_ID)
 
         x = padded[:, :-1]
+        active_x, opponent_x = shift_clock_rows_for_training(active_padded, opponent_padded)
         y = apply_supervised_loss_mask(padded[:, 1:])
-        return x, y
+        return x, active_x, opponent_x, y
 
 
 def make_collate_fn(bucket_sizes: tuple[int, ...] = ()) -> Callable:

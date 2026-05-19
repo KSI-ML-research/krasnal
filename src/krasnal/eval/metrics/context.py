@@ -19,6 +19,8 @@ class EvalContext:
         gives_check: Whether the move gives check to opponent.
         fen: FEN string of the position before the move.
         top1_fen: FEN string after applying model's top-1 legal move.
+        active_clock_seconds: Remaining seconds for the side to move (if known from data).
+        opponent_clock_seconds: Opponent remaining seconds at the same ply (if known).
     """
 
     probs: torch.Tensor | None = None
@@ -36,3 +38,7 @@ class EvalContext:
     top1_move_uci: str | None = None
     what_is_on_game_key: str | None = None
     what_is_on_ply: int | None = None
+    active_clock_seconds: int | None = None
+    opponent_clock_seconds: int | None = None
+    active_clock_sequence: list[int] | None = None
+    opponent_clock_sequence: list[int] | None = None

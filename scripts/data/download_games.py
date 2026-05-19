@@ -7,7 +7,7 @@ Filters:
     - Time control >= min_time seconds base (5+0 and above)
     - Require evals only when require_evals is enabled
     - Normal termination only
-    - Date range: 2013-01 to 2026-03 (configurable)
+    - Month range: ``start_month`` / ``end_month`` in ``download.yaml`` (``%clk`` clocks)
 
 Output: Parquet files in data/1_filtered/
 
@@ -19,6 +19,7 @@ Usage:
 
 import logging
 import os
+import sys
 import time
 from pathlib import Path
 
@@ -40,14 +41,39 @@ COMPRESSION = "high"
 
 OUTPUT_DIR = Path("data/1_filtered")
 
-DEFAULT_MONTHS = [
-    f"{y}-{m:02d}"
-    for y in range(2013, 2027)
-    for m in range(1, 13)
-    if (y, m) >= (2013, 1) and (y, m) <= (2026, 3)
-]
+# If ``end_month`` is null, months run through this (HF catalog / default cap).
+DEFAULT_END_MONTH = "2026-03"
 
 SKIP_MONTHS = {"2020-12", "2021-01", "2020-07", "2016-12"}
+
+
+def _parse_month(label: str) -> tuple[int, int]:
+    year_s, mon_s = label.split("-", 1)
+    return int(year_s), int(mon_s)
+
+
+def _expand_month_range(start: str, end: str) -> list[str]:
+    """Inclusive ``start`` … ``end`` as YYYY-MM strings."""
+    y, mo = _parse_month(start)
+    ey, emo = _parse_month(end)
+    if (y, mo) > (ey, emo):
+        return []
+    out: list[str] = []
+    while (y, mo) <= (ey, emo):
+        out.append(f"{y}-{mo:02d}")
+        mo += 1
+        if mo > 12:
+            mo = 1
+            y += 1
+    return out
+
+
+def _resolve_months(cfg: DictConfig) -> list[str]:
+    start = str(cfg.start_month)
+    end_raw = cfg.get("end_month")
+    end = str(end_raw) if end_raw is not None else DEFAULT_END_MONTH
+    return _expand_month_range(start, end)
+
 
 # ─── DuckDB + Aix Query ─────────────────────────────────────────────────────
 
@@ -55,6 +81,8 @@ FILTER_QUERY = """
 SELECT
     lichess_id,
     to_uci(movedata) AS uci_moves,
+    clocks_white,
+    clocks_black,
     list_eval_to_centipawns(evals) AS evals_cp,
     evals AS evals_raw,
     move_details(movedata).apply(m -> m.is_check) AS is_check,
@@ -189,10 +217,13 @@ def main(cfg: DictConfig) -> None:
     compression = cfg.compression
     require_evals = cfg.get("require_evals", False)
 
-    months = cfg.months if cfg.months else DEFAULT_MONTHS
+    months = _resolve_months(cfg)
+    if not months:
+        logger.error("No months to process (check ``start_month`` / ``end_month`` in config).")
+        sys.exit(1)
 
     logger.info(f"Target games: {target_games:,}")
-    logger.info(f"Months to process: {len(months)}")
+    logger.info(f"Months to process: {len(months)} (first={months[0]}, last={months[-1]})")
     logger.info(f"Compression: {compression}")
     logger.info(f"Min Elo: {min_elo}")
     logger.info(f"Min time control: {min_time}s")

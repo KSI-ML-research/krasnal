@@ -1,10 +1,20 @@
 import bulletchess
 
+from krasnal.config import CLOCK_IGNORE_ID
 from krasnal.eval.metrics.context import EvalContext
 from krasnal.eval.parsers import GameTokens
 from krasnal.tokens import legal_token_ids, to_uci
 
 PIECE_TYPE_TO_INT = {pt: i + 1 for i, pt in enumerate(bulletchess.PIECE_TYPES)}
+
+
+def _clock_for_metric(values: list[int] | None, move_idx: int) -> int | None:
+    if values is None or move_idx >= len(values):
+        return None
+    v = values[move_idx]
+    if v >= CLOCK_IGNORE_ID:
+        return None
+    return int(v)
 
 
 def replay_game_tokens(game_tokens: GameTokens) -> list[EvalContext]:
@@ -16,6 +26,8 @@ def replay_game_tokens(game_tokens: GameTokens) -> list[EvalContext]:
     contexts: list[EvalContext] = []
     board = bulletchess.Board()
     context = game_tokens.initial_context.copy()
+    clock_active = [CLOCK_IGNORE_ID] * len(context)
+    clock_opponent = [CLOCK_IGNORE_ID] * len(context)
 
     for move_idx, move_token in enumerate(game_tokens.move_tokens):
         legal_ids = legal_token_ids(board)
@@ -61,10 +73,20 @@ def replay_game_tokens(game_tokens: GameTokens) -> list[EvalContext]:
                 top1_fen=None,
                 what_is_on_game_key=what_is_on_game_key,
                 what_is_on_ply=move_idx,
+                active_clock_seconds=_clock_for_metric(game_tokens.move_active_seconds, move_idx),
+                opponent_clock_seconds=_clock_for_metric(
+                    game_tokens.move_opponent_seconds, move_idx
+                ),
+                active_clock_sequence=clock_active.copy(),
+                opponent_clock_sequence=clock_opponent.copy(),
             )
         )
 
         context.append(move_token)
+        a_clock = _clock_for_metric(game_tokens.move_active_seconds, move_idx)
+        o_clock = _clock_for_metric(game_tokens.move_opponent_seconds, move_idx)
+        clock_active.append(CLOCK_IGNORE_ID if a_clock is None else a_clock)
+        clock_opponent.append(CLOCK_IGNORE_ID if o_clock is None else o_clock)
 
     return contexts
 

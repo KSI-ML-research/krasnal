@@ -9,6 +9,9 @@ qa:
   what_is_on:
     enabled: true
     accuracy_per_square: true
+    # Set to e.g. data/2_tokenized/what_is_on_baseline_counts.json after running
+    # scripts/data/build_what_is_on_baseline_counts.py
+    baseline_counts_path: null
 
 # List of classical metrics to compute
 metrics:
@@ -18,6 +21,7 @@ metrics:
   - acc_endgame
   - acc_when_gives_check
   - acc_when_in_check
+  - acc_when_low_time
   - acc_elo_below_1000
   - acc_elo_1000_1099
   - acc_elo_1100_1199
@@ -39,6 +43,7 @@ metrics:
   - illegal_mass_endgame
   - illegal_mass_when_gives_check
   - illegal_mass_when_in_check
+  - illegal_mass_when_low_time
 
   - mrr
   - mrr_when_low_time
@@ -51,6 +56,7 @@ metrics:
   - top1_legal_endgame
   - top1_legal_when_gives_check
   - top1_legal_when_in_check
+  - top1_legal_when_low_time
 
 # Mover clock threshold (seconds) for *_when_low_time metrics
 low_time_seconds: 30

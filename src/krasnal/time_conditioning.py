@@ -1,0 +1,68 @@
+from __future__ import annotations
+
+import torch
+
+from krasnal.config import CLOCK_IGNORE_ID
+
+
+def ignore_clock_pair() -> tuple[int, int]:
+    return CLOCK_IGNORE_ID, CLOCK_IGNORE_ID
+
+
+def new_clock_tracks(token_count: int, *, enabled: bool) -> tuple[list[int], list[int], int, int]:
+    if not enabled:
+        return [], [], CLOCK_IGNORE_ID, CLOCK_IGNORE_ID
+    return (
+        [CLOCK_IGNORE_ID] * token_count,
+        [CLOCK_IGNORE_ID] * token_count,
+        CLOCK_IGNORE_ID,
+        CLOCK_IGNORE_ID,
+    )
+
+
+def sync_prefix_clock_tracks(
+    active_clock_ids: list[int],
+    opponent_clock_ids: list[int],
+    *,
+    prefix_len: int,
+    total_len: int,
+) -> tuple[list[int], list[int]]:
+    tail_a = active_clock_ids[prefix_len:] if len(active_clock_ids) > prefix_len else []
+    tail_o = opponent_clock_ids[prefix_len:] if len(opponent_clock_ids) > prefix_len else []
+    active = [CLOCK_IGNORE_ID] * prefix_len + tail_a
+    opponent = [CLOCK_IGNORE_ID] * prefix_len + tail_o
+    while len(active) < total_len:
+        active.append(CLOCK_IGNORE_ID)
+        opponent.append(CLOCK_IGNORE_ID)
+    del active[total_len:]
+    del opponent[total_len:]
+    return active, opponent
+
+
+def shift_clock_rows_for_training(
+    active_padded: torch.Tensor,
+    opponent_padded: torch.Tensor,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Return the training view where token g uses the clock row stored at g + 1."""
+    return active_padded[:, 1:], opponent_padded[:, 1:]
+
+
+def clock_pair_for_input_index(
+    global_input_index: int,
+    *,
+    context_len: int,
+    per_token_active: list[int],
+    per_token_opp: list[int],
+    go_active_sec: int,
+    go_opp_sec: int,
+    enabled: bool,
+) -> tuple[int, int]:
+    if not enabled:
+        return ignore_clock_pair()
+
+    next_index = global_input_index + 1
+    if next_index < context_len:
+        return per_token_active[next_index], per_token_opp[next_index]
+    if next_index == context_len:
+        return go_active_sec, go_opp_sec
+    return ignore_clock_pair()

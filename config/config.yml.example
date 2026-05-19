@@ -6,6 +6,14 @@ engine:
   interpreter: "ENGINE_INTERPRETER_PLACEHOLDER"
   name: "src/krasnal/uci_engine/run.py"
   dir: ".."
+  # lichess-bot: ``true`` here means stderr is *shown* (``false`` sends engine stderr to /dev/null).
+  silence_stderr: true
+  # Optional: pass Lichess-style metadata into the model (see UCIParser docstring).
+  # uci_options:
+  #   KrasnalWhiteElo: "2000"
+  #   KrasnalBlackElo: "1950"
+  #   KrasnalInitialSeconds: "180"
+  #   KrasnalIncrementSeconds: "2"
 
 challenge:
   concurrency: 1

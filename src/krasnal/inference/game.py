@@ -6,7 +6,7 @@ import bulletchess
 
 from krasnal.tokens import (
     DRAW_ID,
-    ELO_UNKNOWN_ID,
+    ELO_ABOVE_2200_ID,
     GAME_START_ID,
     OUTCOME_TOKENS,
     TC_UNKNOWN_ID,
@@ -18,8 +18,8 @@ from krasnal.tokens import (
 
 @dataclass
 class Game:
-    white_elo_token: int = ELO_UNKNOWN_ID
-    black_elo_token: int = ELO_UNKNOWN_ID
+    white_elo_token: int = ELO_ABOVE_2200_ID
+    black_elo_token: int = ELO_ABOVE_2200_ID
     time_control_token: int = TC_UNKNOWN_ID
     target_outcome_token: int = DRAW_ID
     moves_uci: list[str] = field(default_factory=list)

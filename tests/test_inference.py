@@ -1,6 +1,6 @@
 import torch
 
-from krasnal.config import GPTConfig
+from krasnal.config import CLOCK_IGNORE_ID, GPTConfig
 from krasnal.inference import (
     Game,
     InferenceSession,
@@ -9,20 +9,33 @@ from krasnal.inference import (
 )
 from krasnal.inference.kv_cache import KVCache
 from krasnal.model import GPT
+from krasnal.time_conditioning import (
+    clock_pair_for_input_index,
+    new_clock_tracks,
+    sync_prefix_clock_tracks,
+)
 from krasnal.tokens import (
     BLACK_PREFIX,
     DRAW_ID,
     MOVE_TO_ID,
-    PAWN_ID,
     WHITE_PREFIX,
     WHITE_WON_ID,
     get_vocab_size,
 )
+from krasnal.uci_engine.go_params import GoParams
 
 
 def test_inference_session_feed_and_get_probs():
     device = torch.device("cpu")
-    config = GPTConfig(block_size=128, vocab_size=get_vocab_size(), n_layer=2, n_head=2, n_embd=64)
+    config = GPTConfig(
+        block_size=128,
+        vocab_size=get_vocab_size(),
+        n_layer=2,
+        n_head=2,
+        n_embd=64,
+        use_time_conditioning=False,
+        time_conditioning_hidden=32,
+    )
     model = GPT(config).to(device)
     session = InferenceSession(model, device, outcome_token=WHITE_WON_ID)
 
@@ -41,7 +54,15 @@ def test_sample_token_greedy():
 
 def test_inference_session_single_step():
     device = torch.device("cpu")
-    config = GPTConfig(block_size=128, vocab_size=get_vocab_size(), n_layer=2, n_head=2, n_embd=64)
+    config = GPTConfig(
+        block_size=128,
+        vocab_size=get_vocab_size(),
+        n_layer=2,
+        n_head=2,
+        n_embd=64,
+        use_time_conditioning=False,
+        time_conditioning_hidden=32,
+    )
     model = GPT(config).to(device)
     session = InferenceSession(model, device, outcome_token=WHITE_WON_ID)
 
@@ -75,7 +96,15 @@ def test_game_feed_uci_and_feed_token_keep_board_and_tokens_synchronized():
 
 def test_stateless_batch_inference_session_returns_probs():
     device = torch.device("cpu")
-    config = GPTConfig(block_size=128, vocab_size=get_vocab_size(), n_layer=2, n_head=2, n_embd=64)
+    config = GPTConfig(
+        block_size=128,
+        vocab_size=get_vocab_size(),
+        n_layer=2,
+        n_head=2,
+        n_embd=64,
+        use_time_conditioning=False,
+        time_conditioning_hidden=32,
+    )
     model = GPT(config).to(device)
     batch = StatelessBatchInferenceSession(model, device)
     sequences = [
@@ -89,8 +118,92 @@ def test_stateless_batch_inference_session_returns_probs():
     assert not torch.isnan(probs).any()
 
 
+def test_model_time_conditioning_forward_accepts_clock_tensors():
+    device = torch.device("cpu")
+    config = GPTConfig(
+        block_size=8,
+        vocab_size=get_vocab_size(),
+        n_layer=2,
+        n_head=2,
+        n_embd=64,
+        use_time_conditioning=True,
+        time_conditioning_hidden=32,
+    )
+    model = GPT(config).to(device)
+    idx = torch.tensor([[0, WHITE_WON_ID, MOVE_TO_ID[WHITE_PREFIX + "e2e4"]]], dtype=torch.long)
+    clocks = torch.tensor([[CLOCK_IGNORE_ID, CLOCK_IGNORE_ID, 120]], dtype=torch.long)
+
+    logits, loss = model(idx, idx, active_clock_ids=clocks, opponent_clock_ids=clocks)
+
+    assert logits.shape == (1, 3, get_vocab_size())
+    assert loss is not None
+
+
+def test_time_conditioning_prefix_sync_preserves_tail():
+    active, opponent, go_active, go_opponent = new_clock_tracks(6, enabled=True)
+    active[4] = 41
+    opponent[4] = 52
+
+    synced_active, synced_opponent = sync_prefix_clock_tracks(
+        active,
+        opponent,
+        prefix_len=4,
+        total_len=6,
+    )
+
+    assert synced_active[:4] == [CLOCK_IGNORE_ID] * 4
+    assert synced_opponent[:4] == [CLOCK_IGNORE_ID] * 4
+    assert synced_active[4:] == [41, CLOCK_IGNORE_ID]
+    assert synced_opponent[4:] == [52, CLOCK_IGNORE_ID]
+    assert go_active == CLOCK_IGNORE_ID
+    assert go_opponent == CLOCK_IGNORE_ID
+
+
+def test_clock_pair_for_input_index_uses_go_clock_at_leaf():
+    active = [CLOCK_IGNORE_ID, CLOCK_IGNORE_ID, 30]
+    opponent = [CLOCK_IGNORE_ID, CLOCK_IGNORE_ID, 40]
+
+    assert clock_pair_for_input_index(
+        2,
+        context_len=3,
+        per_token_active=active,
+        per_token_opp=opponent,
+        go_active_sec=11,
+        go_opp_sec=22,
+        enabled=True,
+    ) == (11, 22)
+
+
+def test_prepare_go_clocks_clears_kv_cache():
+    device = torch.device("cpu")
+    config = GPTConfig(
+        block_size=128,
+        vocab_size=get_vocab_size(),
+        n_layer=2,
+        n_head=2,
+        n_embd=64,
+        use_time_conditioning=True,
+        time_conditioning_hidden=32,
+    )
+    model = GPT(config).to(device).eval()
+    session = InferenceSession(model, device, outcome_token=WHITE_WON_ID)
+    session.feed_uci("e2e4")
+    session.get_raw_logits()
+    assert session.kv_cache is not None
+    session.prepare_go_clocks(GoParams(wtime_ms=60_000, btime_ms=60_000))
+    assert session.kv_cache is None
+
+
 def _build_test_model(device: torch.device) -> GPT:
-    config = GPTConfig(block_size=128, vocab_size=get_vocab_size(), n_layer=2, n_head=2, n_embd=64)
+    config = GPTConfig(
+        block_size=128,
+        vocab_size=get_vocab_size(),
+        n_layer=2,
+        n_head=2,
+        n_embd=64,
+        use_time_conditioning=False,
+        time_conditioning_hidden=32,
+    )
     model = GPT(config).to(device)
     model.eval()
     return model
@@ -114,7 +227,7 @@ def test_kv_cache_single_token_matches_full_prefix_logits():
     model = _build_test_model(device)
 
     sequence = torch.tensor(
-        [[0, WHITE_WON_ID, 17, 42, 5, 73, PAWN_ID]],
+        [[0, WHITE_WON_ID, 17, 42, 5, 73, 23]],
         dtype=torch.long,
         device=device,
     )

@@ -2,13 +2,17 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
+
+from krasnal.uci_engine.go_params import GoParams, parse_go_rest
 
 __all__ = [
     "CmdGo",
     "CmdIsReady",
     "CmdPosition",
     "CmdQuit",
+    "CmdSetOption",
     "CmdUci",
     "CmdUciNewGame",
     "UciInbound",
@@ -41,9 +45,17 @@ class CmdPosition:
 
 @dataclass(frozen=True, slots=True)
 class CmdGo:
-    """Client asked for a move (``go`` … options ignored by this engine)."""
+    """Client asked for a move (``go`` …); clock fields parsed when present."""
 
-    rest: str
+    params: GoParams
+
+
+@dataclass(frozen=True, slots=True)
+class CmdSetOption:
+    """``setoption name … value …`` (Krasnal-specific options use ``Krasnal*`` names)."""
+
+    name: str
+    value: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -58,7 +70,29 @@ class Unrecognized:
     line: str
 
 
-UciInbound = CmdUci | CmdIsReady | CmdUciNewGame | CmdPosition | CmdGo | CmdQuit | Unrecognized
+UciInbound = (
+    CmdUci
+    | CmdIsReady
+    | CmdUciNewGame
+    | CmdPosition
+    | CmdGo
+    | CmdSetOption
+    | CmdQuit
+    | Unrecognized
+)
+
+_SETOPTION_RE = re.compile(
+    r"^setoption\s+name\s+(\S+)\s+value\s*(.*)$",
+    re.IGNORECASE,
+)
+
+
+def parse_setoption_line(stripped_line: str) -> CmdSetOption | None:
+    """Parse ``setoption name <id> value <x>`` (value may be empty)."""
+    m = _SETOPTION_RE.match(stripped_line.strip())
+    if m is None:
+        return None
+    return CmdSetOption(name=m.group(1), value=m.group(2).strip())
 
 
 def parse_uci_line(stripped_line: str) -> UciInbound:
@@ -76,5 +110,9 @@ def parse_uci_line(stripped_line: str) -> UciInbound:
         moves = parts[1].strip() if len(parts) > 1 else ""
         return CmdPosition(moves_uci=moves)
     if stripped_line.startswith("go"):
-        return CmdGo(rest=stripped_line[2:].strip())
+        rest = stripped_line[2:].strip()
+        return CmdGo(params=parse_go_rest(rest))
+    so = parse_setoption_line(stripped_line)
+    if so is not None:
+        return so
     return Unrecognized(line=stripped_line)

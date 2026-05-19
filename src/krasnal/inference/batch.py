@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 
 import torch
 
+from krasnal.config import CLOCK_IGNORE_ID
 from krasnal.inference.game import Game
 from krasnal.inference.utils import create_amp_context
 from krasnal.tokens import PAD_ID, QA_TOKEN_IDS, legal_token_ids
@@ -39,7 +40,9 @@ class StatelessBatchInferenceSession:
     def get_raw_logits_batch(
         self,
         sequences: list[list[int]],
-        batch_size: int = 256,
+        active_clock_sequences: list[list[int]] | None = None,
+        opponent_clock_sequences: list[list[int]] | None = None,
+        batch_size: int = 64,
     ) -> torch.Tensor:
         """Run forward pass on a batch of sequences in chunks.
 
@@ -50,6 +53,9 @@ class StatelessBatchInferenceSession:
         Args:
             sequences: List of token sequences. Each sequence is a list of token IDs.
                        The first token is assumed to be the game start token.
+            active_clock_sequences: Per-token active clock IDs (same length as each
+                       sequence), or None when the model does not use time conditioning.
+            opponent_clock_sequences: Per-token opponent clock IDs, or None.
             batch_size: Number of sequences to process at once. Default 256.
 
         Returns:
@@ -59,12 +65,29 @@ class StatelessBatchInferenceSession:
         if not sequences:
             raise ValueError("sequences cannot be empty")
 
+        use_time = self.model.config.use_time_conditioning
+        if use_time and (active_clock_sequences is None or opponent_clock_sequences is None):
+            raise ValueError(
+                "active_clock_sequences and opponent_clock_sequences are required "
+                "when use_time_conditioning=True"
+            )
+
         block_size = self.model.config.block_size
 
-        all_probs = []
+        all_logits = []
 
         for i in range(0, len(sequences), batch_size):
             chunk = sequences[i : i + batch_size]
+            act_chunk = (
+                active_clock_sequences[i : i + batch_size]
+                if active_clock_sequences is not None
+                else None
+            )
+            opp_chunk = (
+                opponent_clock_sequences[i : i + batch_size]
+                if opponent_clock_sequences is not None
+                else None
+            )
 
             max_len = max(len(seq) for seq in chunk)
 
@@ -84,30 +107,76 @@ class StatelessBatchInferenceSession:
                 padded[j, : len(seq)] = seq_tensor
                 lengths[j] = len(seq)
 
+            if use_time:
+                active_padded = torch.full(
+                    (len(chunk), max_len),
+                    fill_value=CLOCK_IGNORE_ID,
+                    dtype=torch.long,
+                    device=self.device,
+                )
+                opponent_padded = torch.full(
+                    (len(chunk), max_len),
+                    fill_value=CLOCK_IGNORE_ID,
+                    dtype=torch.long,
+                    device=self.device,
+                )
+                for j in range(len(chunk)):
+                    act_seq = act_chunk[j]
+                    opp_seq = opp_chunk[j]
+                    active_padded[j, : len(act_seq)] = torch.tensor(
+                        act_seq, dtype=torch.long, device=self.device
+                    )
+                    opponent_padded[j, : len(opp_seq)] = torch.tensor(
+                        opp_seq, dtype=torch.long, device=self.device
+                    )
+
             with torch.inference_mode(), self._amp_ctx:
-                logits, _ = self.model(padded, padded, ignore_index=PAD_ID)
+                if use_time:
+                    logits, _ = self.model(
+                        padded,
+                        padded,
+                        ignore_index=PAD_ID,
+                        active_clock_ids=active_padded,
+                        opponent_clock_ids=opponent_padded,
+                    )
+                else:
+                    logits, _ = self.model(padded, padded, ignore_index=PAD_ID)
 
             last_token_idx = lengths - 1
             batch_idx = torch.arange(len(chunk), device=self.device)
             next_token_logits = logits[batch_idx, last_token_idx, :]
-            all_probs.append(next_token_logits)
+            all_logits.append(next_token_logits)
 
-        return torch.cat(all_probs, dim=0)
+        return torch.cat(all_logits, dim=0)
 
     def get_raw_probs_batch(
         self,
         sequences: list[list[int]],
-        batch_size: int = 256,
+        active_clock_sequences: list[list[int]] | None = None,
+        opponent_clock_sequences: list[list[int]] | None = None,
+        batch_size: int = 64,
     ) -> torch.Tensor:
-        return torch.softmax(self.get_raw_logits_batch(sequences, batch_size=batch_size), dim=-1)
+        return torch.softmax(
+            self.get_raw_logits_batch(
+                sequences,
+                active_clock_sequences=active_clock_sequences,
+                opponent_clock_sequences=opponent_clock_sequences,
+                batch_size=batch_size,
+            ),
+            dim=-1,
+        )
 
     def get_legal_logits_batch(
         self,
         games: list[Game],
+        active_clock_sequences: list[list[int]] | None = None,
+        opponent_clock_sequences: list[list[int]] | None = None,
         batch_size: int = 256,
     ) -> torch.Tensor:
         logits = self.get_raw_logits_batch(
             [game.context_tokens() for game in games],
+            active_clock_sequences=active_clock_sequences,
+            opponent_clock_sequences=opponent_clock_sequences,
             batch_size=batch_size,
         )
         masked = torch.full_like(logits, float("-inf"))
@@ -121,9 +190,16 @@ class StatelessBatchInferenceSession:
     def get_legal_probs_batch(
         self,
         games: list[Game],
+        active_clock_sequences: list[list[int]] | None = None,
+        opponent_clock_sequences: list[list[int]] | None = None,
         batch_size: int = 256,
     ) -> torch.Tensor:
         return torch.softmax(
-            self.get_legal_logits_batch(games, batch_size=batch_size),
+            self.get_legal_logits_batch(
+                games,
+                active_clock_sequences=active_clock_sequences,
+                opponent_clock_sequences=opponent_clock_sequences,
+                batch_size=batch_size,
+            ),
             dim=-1,
         )

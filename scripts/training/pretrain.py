@@ -37,6 +37,7 @@ from krasnal.utils import (
     print_model_config,
     save_wandb_run,
     set_seed,
+    write_artifact_config_json,
 )
 
 torch.set_float32_matmul_precision("high")
@@ -104,6 +105,8 @@ def _main(cfg: DictConfig, dist_info: DistributedInfo) -> None:
             "n_head": mconf.n_head,
             "n_embd": mconf.n_embd,
             "dropout": mconf.dropout,
+            "use_time_conditioning": mconf.use_time_conditioning,
+            "time_conditioning_hidden": mconf.time_conditioning_hidden,
             "epochs": tconf.epochs,
             "batch_size": tconf.batch_size,
             "learning_rate": tconf.learning_rate,
@@ -118,6 +121,7 @@ def _main(cfg: DictConfig, dist_info: DistributedInfo) -> None:
             "world_size": dist_info.world_size,
             "ddp": dist_info.enabled,
         }
+        write_artifact_config_json(artifact_dir, wandb_config)
         run_id, entity, project = init_wandb(
             project=cfg.wandb_project,
             config=wandb_config,
