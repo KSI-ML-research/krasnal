@@ -2,8 +2,6 @@ from typing import Any
 
 from krasnal.tokens import ELO_BUCKETS
 
-from .acpl import ACPLMetric
-from .blunder_rate import BlunderRateMetric
 from .context import EvalContext
 from .core import AccuracyCore, IllegalMassCore, MRRCore, Top1LegalCore
 from .filtered import (
@@ -13,7 +11,6 @@ from .filtered import (
     WhenGivesCheckMetric,
     WhenInCheckMetric,
 )
-from .stockfish_top1 import StockfishTop1AgreementMetric
 
 METRIC_REGISTRY: dict[str, Any] = {
     "top1_legal": lambda **_: Top1LegalCore(),
@@ -48,9 +45,6 @@ METRIC_REGISTRY: dict[str, Any] = {
     },
     "target_piece_top1_legal": lambda **_: PerPieceMetric(Top1LegalCore()),
     "target_piece_acc": lambda **_: PerPieceMetric(AccuracyCore()),
-    "acpl": ACPLMetric,
-    "blunder_rate": BlunderRateMetric,
-    "stockfish_top1": StockfishTop1AgreementMetric,
 }
 
 __all__ = [

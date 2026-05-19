@@ -5,7 +5,7 @@ Download Aix-compatible Lichess database files and filter them with DuckDB + Aix
 Filters:
     - Both players >= min_elo (configured in download.yaml)
     - Time control >= min_time seconds base (5+0 and above)
-    - Stockfish evals only when require_evals is enabled
+    - Require evals only when require_evals is enabled
     - Normal termination only
     - Date range: 2013-01 to 2026-03 (configurable)
 
