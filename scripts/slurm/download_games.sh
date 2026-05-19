@@ -12,6 +12,8 @@ USER=ijakus
 USER_DIRECTORY=/Ziob/$USER
 PROJECT_ROOT=$USER_DIRECTORY/krasnal
 
+GAMES=20_000_000
+
 source ~/.bashrc
 cd $PROJECT_ROOT
 
@@ -28,4 +30,4 @@ mkdir -p $HF_HOME
 test -d .venv || uv venv .venv --python 3.13
 uv sync
 
-uv run scripts/data/download_games.py target_games=15000000 require_evals=false
+uv run scripts/data/download_games.py target_games=$GAMES require_evals=false

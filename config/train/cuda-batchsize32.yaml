@@ -1,4 +1,0 @@
-defaults:
-  - cuda
-
-batch_size: 32
