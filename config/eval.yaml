@@ -6,10 +6,6 @@ qa:
   check:
     enabled: true
     confusion_matrix: false
-  piece_type_moved:
-    enabled: false
-    f1_per_piece: false
-    confusion_matrix: false
   what_is_on:
     enabled: true
     accuracy_per_square: true
@@ -36,7 +32,6 @@ metrics:
   - acc_elo_2000_2099
   - acc_elo_2100_2199
   - acc_elo_above_2200
-  - acc_elo_unknown
 
   - illegal_mass
   - illegal_mass_opening
@@ -45,11 +40,8 @@ metrics:
   - illegal_mass_when_gives_check
   - illegal_mass_when_in_check
 
-  # - acpl
-  # - blunder_rate
   - mrr
-  # - stockfish_top1
-
+  - mrr_when_low_time
   # - target_piece_acc
   # - target_piece_top1_legal
 
@@ -60,8 +52,5 @@ metrics:
   - top1_legal_when_gives_check
   - top1_legal_when_in_check
 
-
-# Stockfish-based evaluation settings
-stockfish:
-  depth: 10
-  acpl_sample_size: 100
+# Mover clock threshold (seconds) for *_when_low_time metrics
+low_time_seconds: 30

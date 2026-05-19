@@ -9,5 +9,3 @@ class EvalConfig:
     metrics: list[str] | None = None
     eval_interval: int = 5000
     seed: int | None = None
-    stockfish_depth: int = 15
-    acpl_sample_size: int = 10

@@ -13,7 +13,6 @@ min_time: 300
 # Compression level: low, medium, or high
 compression: high
 
-# Require Stockfish evals
 require_evals: false
 
 # Months to process (null = all available: 2013-01 to 2026-03)

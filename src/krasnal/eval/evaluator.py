@@ -34,7 +34,8 @@ from krasnal.utils import set_seed
 
 from .metrics import METRIC_REGISTRY
 from .metrics.context import EvalContext
-from .stockfish import StockfishClient, get_stockfish_client
+from .metrics.core import AccuracyCore, CoreMetric, IllegalMassCore, MRRCore, Top1LegalCore
+from .metrics.filtered import WhenLowTimeMetric
 
 
 class ChessEvaluator:
@@ -44,8 +45,6 @@ class ChessEvaluator:
         self,
         metrics: list[str] | None = None,
         seed: int | None = None,
-        stockfish: StockfishClient | None = None,
-        acpl_sample_size: int = 100,
         qa_config: dict[str, Any] | None = None,
     ):
         if metrics is None:
@@ -53,8 +52,7 @@ class ChessEvaluator:
 
         self.requested_metrics = metrics
         self.seed = seed
-        self.stockfish = stockfish
-        self.acpl_sample_size = acpl_sample_size
+        self.low_time_seconds = int(low_time_seconds)
 
         qa_cfg = qa_config or {}
         check_cfg = qa_cfg.get("check", {})
@@ -84,12 +82,7 @@ class ChessEvaluator:
         metrics = {}
         for name in self.requested_metrics:
             if name in METRIC_REGISTRY:
-                if name in {"acpl", "stockfish_top1", "blunder_rate"}:
-                    metrics[name] = METRIC_REGISTRY[name](
-                        stockfish=self.stockfish, sample_size=self.acpl_sample_size
-                    )
-                else:
-                    metrics[name] = METRIC_REGISTRY[name]()
+                metrics[name] = METRIC_REGISTRY[name]()
         return metrics
 
     def evaluate(
@@ -99,14 +92,11 @@ class ChessEvaluator:
         num_games: int,
         device: torch.device,
         seed: int | None = None,
-        stockfish: StockfishClient | None = None,
     ) -> dict[str, Any]:
         seed = seed if seed is not None else self.seed
         if seed is not None:
             set_seed(seed)
 
-        if stockfish is not None:
-            self.stockfish = stockfish
         self.metrics = self._init_metrics()
 
         block_size = model.config.block_size
@@ -489,8 +479,6 @@ class ChessEvaluator:
 def chess_evaluator_from_config(cfg: Any, *, metrics: list[str]) -> ChessEvaluator:
     return ChessEvaluator(
         metrics=metrics,
-        stockfish=get_stockfish_client(depth=cfg.eval.stockfish.depth),
         seed=cfg.seed,
-        acpl_sample_size=cfg.eval.stockfish.acpl_sample_size,
         qa_config=OmegaConf.to_container(cfg.eval.qa, resolve=True),
     )
