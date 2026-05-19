@@ -102,7 +102,7 @@ class ChessEvaluator:
 
         game_tokens_list = []
         for idx in indices:
-            token_ids = dataset[idx].tolist()
+            token_ids = dataset[idx]["token_ids"].tolist()
             game_tokens = parse_game_tokens(token_ids)
             if game_tokens is None:
                 continue
@@ -363,7 +363,7 @@ class ChessEvaluator:
 
         results: dict[str, list[float]] = {name: [] for name in self.metrics}
         for idx in indices:
-            sample = parse_cot_sample(dataset[idx].tolist())
+            sample = parse_cot_sample(dataset[idx]["token_ids"].tolist())
             if sample is None:
                 continue
 

@@ -3,7 +3,7 @@ defaults:
 
 learning_rate: 5e-4
 min_lr: 5e-5
-epochs: 1.0
+epochs: 3.0
 warmup_iters: 100
 batch_size: 64
 num_workers: 4
@@ -20,3 +20,4 @@ compile_mode: default
 compile_dynamic: false
 compile_fullgraph: false
 padding_bucket_sizes: [64, 128, 192, 256]
+stockfish_loss_weight: 0.1

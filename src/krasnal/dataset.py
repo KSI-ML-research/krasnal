@@ -25,7 +25,7 @@ def resolve_hf_datasets_cache_dir() -> str:
     return str(Path(".hf_cache/datasets"))
 
 
-class ChessDataset(Dataset[torch.Tensor]):
+class ChessDataset(Dataset[dict[str, torch.Tensor]]):
     """
     A PyTorch Dataset for loading chess games stored in a Parquet file.
 

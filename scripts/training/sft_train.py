@@ -56,8 +56,7 @@ def mixed_batch_generator(
             raise ValueError("Both CoT and normal datasets are empty")
         permutation = torch.randperm(len(batch))
         batch = [batch[idx] for idx in permutation.tolist()]
-        x, y = collate(batch)
-        yield x, y
+        yield collate(batch)
 
 
 @hydra.main(version_base=None, config_path="../../config", config_name="sft_train")
