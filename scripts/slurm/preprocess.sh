@@ -2,7 +2,7 @@
 #SBATCH --job-name=krasnal-preprocess
 #SBATCH --output=output/%j_preprocess.out
 #SBATCH --error=output/%j_preprocess.err
-#SBATCH --cpus-per-task=24
+#SBATCH --cpus-per-task=12
 #SBATCH --partition=student-cpu
 #SBATCH --time=01:00:00
 
