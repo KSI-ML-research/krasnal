@@ -2,7 +2,7 @@
 #SBATCH --job-name=krasnal-download-games
 #SBATCH --output=output/%j_download_games.out
 #SBATCH --error=output/%j_download_games.err
-#SBATCH --cpus-per-task=24
+#SBATCH --cpus-per-task=4
 #SBATCH --partition=student-cpu
 #SBATCH --time=01:00:00
 
