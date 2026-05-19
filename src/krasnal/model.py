@@ -302,6 +302,6 @@ class GPT(nn.Module):
         # Create AdamW optimizer and use the fused version if available
         fused_available = "fused" in inspect.signature(torch.optim.AdamW).parameters
         use_fused = fused_available and device_type == "cuda"
-        extra_args = dict(fused=True) if use_fused else dict()
+        extra_args = dict(fused=True) if use_fused else dict(foreach=True)
         optimizer = torch.optim.AdamW(optim_groups, lr=learning_rate, betas=betas, **extra_args)
         return optimizer

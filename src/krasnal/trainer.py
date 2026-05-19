@@ -241,8 +241,6 @@ def run_supervised_training(
                 loss_lm, loss_stockfish = loss_tuple
                 loss = loss_lm + train_config.stockfish_loss_weight * loss_stockfish
 
-            last_loss_value = float(loss.item())
-
             scaler.scale(loss).backward()
 
             if grad_clip != 0.0:
@@ -255,9 +253,10 @@ def run_supervised_training(
 
             # logging training metrics
             if iter_num % log_interval == 0:
+                last_loss_value = float(loss.item())
                 epoch_float = iter_num / max(steps_per_epoch, 1)
                 pbar.set_postfix(
-                    loss=f"{loss.item():.4f}",
+                    loss=f"{last_loss_value:.4f}",
                     lr=f"{lr:.2e}",
                     epoch=f"{epoch_float:.2f}",
                 )
