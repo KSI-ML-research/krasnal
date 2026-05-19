@@ -8,7 +8,6 @@ from omegaconf import OmegaConf
 
 import wandb
 from krasnal.dataset import ChessDataset
-from krasnal.eval.cot import extract_think_tokens, is_valid_cot_sequence, parse_cot_sample
 from krasnal.eval.parsers import parse_game_tokens
 from krasnal.eval.replayer import replay_games
 from krasnal.inference import InferenceSession, StatelessBatchInferenceSession
@@ -26,7 +25,6 @@ from krasnal.tokens import (
     PIECE_TYPE_MOVED_ID,
     QUEEN_ID,
     ROOK_ID,
-    THINK_END_ID,
     WHATS_ON_SQUARE,
     YES_CHECK_ID,
     get_moves_only,
@@ -45,8 +43,6 @@ class ChessEvaluator:
     def __init__(
         self,
         metrics: list[str] | None = None,
-        cot: bool = False,
-        cot_max_tokens: int = 128,
         seed: int | None = None,
         stockfish: StockfishClient | None = None,
         acpl_sample_size: int = 100,
@@ -56,8 +52,6 @@ class ChessEvaluator:
             raise ValueError("ChessEvaluator requires an explicit metrics list")
 
         self.requested_metrics = metrics
-        self.cot = cot
-        self.cot_max_tokens = cot_max_tokens
         self.seed = seed
         self.stockfish = stockfish
         self.acpl_sample_size = acpl_sample_size
@@ -114,9 +108,6 @@ class ChessEvaluator:
         if stockfish is not None:
             self.stockfish = stockfish
         self.metrics = self._init_metrics()
-
-        if self.cot:
-            return self.evaluate_cot(model, dataset, num_games, device, seed)
 
         block_size = model.config.block_size
         indices = list(range(len(dataset)))
@@ -494,101 +485,10 @@ class ChessEvaluator:
                     final_results[k] = v
         return final_results
 
-    def evaluate_cot(
-        self,
-        model: torch.nn.Module,
-        dataset: ChessDataset,
-        num_games: int,
-        device: torch.device,
-        seed: int | None = None,
-    ) -> dict[str, float]:
-        """Evaluate model using chain-of-thought format."""
-        seed = seed if seed is not None else self.seed
-        if seed is not None:
-            set_seed(seed)
 
-        self.metrics = self._init_metrics()
-
-        indices = list(range(len(dataset)))
-        random.shuffle(indices)
-        indices = indices[:num_games]
-
-        results: dict[str, list[float]] = {name: [] for name in self.metrics}
-        for idx in indices:
-            sample = parse_cot_sample(dataset[idx].tolist())
-            if sample is None:
-                continue
-
-            generated_tokens, post_think_probs = self._generate_cot_continuation(
-                model=model,
-                device=device,
-                prompt_tokens=sample["prompt_tokens"],
-            )
-            full_sequence = [*sample["prompt_tokens"], *generated_tokens]
-            context = EvalContext(
-                cot_format_valid=is_valid_cot_sequence(full_sequence),
-                cot_post_think_probs=post_think_probs,
-                cot_post_think_actual_token=sample["post_think_actual_token"],
-                cot_post_think_legal_ids=sample["post_think_legal_ids"],
-                target_think_tokens=sample["target_think_tokens"],
-                generated_think_tokens=extract_think_tokens(generated_tokens),
-            )
-
-            for metric in self.metrics.values():
-                metric_result = metric.compute(context)
-                for key, value in metric_result.items():
-                    results[key].append(float(value))
-
-        return {
-            f"cot/{key.removeprefix('cot_')}": (sum(values) / len(values) if values else 0.0)
-            for key, values in results.items()
-        }
-
-    def _generate_cot_continuation(
-        self,
-        *,
-        model: torch.nn.Module,
-        device: torch.device,
-        prompt_tokens: list[int],
-    ) -> tuple[list[int], torch.Tensor | None]:
-        """Generate CoT continuation tokens."""
-        session = InferenceSession(model, device, outcome_token=prompt_tokens[0])
-        for token_id in prompt_tokens[1:]:
-            session.feed_token(token_id)
-
-        generated_tokens: list[int] = []
-        post_think_probs = None
-        seen_think_end = False
-
-        for _ in range(self.cot_max_tokens):
-            probs = session.get_raw_probs()
-            token_id = int(torch.argmax(probs).item())
-            generated_tokens.append(token_id)
-            session.feed_token(token_id)
-            if seen_think_end and post_think_probs is None:
-                post_think_probs = probs.detach().cpu()
-            if token_id == THINK_END_ID:
-                seen_think_end = True
-            if token_id == GAME_END_ID:
-                break
-
-        return generated_tokens, post_think_probs
-
-    @staticmethod
-    def _is_valid_cot_sequence(tokens: list[int]) -> bool:
-        return is_valid_cot_sequence(tokens)
-
-    @staticmethod
-    def _extract_generated_think_tokens(tokens: list[int]) -> list[int]:
-        return extract_think_tokens(tokens)
-
-
-def chess_evaluator_from_config(
-    cfg: Any, *, metrics: list[str], cot: bool = False
-) -> ChessEvaluator:
+def chess_evaluator_from_config(cfg: Any, *, metrics: list[str]) -> ChessEvaluator:
     return ChessEvaluator(
         metrics=metrics,
-        cot=cot,
         stockfish=get_stockfish_client(depth=cfg.eval.stockfish.depth),
         seed=cfg.seed,
         acpl_sample_size=cfg.eval.stockfish.acpl_sample_size,

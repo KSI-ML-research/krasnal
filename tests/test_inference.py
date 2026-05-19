@@ -14,8 +14,6 @@ from krasnal.tokens import (
     DRAW_ID,
     MOVE_TO_ID,
     PAWN_ID,
-    THINK_END_ID,
-    THINK_START_ID,
     WHITE_PREFIX,
     WHITE_WON_ID,
     get_vocab_size,
@@ -73,22 +71,6 @@ def test_game_feed_uci_and_feed_token_keep_board_and_tokens_synchronized():
         MOVE_TO_ID[BLACK_PREFIX + "e7e5"],
     ]
     assert len(game.legal_moves()) > 0
-
-
-def test_inference_session_think_tokens_do_not_mutate_game_state():
-    device = torch.device("cpu")
-    config = GPTConfig(block_size=128, vocab_size=get_vocab_size(), n_layer=2, n_head=2, n_embd=64)
-    model = GPT(config).to(device)
-    session = InferenceSession(model, device, outcome_token=WHITE_WON_ID)
-
-    session.feed_uci("e2e4")
-    session.feed_token(THINK_START_ID)
-    session.feed_token(MOVE_TO_ID[BLACK_PREFIX + "e7e5"])
-    session.feed_token(THINK_END_ID)
-
-    assert session.game.moves_uci == ["e2e4"]
-    assert session.game.tokens == [MOVE_TO_ID[WHITE_PREFIX + "e2e4"]]
-    assert session.context[-1] == THINK_END_ID
 
 
 def test_stateless_batch_inference_session_returns_probs():
@@ -238,28 +220,3 @@ def test_inference_session_reuses_kv_cache_for_incremental_moves():
     assert session.kv_cache.get_seq_len() == initial_seq_len + 1
     assert torch.allclose(incremented_logits, full_logits[0, -1], atol=1e-5, rtol=1e-4)
     assert not torch.allclose(initial_logits, incremented_logits)
-
-
-def test_inference_session_reuses_kv_cache_through_think_tokens():
-    torch.manual_seed(23)
-    device = torch.device("cpu")
-    model = _build_test_model(device)
-    session = InferenceSession(model, device, outcome_token=WHITE_WON_ID)
-
-    session.get_raw_logits()
-    assert session.kv_cache is not None
-    initial_seq_len = session.kv_cache.get_seq_len()
-
-    think_move = MOVE_TO_ID[BLACK_PREFIX + "e7e5"]
-    session.feed_token(THINK_START_ID)
-    session.feed_token(think_move)
-    session.feed_token(THINK_END_ID)
-    logits = session.get_raw_logits()
-
-    full_context = torch.tensor([session.context], dtype=torch.long, device=device)
-    full_logits, _ = model(full_context)
-
-    assert session.kv_cache is not None
-    assert session.kv_cache.get_seq_len() == len(session.context)
-    assert session.kv_cache.get_seq_len() == initial_seq_len + 3
-    assert torch.allclose(logits, full_logits[0, -1], atol=1e-5, rtol=1e-4)

@@ -34,8 +34,6 @@ from krasnal.tokens import (
     TC_RAPID_NO_INC_ID,
     TC_TOKENS,
     TC_UNKNOWN_ID,
-    THINK_END_ID,
-    THINK_START_ID,
     WHITE_WON_ID,
     YES_CHECK_ID,
     build_move_key,
@@ -55,8 +53,7 @@ def test_special_tokens_exist():
     assert WHITE_WON_ID in SPECIAL_TOKENS.values()
     assert BLACK_WON_ID in SPECIAL_TOKENS.values()
     assert DRAW_ID in SPECIAL_TOKENS.values()
-    assert THINK_START_ID in SPECIAL_TOKENS.values()
-    assert THINK_END_ID in SPECIAL_TOKENS.values()
+
     assert IS_CHECK_ID in SPECIAL_TOKENS.values()
     assert YES_CHECK_ID in SPECIAL_TOKENS.values()
     assert NO_CHECK_ID in SPECIAL_TOKENS.values()
@@ -136,22 +133,6 @@ def test_get_moves_only_with_elo():
     ) == [5000, 5001]
 
 
-def test_get_moves_only_strips_think_content():
-    assert get_moves_only(
-        [
-            GAME_START_ID,
-            WHITE_WON_ID,
-            5000,
-            THINK_START_ID,
-            200,
-            201,
-            THINK_END_ID,
-            5002,
-            GAME_END_ID,
-        ]
-    ) == [5000, 5002]
-
-
 def test_get_moves_only_all_special_tokens():
     assert get_moves_only(
         [
@@ -159,10 +140,6 @@ def test_get_moves_only_all_special_tokens():
             WHITE_WON_ID,
             ELO_BELOW_1000_ID,
             ELO_ABOVE_2200_ID,
-            THINK_START_ID,
-            500,
-            501,
-            THINK_END_ID,
             5000,
             5001,
             GAME_END_ID,

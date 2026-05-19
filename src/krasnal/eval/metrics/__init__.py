@@ -6,13 +6,6 @@ from .acpl import ACPLMetric
 from .blunder_rate import BlunderRateMetric
 from .context import EvalContext
 from .core import AccuracyCore, IllegalMassCore, MRRCore, Top1LegalCore
-from .cot import (
-    CotFormatValidMetric,
-    CotPostThinkMRRMetric,
-    CotPostThinkTop1LegalMetric,
-    CotPostThinkTop1Metric,
-    CotThinkTokenRecallMetric,
-)
 from .filtered import (
     ByEloMetric,
     ByPhaseMetric,
@@ -58,13 +51,7 @@ METRIC_REGISTRY: dict[str, Any] = {
     "acpl": ACPLMetric,
     "blunder_rate": BlunderRateMetric,
     "stockfish_top1": StockfishTop1AgreementMetric,
-    "cot_format_valid": lambda **_: CotFormatValidMetric(),
-    "cot_post_think_top1": lambda **_: CotPostThinkTop1Metric(),
-    "cot_post_think_mrr": lambda **_: CotPostThinkMRRMetric(),
-    "cot_post_think_top1_legal": lambda **_: CotPostThinkTop1LegalMetric(),
-    "cot_think_token_recall": lambda **_: CotThinkTokenRecallMetric(),
 }
-
 
 __all__ = [
     "METRIC_REGISTRY",

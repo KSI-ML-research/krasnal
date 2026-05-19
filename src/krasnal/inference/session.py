@@ -14,8 +14,6 @@ from krasnal.tokens import (
     GAME_START_ID,
     QA_TOKEN_IDS,
     TC_UNKNOWN_ID,
-    THINK_END_ID,
-    THINK_START_ID,
     legal_token_ids,
 )
 
@@ -75,7 +73,6 @@ class InferenceSession:
         """Replace the stored game and reset runtime-only state."""
         self.game = game
         self.context = self.game.context_tokens()
-        self._in_think_block = False
         self._reset_cache_state()
 
     def _reset_cache_state(self) -> None:
@@ -104,17 +101,6 @@ class InferenceSession:
     def feed_token(self, token_id: int) -> None:
         """Append a token to model context and update game if it is a legal move token."""
         self.context.append(token_id)
-        if token_id == THINK_START_ID:
-            self._in_think_block = True
-            self._last_logits = None
-            return
-        if token_id == THINK_END_ID:
-            self._in_think_block = False
-            self._last_logits = None
-            return
-        if self._in_think_block:
-            self._last_logits = None
-            return
         with contextlib.suppress(ValueError):
             self.game.feed_token(token_id)
         self._last_logits = None

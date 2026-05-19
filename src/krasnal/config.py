@@ -5,7 +5,6 @@ DATA_DIR = Path("data")
 RAW_UCI_DIR = DATA_DIR / "1_filtered"
 ARTIFACTS_DIR = Path("artifacts")
 PRETRAIN_DATASET_PATH = DATA_DIR / "2_tokenized/pretrain.parquet"
-SFT_COT_SHARDS_DIR = DATA_DIR / "2_tokenized" / "sft_cot_shards"
 EVAL_DATASET_PATH = DATA_DIR / "2_tokenized/eval.parquet"
 MOVE_VOCAB_PATH = DATA_DIR / "2_tokenized/move_vocab.json"
 

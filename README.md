@@ -93,7 +93,6 @@ Detailed guides for developers and users:
 -   [**Contributing Guide**](docs/CONTRIBUTING.md) - Code standards, pre-commit hooks and development process.
 -   [**Research Notes**](docs/RESEARCH.md) - Summary of tested architecture variants and experiments.
 -   [**Outcome conditioning**](docs/outcome_conditioning.md) - Prefix with a win/loss token so the model can be steered toward playing for White or Black.
--   [**Chain-of-thought (WIP)**](docs/cot.md) - CoT training notes.
 -   [**Weights & Biases**](docs/wandb.md) - Experiment logging.
 -   [**Lichess bot (local)**](docs/lichess_bot_local_setup.md) - Run the bot from your machine.
 -   [**Bot implementation plan**](docs/bot_implementation_plan.md) - Lichess integration architecture.

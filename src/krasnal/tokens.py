@@ -19,9 +19,6 @@ BLACK_WON_ID = 4
 DRAW_ID = 5
 UNKNOWN_RESULT_ID = 6
 
-THINK_START_ID = 7
-THINK_END_ID = 8
-
 ELO_BELOW_1000_ID = 9
 ELO_1000_1099_ID = 10
 ELO_1100_1199_ID = 11
@@ -146,10 +143,6 @@ CONDITIONING_METADATA_TARGET_MASK_IDS: Final[frozenset[int]] = frozenset(
     (*OUTCOME_TOKENS.values(), *ELO_TOKENS.values(), *TC_TOKENS.values())
 )
 
-THINKING_TOKENS = {
-    "<think_start>": THINK_START_ID,
-    "<think_end>": THINK_END_ID,
-}
 
 QA_TOKENS = {
     "<is_check>": IS_CHECK_ID,
@@ -178,7 +171,6 @@ SPECIAL_TOKENS = {
     **OUTCOME_TOKENS,
     **ELO_TOKENS,
     **TC_TOKENS,
-    **THINKING_TOKENS,
 }
 
 MOVE_TO_ID = dict(SPECIAL_TOKENS)
@@ -484,20 +476,7 @@ def result_to_token_id(result: str | int) -> int:
 
 
 def get_moves_only(token_ids: list[int]) -> list[int]:
-    moves: list[int] = []
-    in_think = False
-    for token_id in token_ids:
-        if token_id == THINK_START_ID:
-            in_think = True
-            continue
-        if token_id == THINK_END_ID:
-            in_think = False
-            continue
-        if in_think:
-            continue
-        if token_id not in SPECIAL_TOKENS.values():
-            moves.append(token_id)
-    return moves
+    return [tid for tid in token_ids if tid not in SPECIAL_TOKENS.values()]
 
 
 def _token_string_to_uci(token: str) -> str:
