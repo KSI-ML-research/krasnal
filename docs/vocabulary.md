@@ -2,7 +2,7 @@
 
 ## Example
 
-`<game_start> <tc_rapid_inc> <white_won> <elo_2000_2099> <elo_1500_1599> <think_start> w:e2e4 b:e7e5 w:g1f3 b:b8c6 <think_end> w:d2d4 <game_end>`
+`<game_start> <tc_rapid_inc> <white_won> <elo_2000_2099> <elo_1500_1599> w:e2e4 b:e7e5 w:g1f3 b:b8c6 w:d2d4 <game_end>`
 
 ## Result Tokens
 
@@ -46,6 +46,8 @@ The file is the source of truth for move IDs during preprocessing, pretraining, 
 
 `just preprocess` always overwrites this file. `just pretrain` and model inference fail at startup if the runtime config does not match the manifest.
 
+History move strings used by the UCI bridge are normalized through `normalize_history_uci_moves`, which strips training-style prefixes before replay.
+
 ## Q&A Tokens
 
 Q&A tokens help the model learn chess rules and board representation during training.
@@ -62,12 +64,6 @@ Training format examples:
 Square queries:
 - `<whats_on_a1>` ... `<whats_on_h8>` — answers: `<empty>` or `<w:pawn>` ... `<b:king>`
 - During preprocessing/eval, square is drawn from post-move FEN, per-game key (space-separated UCI string), ply, and run seed
-
-## CoT Tokens (future)
-
-CoT tokens structure internal reasoning: `<think_start>` moves... `<think_end>`.
-
-`<think_start>`, `<think_end>` — delimit reasoning block
 
 ## Special Tokens
 

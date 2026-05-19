@@ -60,13 +60,6 @@ metrics:
   - top1_legal_when_gives_check
   - top1_legal_when_in_check
 
-# Metrics specifically for Chain-of-Thought (CoT) runs
-cot_metrics:
-  - cot_format_valid
-  - cot_post_think_mrr
-  - cot_post_think_top1_legal
-  - cot_post_think_top1
-  - cot_think_token_recall
 
 # Stockfish-based evaluation settings
 stockfish:
