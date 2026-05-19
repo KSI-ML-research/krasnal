@@ -5,7 +5,7 @@ build-backend = "uv_build"
 [project]
 name = "krasnal"
 version = "0.1.0"
-description = "Transformer-based chess engine: Python training and UCI inference, DuckDB + Aix data ingestion."
+description = "Transformer-based chess engine"
 readme = "README.md"
 requires-python = ">=3.13,<3.14"
 dependencies = [

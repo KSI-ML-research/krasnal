@@ -7,6 +7,7 @@ ARTIFACTS_DIR = Path("artifacts")
 PRETRAIN_DATASET_PATH = DATA_DIR / "2_tokenized/pretrain.parquet"
 EVAL_DATASET_PATH = DATA_DIR / "2_tokenized/eval.parquet"
 MOVE_VOCAB_PATH = DATA_DIR / "2_tokenized/move_vocab.json"
+CLOCK_IGNORE_ID = 2**32 - 1
 
 
 @dataclass
@@ -15,6 +16,11 @@ class GPTConfig:
     n_layer: int
     n_head: int
     n_embd: int
+    # When True, ``GPT.forward`` requires ``active_clock_ids`` / ``opponent_clock_ids``
+    # shaped like ``idx``; clock residual uses ``time_mlp`` only (no linear-only path).
+    use_time_conditioning: bool
+    # Hidden width of the 2 -> h -> n_embd GELU MLP; must satisfy 1 <= h <= n_embd when enabled.
+    time_conditioning_hidden: int
     vocab_size: int | None = None
     dropout: float = 0.0
 

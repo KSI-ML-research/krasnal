@@ -3,7 +3,6 @@ import json
 import pytest
 
 from krasnal.tokens import (
-    BISHOP_ID,
     BLACK_WON_ID,
     DRAW_ID,
     ELO_1000_1099_ID,
@@ -13,19 +12,12 @@ from krasnal.tokens import (
     ELO_ABOVE_2200_ID,
     ELO_BELOW_1000_ID,
     ELO_TOKENS,
-    ELO_UNKNOWN_ID,
     GAME_END_ID,
     GAME_START_ID,
     IS_CHECK_ID,
-    KING_ID,
-    KNIGHT_ID,
     MOVE_TO_ID,
     NO_CHECK_ID,
     PAD_ID,
-    PAWN_ID,
-    PIECE_TYPE_MOVED_ID,
-    QUEEN_ID,
-    ROOK_ID,
     SPECIAL_TOKENS,
     TC_BLITZ_INC_ID,
     TC_BLITZ_NO_INC_ID,
@@ -38,11 +30,13 @@ from krasnal.tokens import (
     YES_CHECK_ID,
     build_move_key,
     get_elo_bucket,
+    get_move_clock_pairs,
     get_moves_only,
     get_time_control_bucket,
     load_move_vocab,
     make_move_vocab_artifact,
     move_key_for_ply,
+    normalize_history_uci_moves,
 )
 
 
@@ -57,13 +51,6 @@ def test_special_tokens_exist():
     assert IS_CHECK_ID in SPECIAL_TOKENS.values()
     assert YES_CHECK_ID in SPECIAL_TOKENS.values()
     assert NO_CHECK_ID in SPECIAL_TOKENS.values()
-    assert PIECE_TYPE_MOVED_ID in SPECIAL_TOKENS.values()
-    assert PAWN_ID in SPECIAL_TOKENS.values()
-    assert KNIGHT_ID in SPECIAL_TOKENS.values()
-    assert BISHOP_ID in SPECIAL_TOKENS.values()
-    assert ROOK_ID in SPECIAL_TOKENS.values()
-    assert QUEEN_ID in SPECIAL_TOKENS.values()
-    assert KING_ID in SPECIAL_TOKENS.values()
 
 
 def test_special_tokens_in_vocab():
@@ -76,7 +63,6 @@ def test_elo_tokens_exist():
     assert ELO_1500_1599_ID in ELO_TOKENS.values()
     assert ELO_2000_2099_ID in ELO_TOKENS.values()
     assert ELO_ABOVE_2200_ID in ELO_TOKENS.values()
-    assert ELO_UNKNOWN_ID in ELO_TOKENS.values()
 
 
 def test_elo_tokens_in_vocab():
@@ -254,6 +240,35 @@ def test_side_prefix_combinations():
         )
         == "pawn:e2e4"
     )
+
+
+def test_get_move_clock_pairs_aligns_with_get_moves_only():
+    from krasnal.config import CLOCK_IGNORE_ID
+
+    m1, m2 = 9000, 9001
+    token_ids = [GAME_START_ID, DRAW_ID, m1, IS_CHECK_ID, YES_CHECK_ID, m2, GAME_END_ID]
+    active = [CLOCK_IGNORE_ID] * len(token_ids)
+    opp = [CLOCK_IGNORE_ID] * len(token_ids)
+    active[2] = 50
+    opp[2] = 300
+    active[5] = 12
+    opp[5] = 400
+
+    assert get_moves_only(token_ids) == [m1, m2]
+    pairs = get_move_clock_pairs(token_ids, active, opp)
+    assert pairs == [(50, 300), (12, 400)]
+
+
+def test_normalize_history_uci_move():
+    from krasnal.tokens import normalize_history_uci_move
+
+    assert normalize_history_uci_move("e2e4") == "e2e4"
+    assert normalize_history_uci_move("w:pawn:e2e4") == "e2e4"
+    assert normalize_history_uci_move("pawn:e2e4") == "e2e4"
+
+
+def test_normalize_history_uci_moves_filters_blank_entries():
+    assert normalize_history_uci_moves(" e2e4   w:pawn:e7e5  ") == ["e2e4", "e7e5"]
 
 
 def test_move_vocab_manifest_mismatch_fails(tmp_path):

@@ -24,7 +24,6 @@ _SPEC.loader.exec_module(_MODULE)
 
 _compute_check_qa_probs = _MODULE._compute_check_qa_probs
 build_move_vocab_from_corpus = _MODULE.build_move_vocab_from_corpus
-_resolve_preprocess_workers = _MODULE._resolve_preprocess_workers
 _build_game_tokens = _MODULE._build_game_tokens
 compute_token_mix_stats = _MODULE.compute_token_mix_stats
 
@@ -92,27 +91,22 @@ def test_build_move_vocab_from_corpus_fails_on_malformed_piece_moved(tmp_path):
 def test_build_game_tokens_adds_time_control_after_game_start(monkeypatch):
     monkeypatch.setattr(_MODULE, "move_token_id_for_ply", lambda *_args: 500)
 
-    tokens = _build_game_tokens(
+    tokens, active_clocks, opponent_clocks = _build_game_tokens(
         uci_moves="e2e4",
         is_check=[False],
         piece_moved=["p"],
         result="1-0",
         white_rating=1500,
         black_rating=1500,
-        elo_bucket=0,
         time_initial=180,
         time_increment=2,
         time_control_enabled=True,
         include_check_qa=False,
         check_qa_prob=0.0,
-        normal_prob=1.0,
-        white_unknown_prob=0.0,
-        black_unknown_prob=0.0,
-        both_unknown_prob=0.0,
         seed=1,
         p_no=0.0,
-        include_piece_qa=False,
-        piece_sampling_probs={},
+        clocks_white=[170],
+        clocks_black=[],
     )
 
     assert tokens == [
@@ -124,32 +118,29 @@ def test_build_game_tokens_adds_time_control_after_game_start(monkeypatch):
         500,
         GAME_END_ID,
     ]
+    assert active_clocks[-2] == 170
+    assert opponent_clocks[-2] == 180
 
 
 def test_build_game_tokens_skips_time_control_when_disabled(monkeypatch):
     monkeypatch.setattr(_MODULE, "move_token_id_for_ply", lambda *_args: 500)
 
-    tokens = _build_game_tokens(
+    tokens, active_clocks, opponent_clocks = _build_game_tokens(
         uci_moves="e2e4",
         is_check=[False],
         piece_moved=["p"],
         result="1-0",
         white_rating=1500,
         black_rating=1500,
-        elo_bucket=0,
         time_initial=180,
         time_increment=2,
         time_control_enabled=False,
         include_check_qa=False,
         check_qa_prob=0.0,
-        normal_prob=1.0,
-        white_unknown_prob=0.0,
-        black_unknown_prob=0.0,
-        both_unknown_prob=0.0,
         seed=1,
         p_no=0.0,
-        include_piece_qa=False,
-        piece_sampling_probs={},
+        clocks_white=[170],
+        clocks_black=[],
     )
 
     assert tokens == [
@@ -160,6 +151,8 @@ def test_build_game_tokens_skips_time_control_when_disabled(monkeypatch):
         500,
         GAME_END_ID,
     ]
+    assert active_clocks[-2] == 170
+    assert opponent_clocks[-2] == 180
 
 
 def test_token_mix_stats_counts_time_control_buckets():
@@ -178,13 +171,3 @@ def test_token_mix_stats_counts_time_control_buckets():
     assert stats["tc_<tc_blitz_no_inc>_count"] == 1
     assert stats["tc_<tc_blitz_inc>_count"] == 1
     assert sum(stats[f"tc_{bucket}_count"] for bucket in TC_TOKENS) == 2
-
-
-def test_resolve_preprocess_workers_allows_explicit_worker_count():
-    assert _resolve_preprocess_workers({"preprocess_workers": 24}, shard_count=3) == 24
-
-
-def test_resolve_preprocess_workers_caps_auto_mode_at_eight(monkeypatch):
-    monkeypatch.setattr(_MODULE.os, "cpu_count", lambda: 64)
-
-    assert _resolve_preprocess_workers({"preprocess_workers": 0}, shard_count=32) == 8

@@ -15,5 +15,6 @@ compression: high
 
 require_evals: false
 
-# Months to process (null = all available: 2013-01 to 2026-03)
-months: []
+# Inclusive month range (YYYY-MM)
+start_month: "2017-04"
+end_month: null

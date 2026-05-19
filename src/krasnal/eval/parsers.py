@@ -1,5 +1,7 @@
 from dataclasses import dataclass
 
+import torch
+
 from krasnal.tokens import (
     DRAW_ID,
     ELO_TOKENS,
@@ -7,6 +9,8 @@ from krasnal.tokens import (
     GAME_START_ID,
     OUTCOME_TOKENS,
     TC_TOKENS,
+    get_move_clock_pairs,
+    get_moves_only,
 )
 
 
@@ -17,6 +21,8 @@ class GameTokens:
     white_elo_token: int | None
     black_elo_token: int | None
     move_tokens: list[int]
+    move_active_seconds: list[int] | None = None
+    move_opponent_seconds: list[int] | None = None
 
     @property
     def initial_context(self) -> list[int]:
@@ -73,3 +79,25 @@ def parse_game_tokens(token_ids: list[int]) -> GameTokens | None:
         black_elo_token=black_elo_token,
         move_tokens=[],
     )
+
+
+def parse_row_to_game_tokens(row: tuple[torch.Tensor, ...] | torch.Tensor) -> GameTokens | None:
+    """Parse a single dataset row (with optional clock tensors) into GameTokens."""
+    token_ids = row[0].tolist() if isinstance(row, tuple) else row.tolist()
+
+    game_tokens = parse_game_tokens(token_ids)
+    if game_tokens is None:
+        return None
+
+    moves = get_moves_only(token_ids)
+    game_tokens.move_tokens = moves
+
+    if isinstance(row, tuple) and len(row) >= 3:
+        active_list = row[1].tolist()
+        opponent_list = row[2].tolist()
+        pairs = get_move_clock_pairs(token_ids, active_list, opponent_list)
+        if pairs is not None and len(pairs) == len(moves):
+            game_tokens.move_active_seconds = [p[0] for p in pairs]
+            game_tokens.move_opponent_seconds = [p[1] for p in pairs]
+
+    return game_tokens

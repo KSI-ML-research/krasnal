@@ -75,7 +75,7 @@ def resolve_pretrained_checkpoint(model_path: str | None, latest: bool) -> Path:
     )
     for d in pretrain_dirs:
         model_file = d / "model.pt"
-        if model_file.exists():
+        if model_file.is_file() and (d / "config.json").is_file():
             return model_file
     raise FileNotFoundError(
         f"No pretrained checkpoint found in {ARTIFACTS_DIR / 'pretrain'}. "
@@ -158,6 +158,30 @@ def save_model_state(
         shutil.copyfile(move_vocab_path, out_path.parent / "move_vocab.json")
 
 
+def _unpack_supervised_batch(batch):
+    if len(batch) == 2:
+        x, y = batch
+        return x, None, None, y
+    if len(batch) == 4:
+        x, active_x, opponent_x, y = batch
+        return x, active_x, opponent_x, y
+    raise ValueError(f"Expected a 2- or 4-item supervised batch, got {len(batch)} items")
+
+
+def _require_clock_tensors_if_time_model(
+    model: torch.nn.Module,
+    active: torch.Tensor | None,
+    opponent: torch.Tensor | None,
+) -> None:
+    cfg = getattr(unwrap_model(model), "config", None)
+    if cfg is not None and cfg.use_time_conditioning and (active is None or opponent is None):
+        raise ValueError(
+            "use_time_conditioning is True but this batch has no clock tensors. "
+            "Use a dataset with active_clock_ids/opponent_clock_ids columns "
+            "and the standard collate."
+        )
+
+
 def run_supervised_training(
     model: torch.nn.Module,
     optimizer: torch.optim.Optimizer,
@@ -199,16 +223,28 @@ def run_supervised_training(
     while iter_num < max_iters:
         if train_sampler is not None:
             train_sampler.set_epoch(epoch)
-        for x, y in train_loader:
+        for batch in train_loader:
+            x, active_x, opponent_x, y = _unpack_supervised_batch(batch)
+            _require_clock_tensors_if_time_model(model, active_x, opponent_x)
             lr = lr_fn(iter_num)
             for param_group in optimizer.param_groups:
                 param_group["lr"] = lr
 
             x = x.to(device, non_blocking=True)
+            active_x = active_x.to(device, non_blocking=True) if active_x is not None else None
+            opponent_x = (
+                opponent_x.to(device, non_blocking=True) if opponent_x is not None else None
+            )
             y = y.to(device, non_blocking=True)
 
             with ctx:
-                _, loss = model(x, y, ignore_index=LOSS_IGNORE_INDEX)
+                _, loss = model(
+                    x,
+                    y,
+                    ignore_index=LOSS_IGNORE_INDEX,
+                    active_clock_ids=active_x,
+                    opponent_clock_ids=opponent_x,
+                )
             last_loss_value = float(loss.item())
 
             scaler.scale(loss).backward()
@@ -238,14 +274,23 @@ def run_supervised_training(
                     raw_model = unwrap_model(model)
                     raw_model.eval()
                     with torch.inference_mode():
-                        val_losses = [
-                            raw_model(
-                                xv.to(device, non_blocking=True),
-                                yv.to(device, non_blocking=True),
-                                ignore_index=LOSS_IGNORE_INDEX,
-                            )[1].item()
-                            for xv, yv in val_loader
-                        ]
+                        val_losses = []
+                        for val_batch in val_loader:
+                            xv, active_xv, opponent_xv, yv = _unpack_supervised_batch(val_batch)
+                            _require_clock_tensors_if_time_model(model, active_xv, opponent_xv)
+                            val_losses.append(
+                                raw_model(
+                                    xv.to(device, non_blocking=True),
+                                    yv.to(device, non_blocking=True),
+                                    ignore_index=LOSS_IGNORE_INDEX,
+                                    active_clock_ids=active_xv.to(device, non_blocking=True)
+                                    if active_xv is not None
+                                    else None,
+                                    opponent_clock_ids=opponent_xv.to(device, non_blocking=True)
+                                    if opponent_xv is not None
+                                    else None,
+                                )[1].item()
+                            )
                     raw_model.train()
                     n_val = len(val_losses)
                     eval_metrics = {"val_loss": sum(val_losses) / n_val if n_val else float("nan")}

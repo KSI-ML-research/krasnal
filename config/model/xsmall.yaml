@@ -4,3 +4,5 @@ n_layer: 2
 n_head: 2
 n_embd: 64
 dropout: 0.1
+use_time_conditioning: true
+time_conditioning_hidden: 32

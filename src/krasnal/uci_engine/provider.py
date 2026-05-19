@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-import json
 import os
 import random
+from abc import ABC, abstractmethod
 from pathlib import Path
 
 import bulletchess
@@ -12,9 +12,20 @@ from loguru import logger
 from krasnal.inference import Game, InferenceSession, load_model
 from krasnal.inference.exceptions import NoLegalMovesError
 from krasnal.inference.sampling import sample_token
-from krasnal.tokens import get_vocab_size, legal_token_ids, load_move_vocab, to_uci
+from krasnal.tokens import (
+    ELO_ABOVE_2200_ID,
+    TC_UNKNOWN_ID,
+    get_elo_bucket,
+    get_time_control_bucket,
+    legal_token_ids,
+    load_move_vocab,
+    normalize_history_uci_moves,
+    to_uci,
+)
+from krasnal.uci_engine.go_params import GoParams
 from krasnal.utils import (
-    build_gpt_config_from_artifact,
+    gpt_config_from_artifact_dict,
+    read_model_config_json,
     resolve_runtime_device,
 )
 
@@ -23,33 +34,26 @@ class ModelProviderError(ValueError):
     """Raised when the model provider encounters an unrecoverable error."""
 
 
-class ChessModelProvider:
+class ChessModelProvider(ABC):
     """
-    Interface (Protocol) for the chess engine.
-    All implementations (mock, PyTorch model, web API)
-    must satisfy this contract.
+    Interface for the chess engine (UCI bridge).
     """
 
+    @abstractmethod
     def reset_session(self, outcome_token: int) -> None:
-        """Reset the inference session with outcome token. Called once per game."""
-        ...
+        """Reset for a new game (``ucinewgame``)."""
 
+    @abstractmethod
     def get_best_move(self, uci_moves: str) -> str:
-        """
-        Returns the best move in UCI notation based on the provided move history.
+        """Return best move UCI for the given move list string."""
 
-        Args:
-            uci_moves: String representing current moves in the game in UCI format,
-                       e.g., "e2e4 e7e5 g1f3".
+    def set_go_params(self, params: GoParams | None) -> None:
+        """Latest ``go`` line (clocks); default no-op for mocks."""
+        _ = params
 
-        Returns:
-            str: String in UCI notation representing the chosen move (e.g., "b8c6").
-
-        Raises:
-            ModelProviderError: If the model provider encounters an unrecoverable error.
-            NoLegalMovesError: If the position has no legal moves.
-        """
-        ...
+    def apply_setoption(self, name: str, value: str) -> None:
+        """Optional ``setoption`` (Elo / TC metadata); default no-op."""
+        _ = (name, value)
 
 
 class RandomMockProvider(ChessModelProvider):
@@ -58,18 +62,18 @@ class RandomMockProvider(ChessModelProvider):
     """
 
     def reset_session(self, outcome_token: int) -> None:
-        pass  # No session needed for random provider
+        _ = outcome_token
+
+    @staticmethod
+    def _apply_uci_move_list(board: bulletchess.Board, uci_moves: str) -> None:
+        for uci in normalize_history_uci_moves(uci_moves):
+            move = bulletchess.Move.from_uci(uci)
+            board.apply(move)
 
     def get_best_move(self, uci_moves: str) -> str:
         board = bulletchess.Board()
-
         if uci_moves.strip():
-            for move_str in uci_moves.strip().split():
-                try:
-                    move = bulletchess.Move.from_uci(move_str)
-                    board.apply(move)
-                except Exception as e:
-                    logger.error(f"Error parsing move '{move_str}': {e}")
+            self._apply_uci_move_list(board, uci_moves)
 
         legal_moves = list(board.legal_moves())
 
@@ -78,6 +82,17 @@ class RandomMockProvider(ChessModelProvider):
 
         chosen_move = random.choice(legal_moves)
         return chosen_move.uci()
+
+
+def _parse_spin_option(value: str) -> int | None:
+    v = value.strip()
+    if not v:
+        return None
+    try:
+        n = int(v)
+    except ValueError:
+        return None
+    return None if n < 0 else n
 
 
 class ModelProvider(ChessModelProvider):
@@ -103,6 +118,11 @@ class ModelProvider(ChessModelProvider):
         self.outcome_token: int | None = None
         self.session: InferenceSession | None = None
         self.artifact_config = artifact_config or {}
+        self._last_go: GoParams | None = None
+        self._white_elo: int | None = None
+        self._black_elo: int | None = None
+        self._tc_initial_sec: int | None = None
+        self._tc_inc_sec: int | None = None
 
     @classmethod
     def from_artifact_dir(
@@ -110,19 +130,19 @@ class ModelProvider(ChessModelProvider):
         artifact_dir: Path,
         device: torch.device | None = None,
     ) -> ModelProvider:
-        with (artifact_dir / "config.json").open() as f:
-            artifact_config = json.load(f)
-        piece_aware_moves = bool(artifact_config.get("piece_aware_moves", False))
-        side_prefixed_moves = bool(artifact_config.get("side_prefixed_moves", True))
+        cfg_path = artifact_dir / "config.json"
+        artifact_config = read_model_config_json(cfg_path)
+        if not (artifact_dir / "model.pt").is_file():
+            raise ValueError(
+                f"Missing model.pt under {artifact_dir}. "
+                "Training may still be running, or no checkpoint was saved yet.",
+            )
         load_move_vocab(
             artifact_dir / "move_vocab.json",
-            piece_aware_moves=piece_aware_moves,
-            side_prefixed_moves=side_prefixed_moves,
+            piece_aware_moves=bool(artifact_config.get("piece_aware_moves", False)),
+            side_prefixed_moves=bool(artifact_config.get("side_prefixed_moves", True)),
         )
-        gpt_config = build_gpt_config_from_artifact(
-            artifact_dir,
-            vocab_size=get_vocab_size(),
-        )
+        gpt_config = gpt_config_from_artifact_dict(artifact_config)
         runtime_device = device or resolve_runtime_device()
         model = load_model(str(artifact_dir / "model.pt"), runtime_device, gpt_config)
         return cls(
@@ -132,14 +152,66 @@ class ModelProvider(ChessModelProvider):
             artifact_config=artifact_config,
         )
 
+    def _white_elo_token(self) -> int:
+        return get_elo_bucket(self._white_elo) if self._white_elo is not None else ELO_ABOVE_2200_ID
+
+    def _black_elo_token(self) -> int:
+        return get_elo_bucket(self._black_elo) if self._black_elo is not None else ELO_ABOVE_2200_ID
+
+    def _time_control_token(self) -> int:
+        if self._tc_initial_sec is None or self._tc_inc_sec is None:
+            return TC_UNKNOWN_ID
+        return get_time_control_bucket(self._tc_initial_sec, self._tc_inc_sec)
+
+    def _build_game(self, outcome_token: int) -> Game:
+        return Game(
+            white_elo_token=self._white_elo_token(),
+            black_elo_token=self._black_elo_token(),
+            time_control_token=self._time_control_token(),
+            target_outcome_token=outcome_token,
+        )
+
     def reset_session(self, outcome_token: int) -> None:
-        """Reset the inference session with outcome token. Called once per game."""
+        """Reset for a new game; clears ``go`` metadata and optional UCI overrides."""
         self.outcome_token = outcome_token
+        self._last_go = None
+        self._white_elo = None
+        self._black_elo = None
+        self._tc_initial_sec = None
+        self._tc_inc_sec = None
         self.session = InferenceSession(
             self.model,
             self.device,
-            game=Game(target_outcome_token=outcome_token),
+            game=self._build_game(outcome_token),
         )
+
+    def set_go_params(self, params: GoParams | None) -> None:
+        self._last_go = params
+
+    def apply_setoption(self, name: str, value: str) -> None:
+        key = name.strip()
+        val = _parse_spin_option(value)
+        match key.lower():
+            case "krasnalwhiteelo":
+                self._white_elo = val
+            case "krasnalblackelo":
+                self._black_elo = val
+            case "krasnalinitialseconds":
+                self._tc_initial_sec = val
+            case "krasnalincrementseconds":
+                self._tc_inc_sec = val
+            case _:
+                return
+        self._sync_session_conditioning()
+
+    def _sync_session_conditioning(self) -> None:
+        if self.session is None:
+            return
+        g = self.session.game
+        g.white_elo_token = self._white_elo_token()
+        g.black_elo_token = self._black_elo_token()
+        g.time_control_token = self._time_control_token()
+        self.session.sync_prefix_tokens_from_game()
 
     def _sync_session_history(self, move_list: list[str]) -> InferenceSession:
         if self.session is None or self.outcome_token is None:
@@ -156,36 +228,41 @@ class ModelProvider(ChessModelProvider):
 
         for move_str in move_list[len(current_moves) :]:
             try:
-                session.feed_uci(move_str)
+                session.feed_uci(move_str, clock_active=None, clock_opponent=None)
             except ValueError as exc:
                 raise ModelProviderError(f"Invalid move in history: {move_str}") from exc
 
         return session
 
+    def _pick_best_uci(self, session: InferenceSession) -> str:
+        if not list(session.game.board.legal_moves()):
+            raise NoLegalMovesError("No legal moves available")
+
+        session.prepare_go_clocks(self._last_go)
+
+        legal_ids = legal_token_ids(session.game.board)
+        if not legal_ids:
+            raise ModelProviderError("No legal move tokens available for current position")
+
+        legal_probs = session.get_legal_probs()
+        if torch.isnan(legal_probs).any():
+            raise ModelProviderError("Could not produce legal move probabilities")
+
+        best_token = sample_token(legal_probs, temperature=self.temperature, top_p=self.top_p)
+        best_move = to_uci(best_token)
+        if not best_move:
+            raise ModelProviderError(f"Sampled token {best_token} is not a move")
+        return best_move
+
     def get_best_move(self, uci_moves: str) -> str:
         try:
-            move_list = list(filter(None, uci_moves.split()))
+            move_list = normalize_history_uci_moves(uci_moves)
             session = self._sync_session_history(move_list)
-
-            if not list(session.game.board.legal_moves()):
-                raise NoLegalMovesError("No legal moves available")
-
-            legal_ids = legal_token_ids(session.game.board)
-            if not legal_ids:
-                raise ModelProviderError("No legal move tokens available for current position")
-
-            legal_probs = session.get_legal_probs()
-            if torch.isnan(legal_probs).any():
-                raise ModelProviderError("Could not produce legal move probabilities")
-
-            best_token = sample_token(legal_probs, temperature=self.temperature, top_p=self.top_p)
-            best_move = to_uci(best_token)
-            if not best_move:
-                raise ModelProviderError(f"Sampled token {best_token} is not a move")
-            return best_move
+            return self._pick_best_uci(session)
         except NoLegalMovesError:
             raise
         except ModelProviderError:
             raise
         except Exception as exc:
-            raise ModelProviderError("Unrecoverable inference error") from exc
+            logger.exception("ModelProvider.get_best_move failed")
+            raise ModelProviderError(f"{type(exc).__name__}: {exc}") from exc

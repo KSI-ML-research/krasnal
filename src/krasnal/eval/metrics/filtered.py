@@ -1,6 +1,7 @@
 from collections.abc import Callable
 from typing import Any, ClassVar
 
+from krasnal.config import CLOCK_IGNORE_ID
 from krasnal.tokens import ELO_BUCKETS
 
 from .base import Metric
@@ -55,6 +56,28 @@ class WhenGivesCheckMetric(FilteredMetric):
             core=core,
             filter_fn=lambda ctx: ctx.gives_check is True,
             result_key=f"{core.name}_when_gives_check",
+        )
+
+
+class WhenLowTimeMetric(FilteredMetric):
+    """Filter positions where the side to move has at most ``max_seconds`` on the clock."""
+
+    def __init__(self, core: CoreMetric, max_seconds: int):
+        if max_seconds < 0:
+            raise ValueError(f"max_seconds must be non-negative, got {max_seconds}")
+
+        def low_time(ctx: EvalContext) -> bool:
+            s = ctx.active_clock_seconds
+            if s is None:
+                return False
+            if s >= CLOCK_IGNORE_ID:
+                return False
+            return s <= max_seconds
+
+        super().__init__(
+            core=core,
+            filter_fn=low_time,
+            result_key=f"{core.name}_when_low_time",
         )
 
 

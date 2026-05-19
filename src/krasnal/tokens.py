@@ -33,7 +33,7 @@ ELO_1900_1999_ID = 19
 ELO_2000_2099_ID = 20
 ELO_2100_2199_ID = 21
 ELO_ABOVE_2200_ID = 22
-ELO_UNKNOWN_ID = 23
+
 
 TC_BLITZ_NO_INC_ID = 111
 TC_BLITZ_INC_ID = 112
@@ -45,13 +45,6 @@ TC_UNKNOWN_ID = 116
 IS_CHECK_ID = 24
 YES_CHECK_ID = 25
 NO_CHECK_ID = 26
-PIECE_TYPE_MOVED_ID = 27
-PAWN_ID = 28
-KNIGHT_ID = 29
-BISHOP_ID = 30
-ROOK_ID = 31
-QUEEN_ID = 32
-KING_ID = 33
 EMPTY_ID = 34
 
 WHATS_ON_SQUARE = {
@@ -108,7 +101,6 @@ ELO_TOKENS = {
     "<elo_2000_2099>": ELO_2000_2099_ID,
     "<elo_2100_2199>": ELO_2100_2199_ID,
     "<elo_above_2200>": ELO_ABOVE_2200_ID,
-    "<elo_unknown>": ELO_UNKNOWN_ID,
 }
 
 TC_TOKENS = {
@@ -135,7 +127,6 @@ ELO_BUCKETS = {
     ELO_2000_2099_ID: "2000_2099",
     ELO_2100_2199_ID: "2100_2199",
     ELO_ABOVE_2200_ID: "above_2200",
-    ELO_UNKNOWN_ID: "unknown",
 }
 
 # Loss-mask targets: model always receives result, Elo, and time control as a fixed prefix.
@@ -148,13 +139,6 @@ QA_TOKENS = {
     "<is_check>": IS_CHECK_ID,
     "<yes_check>": YES_CHECK_ID,
     "<no_check>": NO_CHECK_ID,
-    "<piece_type_moved>": PIECE_TYPE_MOVED_ID,
-    "<pawn>": PAWN_ID,
-    "<knight>": KNIGHT_ID,
-    "<bishop>": BISHOP_ID,
-    "<rook>": ROOK_ID,
-    "<queen>": QUEEN_ID,
-    "<king>": KING_ID,
     "<empty>": EMPTY_ID,
     **WHATS_ON_SQUARE,
     **COLORED_PIECE_TOKENS,
@@ -175,7 +159,7 @@ SPECIAL_TOKENS = {
 
 MOVE_TO_ID = dict(SPECIAL_TOKENS)
 ID_TO_MOVE = {v: k for k, v in MOVE_TO_ID.items()}
-VOCAB_SIZE = len(MOVE_TO_ID)
+VOCAB_SIZE = max(MOVE_TO_ID.values()) + 1
 MOVE_VOCAB_MANIFEST: dict[str, Any] | None = None
 MOVE_VOCAB_SOURCE_PATH: Path | None = None
 
@@ -384,7 +368,7 @@ def install_move_vocab_artifact(
     MOVE_TO_ID.update(vocab)
     ID_TO_MOVE.clear()
     ID_TO_MOVE.update({v: k for k, v in vocab.items()})
-    VOCAB_SIZE = len(MOVE_TO_ID)
+    VOCAB_SIZE = max(MOVE_TO_ID.values()) + 1
     MOVE_VOCAB_MANIFEST = manifest
     MOVE_VOCAB_SOURCE_PATH = source_path
 
@@ -479,6 +463,27 @@ def get_moves_only(token_ids: list[int]) -> list[int]:
     return [tid for tid in token_ids if tid not in SPECIAL_TOKENS.values()]
 
 
+def get_move_clock_pairs(
+    token_ids: list[int],
+    active_clock_ids: list[int] | None,
+    opponent_clock_ids: list[int] | None,
+) -> list[tuple[int, int]] | None:
+    """Clock (active, opponent) per move token, aligned with ``get_moves_only`` order."""
+    if active_clock_ids is None or opponent_clock_ids is None:
+        return None
+    n = len(token_ids)
+    if len(active_clock_ids) != n or len(opponent_clock_ids) != n:
+        raise ValueError(
+            f"Clock lists length must match token_ids ({n}), got "
+            f"{len(active_clock_ids)}, {len(opponent_clock_ids)}"
+        )
+    return [
+        (int(a), int(o))
+        for tid, a, o in zip(token_ids, active_clock_ids, opponent_clock_ids, strict=True)
+        if tid not in SPECIAL_TOKENS.values()
+    ]
+
+
 def _token_string_to_uci(token: str) -> str:
     if token.startswith(WHITE_PREFIX):
         token = token[len(WHITE_PREFIX) :]
@@ -489,6 +494,20 @@ def _token_string_to_uci(token: str) -> str:
     if sep and piece_prefix in PIECE_TYPES:
         return uci
     return token
+
+
+def normalize_history_uci_move(move: str) -> str:
+    """Map training-style move keys (``w:pawn:e2e4``, ``pawn:e2e4``) to engine UCI (``e2e4``)."""
+    s = move.strip()
+    if not s:
+        return s
+    return _token_string_to_uci(s)
+
+
+def normalize_history_uci_moves(moves: str | Iterable[str]) -> list[str]:
+    """Normalize a whitespace-separated history string or iterable of move-like strings."""
+    items = moves.split() if isinstance(moves, str) else moves
+    return [normalize_history_uci_move(move) for move in items if str(move).strip()]
 
 
 def to_uci(token_id: int) -> str:

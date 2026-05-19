@@ -14,6 +14,7 @@ from krasnal.eval.metrics.filtered import (
     PerPieceMetric,
     WhenGivesCheckMetric,
     WhenInCheckMetric,
+    WhenLowTimeMetric,
 )
 from krasnal.tokens import ELO_1500_1599_ID, ELO_2000_2099_ID
 
@@ -193,3 +194,37 @@ def test_per_piece_skips_unknown_piece_types():
     metric = PerPieceMetric(Top1LegalCore())
     metric.compute(EvalContext(piece_type=99, probs=torch.zeros(5), legal_ids=[0]))
     assert all(len(buf) == 0 for buf in metric.buffers.values())
+
+
+def test_when_low_time_buffers_only_low_clock_positions():
+    metric = WhenLowTimeMetric(AccuracyCore(), max_seconds=30)
+    metric.compute(
+        EvalContext(
+            active_clock_seconds=20,
+            probs=torch.tensor([0.9, 0.1]),
+            actual_token=0,
+        )
+    )
+    metric.compute(
+        EvalContext(
+            active_clock_seconds=90,
+            probs=torch.tensor([0.9, 0.1]),
+            actual_token=0,
+        )
+    )
+    metric.compute(
+        EvalContext(active_clock_seconds=None, probs=torch.tensor([0.9, 0.1]), actual_token=0)
+    )
+    assert len(metric.buffer) == 1
+
+
+def test_when_low_time_finalizes_average():
+    metric = WhenLowTimeMetric(Top1LegalCore(), max_seconds=60)
+    metric.compute(
+        EvalContext(active_clock_seconds=10, probs=torch.tensor([0.9, 0.1]), legal_ids=[0])
+    )
+    metric.compute(
+        EvalContext(active_clock_seconds=5, probs=torch.tensor([0.9, 0.1]), legal_ids=[1])
+    )
+    result = metric.finalize()
+    assert result["top1_legal_when_low_time"] == 0.5
