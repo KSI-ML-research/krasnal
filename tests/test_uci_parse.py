@@ -3,7 +3,7 @@
 import pytest
 
 from krasnal.uci_engine.go_params import GoParams
-from krasnal.uci_engine.uci_parse import (
+from krasnal.uci_engine.uci_parser import (
     CmdGo,
     CmdIsReady,
     CmdPosition,
