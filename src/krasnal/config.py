@@ -43,6 +43,12 @@ class TrainConfig:
     eval_interval: int
     eval_num_games: int = 300
 
+    # Optimizer selection: "adamw" or "muon"
+    optimizer: str = "adamw"
+    # Muon-specific hyperparameters (only used when optimizer == "muon")
+    muon_lr: float = 0.02
+    muon_momentum: float = 0.95
+
     # Runtime
     max_iters: int | None = None  # set after computing from epochs and dataset size
     steps_per_epoch: int | None = None  # set after computing from dataset size

@@ -12,6 +12,9 @@ weight_decay: 0.1
 beta1: 0.9
 beta2: 0.95
 grad_clip: 1.0
+optimizer: adamw  # "adamw" or "muon"
+muon_lr: 0.02
+muon_momentum: 0.95
 log_interval: 10
 eval_interval: 10000
 eval_num_games: 1000

@@ -23,6 +23,7 @@ from krasnal.tokens import get_vocab_size, load_move_vocab
 from krasnal.trainer import (
     DistributedInfo,
     build_model,
+    build_optimizer,
     cosine_warmup_lr,
     run_supervised_training,
     save_model_state,
@@ -83,6 +84,8 @@ def _main(cfg: DictConfig, dist_info: DistributedInfo) -> None:
         scale = float(dist_info.world_size)
         tconf.learning_rate *= scale
         tconf.min_lr *= scale
+        if tconf.optimizer == "muon":
+            tconf.muon_lr *= scale
 
     train_device = torch.device("cuda", dist_info.local_rank) if dist_info.enabled else None
     device, dtype, ctx, scaler = setup_runtime(device=train_device)
@@ -117,6 +120,7 @@ def _main(cfg: DictConfig, dist_info: DistributedInfo) -> None:
             "move_vocab_path": str(MOVE_VOCAB_PATH),
             "dataset_mtime": dataset_mtime,
             "dataset_size": len(train_dataset),
+            "optimizer": tconf.optimizer,
             "model_repr": repr(model),
             "world_size": dist_info.world_size,
             "ddp": dist_info.enabled,
@@ -142,12 +146,7 @@ def _main(cfg: DictConfig, dist_info: DistributedInfo) -> None:
             artifact_dir=artifact_dir,
         )
 
-    optimizer = model.configure_optimizers(
-        weight_decay=tconf.weight_decay,
-        learning_rate=tconf.learning_rate,
-        betas=(tconf.beta1, tconf.beta2),
-        device_type=device.type,
-    )
+    optimizer = build_optimizer(model, tconf, device.type)
 
     model.to(device)
     if tconf.compile and device.type == "cuda":
