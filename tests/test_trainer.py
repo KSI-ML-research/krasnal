@@ -15,7 +15,12 @@ from krasnal.tokens import (
     WHATS_ON_PROMPT_TOKEN_IDS,
     WHITE_WON_ID,
 )
-from krasnal.trainer import cosine_warmup_lr, run_supervised_training
+from krasnal.trainer import (
+    apply_optimizer_lr,
+    build_optimizer,
+    cosine_warmup_lr,
+    run_supervised_training,
+)
 from krasnal.utils import format_eval_metric_key
 
 
@@ -80,6 +85,49 @@ def test_max_less_than_warmup_validation():
     cfg.max_iters = 100
     with pytest.raises(ValueError, match="must be greater than"):
         cosine_warmup_lr(100, cfg)
+
+
+def test_muon_lr_schedule_uses_separate_base_lr():
+    """Muon must keep its own base LR; applying AdamW's LR makes updates ~40x too small."""
+    cfg = GPTConfig(
+        block_size=64,
+        n_layer=2,
+        n_head=4,
+        n_embd=64,
+        use_time_conditioning=False,
+        time_conditioning_hidden=32,
+        use_board_conditioning=False,
+        board_conditioning_hidden=32,
+        vocab_size=100,
+    )
+    model = GPT(cfg)
+    train_config = TrainConfig(
+        learning_rate=5e-4,
+        min_lr=5e-5,
+        epochs=1.0,
+        warmup_iters=100,
+        batch_size=8,
+        weight_decay=0.1,
+        beta1=0.9,
+        beta2=0.95,
+        grad_clip=1.0,
+        log_interval=10,
+        eval_interval=100,
+        optimizer="muon",
+        muon_lr=0.02,
+        max_iters=1000,
+    )
+    optimizer = build_optimizer(model, train_config, "cpu")
+    assert hasattr(optimizer, "muon_opt")
+
+    lr = cosine_warmup_lr(100, train_config)
+    apply_optimizer_lr(optimizer, lr, train_config)
+
+    muon_lr = optimizer.muon_opt.param_groups[0]["lr"]
+    adam_lr = optimizer.adam_opt.param_groups[0]["lr"]
+    assert muon_lr == pytest.approx(train_config.muon_lr)
+    assert adam_lr == pytest.approx(train_config.learning_rate)
+    assert muon_lr > adam_lr * 10
 
 
 def test_run_training_smoke():

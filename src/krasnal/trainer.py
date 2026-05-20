@@ -10,6 +10,7 @@ from typing import Any
 import torch
 import torch.distributed as dist
 from torch.nn.parallel import DistributedDataParallel as DDP
+from torch.optim import Muon
 from tqdm.auto import tqdm
 
 from krasnal.config import ARTIFACTS_DIR, GPTConfig, TrainConfig
@@ -58,6 +59,94 @@ def build_model(model_config: GPTConfig) -> GPT:
     if model_config.vocab_size is None:
         model_config.vocab_size = get_vocab_size()
     return GPT(model_config)
+
+
+class CombinedOptimizer:
+    """Wraps two optimizers (Muon + AdamW) so the training loop can treat them as one."""
+
+    def __init__(self, muon_opt: torch.optim.Optimizer, adam_opt: torch.optim.AdamW) -> None:
+        self.muon_opt = muon_opt
+        self.adam_opt = adam_opt
+        # Tag each group with its initial LR so the cosine schedule can scale
+        # proportionally rather than overwriting with a single absolute value.
+        for g in adam_opt.param_groups + muon_opt.param_groups:
+            g.setdefault("initial_lr", g["lr"])
+        # Expose param_groups for LR scheduling (training loop sets LR on these)
+        self.param_groups = adam_opt.param_groups + muon_opt.param_groups
+
+    def step(self, closure=None) -> None:
+        self.muon_opt.step(closure)
+        self.adam_opt.step(closure)
+
+    def zero_grad(self, set_to_none: bool = False) -> None:
+        self.muon_opt.zero_grad(set_to_none=set_to_none)
+        self.adam_opt.zero_grad(set_to_none=set_to_none)
+
+    def state_dict(self) -> dict:
+        return {
+            "muon": self.muon_opt.state_dict(),
+            "adam": self.adam_opt.state_dict(),
+        }
+
+    def load_state_dict(self, state_dict: dict) -> None:
+        self.muon_opt.load_state_dict(state_dict["muon"])
+        self.adam_opt.load_state_dict(state_dict["adam"])
+
+
+def build_optimizer(
+    model: GPT,
+    train_config: TrainConfig,
+    device_type: str,
+) -> torch.optim.Optimizer | CombinedOptimizer:
+    """Build optimizer: pure AdamW or Muon+AdamW hybrid."""
+    if train_config.optimizer == "adamw":
+        return model.configure_optimizers(
+            weight_decay=train_config.weight_decay,
+            learning_rate=train_config.learning_rate,
+            betas=(train_config.beta1, train_config.beta2),
+            device_type=device_type,
+        )
+
+    if train_config.optimizer != "muon":
+        raise ValueError(
+            f"Unknown optimizer: {train_config.optimizer!r}. Choose 'adamw' or 'muon'."
+        )
+
+    # Muon+AdamW hybrid: Muon for 2D weights, AdamW for the rest
+    muon_params = []
+    adam_decay_params = []
+    adam_nodecay_params = []
+
+    for name, p in model.named_parameters():
+        if not p.requires_grad:
+            continue
+        # Embedding weights are tied with lm_head — use AdamW (Muon doesn't
+        # benefit from embeddings, and weight tying complicates orthogonalization)
+        if "wte" in name or "lm_head" in name:
+            adam_decay_params.append(p)
+        elif p.ndim >= 2:
+            muon_params.append(p)
+        else:
+            adam_nodecay_params.append(p)
+
+    muon_opt = Muon(
+        muon_params,
+        lr=train_config.muon_lr,
+        momentum=train_config.muon_momentum,
+        # Keller-style Muon: no weight decay on hidden 2D weights (AdamW still decays embeddings).
+        weight_decay=0.0,
+    )
+
+    adam_opt = torch.optim.AdamW(
+        [
+            {"params": adam_decay_params, "weight_decay": train_config.weight_decay},
+            {"params": adam_nodecay_params, "weight_decay": 0.0},
+        ],
+        lr=train_config.learning_rate,
+        betas=(train_config.beta1, train_config.beta2),
+    )
+
+    return CombinedOptimizer(muon_opt, adam_opt)
 
 
 def resolve_pretrained_checkpoint(model_path: str | None, latest: bool) -> Path:
@@ -110,6 +199,22 @@ def setup_runtime(
     )
     scaler = torch.amp.GradScaler(selected_device.type, enabled=(dtype == torch.float16))
     return selected_device, dtype, ctx, scaler
+
+
+def apply_optimizer_lr(
+    optimizer: torch.optim.Optimizer,
+    lr: float,
+    train_config: TrainConfig,
+) -> None:
+    """Set per-param-group learning rates for the current training step."""
+    for param_group in optimizer.param_groups:
+        if "initial_lr" in param_group:
+            # CombinedOptimizer: scale each group proportionally. lr is the
+            # AdamW-scheduled value; apply the cosine ratio to each group's base.
+            ratio = lr / train_config.learning_rate
+            param_group["lr"] = param_group["initial_lr"] * ratio
+        else:
+            param_group["lr"] = lr
 
 
 def cosine_warmup_lr(iter_num: int, train_config: TrainConfig) -> float:
@@ -227,8 +332,7 @@ def run_supervised_training(
             x, active_x, opponent_x, y = _unpack_supervised_batch(batch)
             _require_clock_tensors_if_time_model(model, active_x, opponent_x)
             lr = lr_fn(iter_num)
-            for param_group in optimizer.param_groups:
-                param_group["lr"] = lr
+            apply_optimizer_lr(optimizer, lr, train_config)
 
             x = x.to(device, non_blocking=True)
             active_x = active_x.to(device, non_blocking=True) if active_x is not None else None
