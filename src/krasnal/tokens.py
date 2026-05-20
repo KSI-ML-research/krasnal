@@ -459,8 +459,13 @@ def result_to_token_id(result: str | int) -> int:
     raise ValueError(f"Unsupported game result: {result!r}")
 
 
+def is_move_token_id(token_id: int) -> bool:
+    """True if ``token_id`` is a corpus move token (not special/Q&A/metadata)."""
+    return token_id not in SPECIAL_TOKENS.values()
+
+
 def get_moves_only(token_ids: list[int]) -> list[int]:
-    return [tid for tid in token_ids if tid not in SPECIAL_TOKENS.values()]
+    return [tid for tid in token_ids if is_move_token_id(tid)]
 
 
 def get_move_clock_pairs(

@@ -171,3 +171,7 @@ def test_token_mix_stats_counts_time_control_buckets():
     assert stats["tc_<tc_blitz_no_inc>_count"] == 1
     assert stats["tc_<tc_blitz_inc>_count"] == 1
     assert sum(stats[f"tc_{bucket}_count"] for bucket in TC_TOKENS) == 2
+    assert stats["game_start_count"] == 2
+    assert stats["game_end_count"] == 2
+    assert stats["total_tokens"] == 10
+    assert stats["uci_move_count"] == 2

@@ -7,10 +7,10 @@ from pathlib import Path
 import bulletchess
 import hydra
 import polars as pl
-import wandb
 from loguru import logger
 from omegaconf import DictConfig
 
+import wandb
 from krasnal.config import (
     CLOCK_IGNORE_ID,
     EVAL_DATASET_PATH,
@@ -534,6 +534,13 @@ def _token_mix_raw_sums(tokenized_lf: pl.LazyFrame) -> tuple[int, ...]:
         .sum()
         .alias("empty_count"),
         pl.col("token_ids")
+        .list.eval(
+            pl.element().is_in(list(COLORED_PIECE_TOKENS.values())).cast(pl.UInt32), parallel=True
+        )
+        .list.sum()
+        .sum()
+        .alias("piece_answer_count"),
+        pl.col("token_ids")
         .list.eval(pl.element().is_in(result_ids).cast(pl.UInt32), parallel=True)
         .list.sum()
         .sum()
@@ -553,6 +560,16 @@ def _token_mix_raw_sums(tokenized_lf: pl.LazyFrame) -> tuple[int, ...]:
         .list.sum()
         .sum()
         .alias("special_count"),
+        pl.col("token_ids")
+        .list.eval((pl.element() == GAME_START_ID).cast(pl.UInt32), parallel=True)
+        .list.sum()
+        .sum()
+        .alias("game_start_count"),
+        pl.col("token_ids")
+        .list.eval((pl.element() == GAME_END_ID).cast(pl.UInt32), parallel=True)
+        .list.sum()
+        .sum()
+        .alias("game_end_count"),
     ]
     for bucket_name, bucket_id in ELO_TOKENS.items():
         exprs.append(
@@ -591,14 +608,18 @@ def _token_mix_from_raw_sums(stats: tuple[int, ...]) -> dict[str, float]:
     no_check_count = stats[3]
     what_is_on_count = stats[4]
     empty_count = stats[5]
-    result_count = stats[6]
-    elo_count = stats[7]
-    tc_count = stats[8]
-    special_count = stats[9]
+    piece_answer_count = stats[6]
+    result_count = stats[7]
+    elo_count = stats[8]
+    tc_count = stats[9]
+    special_count = stats[10]
+    game_start_count = stats[11]
+    game_end_count = stats[12]
 
     check_qa_count = is_check_count + yes_check_count + no_check_count
     outcome_prefix_count = result_count + elo_count + tc_count
     uci_move_count = max(0, total_tokens - special_count)
+    whats_on_answer_count = empty_count + piece_answer_count
 
     def pct(count: int) -> float:
         return (count / total_tokens * 100.0) if total_tokens > 0 else 0.0
@@ -607,8 +628,6 @@ def _token_mix_from_raw_sums(stats: tuple[int, ...]) -> dict[str, float]:
         "total_tokens": total_tokens,
         "uci_move_count": uci_move_count,
         "check_qa_count": check_qa_count,
-        "piece_qa_count": 0.0,
-        "piece_answer_count": 0.0,
         "outcome_prefix_count": outcome_prefix_count,
         "is_check_count": is_check_count,
         "yes_check_count": yes_check_count,
@@ -618,14 +637,22 @@ def _token_mix_from_raw_sums(stats: tuple[int, ...]) -> dict[str, float]:
         "tc_count": tc_count,
         "uci_move_pct": pct(uci_move_count),
         "check_qa_pct": pct(check_qa_count),
-        "piece_qa_pct": 0.0,
         "outcome_prefix_pct": pct(outcome_prefix_count),
         "what_is_on_count": what_is_on_count,
+        "what_is_on_pct": pct(what_is_on_count),
         "empty_count": empty_count,
-        "occupied_count": what_is_on_count - empty_count,
+        "empty_pct": pct(empty_count),
+        "piece_answer_count": piece_answer_count,
+        "piece_answer_pct": pct(piece_answer_count),
+        "whats_on_answer_count": whats_on_answer_count,
+        "whats_on_answer_pct": pct(whats_on_answer_count),
+        "game_start_count": game_start_count,
+        "game_end_count": game_end_count,
+        "game_start_pct": pct(game_start_count),
+        "game_end_pct": pct(game_end_count),
     }
 
-    idx = 10
+    idx = 13
     for bucket_name in ELO_TOKENS:
         result[f"elo_{bucket_name}_count"] = float(stats[idx])
         idx += 1
@@ -685,8 +712,11 @@ def _log_preprocess_to_wandb(
     wandb.summary["dataset/total_tokens"] = token_mix["total_tokens"]
     wandb.summary["dataset/uci_move_pct"] = token_mix["uci_move_pct"]
     wandb.summary["dataset/check_qa_pct"] = token_mix["check_qa_pct"]
-    wandb.summary["dataset/piece_qa_pct"] = token_mix["piece_qa_pct"]
+    wandb.summary["dataset/what_is_on_pct"] = token_mix["what_is_on_pct"]
+    wandb.summary["dataset/whats_on_answer_pct"] = token_mix["whats_on_answer_pct"]
     wandb.summary["dataset/outcome_prefix_pct"] = token_mix["outcome_prefix_pct"]
+    wandb.summary["dataset/game_start_pct"] = token_mix["game_start_pct"]
+    wandb.summary["dataset/game_end_pct"] = token_mix["game_end_pct"]
 
     total_elo = sum(token_mix.get(f"elo_{b}_count", 0) for b in ELO_TOKENS)
     for bucket_name in ELO_TOKENS:
@@ -962,21 +992,34 @@ def main(cfg: DictConfig) -> None:
         token_mix["check_qa_count"],
     )
     logger.info(
-        "  qa_piece_type_moved: {:.2f}% ({})",
-        token_mix["piece_qa_pct"],
-        token_mix["piece_type_moved_count"],
+        "  qa_whats_on_prompt: {:.2f}% ({})",
+        token_mix["what_is_on_pct"],
+        token_mix["what_is_on_count"],
     )
     logger.info(
-        "  qa_whats_on: {:.2f}% ({})",
-        (token_mix["what_is_on_count"] / token_mix["total_tokens"] * 100)
-        if token_mix["total_tokens"] > 0
-        else 0,
-        token_mix["what_is_on_count"],
+        "  qa_whats_on_answer_empty: {:.2f}% ({})",
+        token_mix["empty_pct"],
+        token_mix["empty_count"],
+    )
+    logger.info(
+        "  qa_whats_on_answer_piece: {:.2f}% ({})",
+        token_mix["piece_answer_pct"],
+        token_mix["piece_answer_count"],
     )
     logger.info(
         "  conditioning_prefix: {:.2f}% ({})",
         token_mix["outcome_prefix_pct"],
         token_mix["outcome_prefix_count"],
+    )
+    logger.info(
+        "  game_start: {:.2f}% ({})",
+        token_mix["game_start_pct"],
+        token_mix["game_start_count"],
+    )
+    logger.info(
+        "  game_end: {:.2f}% ({})",
+        token_mix["game_end_pct"],
+        token_mix["game_end_count"],
     )
 
     logger.info("ELO Bucket Distribution:")

@@ -69,11 +69,15 @@ def _main(cfg: DictConfig, dist_info: DistributedInfo) -> None:
             "Run scripts/preprocess.py first to generate it."
         )
 
-    train_dataset = ChessDataset(PRETRAIN_DATASET_PATH, include_elo=cfg.get("include_elo", True))
-    dataset_mtime = int(PRETRAIN_DATASET_PATH.stat().st_mtime)
     model_cfg = OmegaConf.to_container(cfg.model, resolve=True)
     model_cfg.pop("name", None)
+    dataloader_num_workers = int(model_cfg.pop("dataloader_num_workers", 0))
     mconf = GPTConfig(vocab_size=get_vocab_size(), **model_cfg)
+    train_dataset = ChessDataset(
+        PRETRAIN_DATASET_PATH,
+        include_elo=cfg.get("include_elo", True),
+    )
+    dataset_mtime = int(PRETRAIN_DATASET_PATH.stat().st_mtime)
     model = build_model(model_config=mconf)
     vocab_size = get_vocab_size()
     tconf = TrainConfig(**OmegaConf.to_container(cfg.train, resolve=True))
@@ -170,13 +174,16 @@ def _main(cfg: DictConfig, dist_info: DistributedInfo) -> None:
         if dist_info.enabled
         else None
     )
+    train_num_workers = dataloader_num_workers if dataloader_num_workers > 0 else tconf.num_workers
     train_loader = DataLoader(
         train_dataset,
         shuffle=train_sampler is None,
         sampler=train_sampler,
         pin_memory=tconf.pin_memory,
         batch_size=tconf.batch_size,
-        num_workers=tconf.num_workers,
+        num_workers=train_num_workers,
+        persistent_workers=train_num_workers > 0,
+        prefetch_factor=4 if train_num_workers > 0 else None,
         collate_fn=collate,
     )
 
@@ -191,13 +198,18 @@ def _main(cfg: DictConfig, dist_info: DistributedInfo) -> None:
     def log_fn(_iter_num, last_loss_value, epoch_float):
         wandb.log({"train_loss": last_loss_value, "epoch": epoch_float})
 
-    eval_dataset = ChessDataset(EVAL_DATASET_PATH, include_elo=cfg.get("include_elo", True))
+    eval_dataset = ChessDataset(
+        EVAL_DATASET_PATH,
+        include_elo=cfg.get("include_elo", True),
+    )
     val_loader = DataLoader(
         eval_dataset,
         shuffle=False,
         pin_memory=tconf.pin_memory,
         batch_size=tconf.batch_size,
-        num_workers=tconf.num_workers,
+        num_workers=train_num_workers,
+        persistent_workers=train_num_workers > 0,
+        prefetch_factor=4 if train_num_workers > 0 else None,
         collate_fn=collate,
     )
 
