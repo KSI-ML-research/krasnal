@@ -4,7 +4,7 @@
 #SBATCH --error=output/%j_download_games.err
 #SBATCH --cpus-per-task=4
 #SBATCH --partition=student-cpu
-#SBATCH --time=01:00:00
+#SBATCH --time=04:00:00
 
 # IMPORTANT: Ensure HF_TOKEN is set in your ~/.bashrc on HPC
 
