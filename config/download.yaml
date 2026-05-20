@@ -2,7 +2,7 @@ defaults:
   - pipeline
 
 # Target number of games to collect
-target_games: 5_000_000
+target_games: 1_000_000
 
 # Minimum Elo for both players
 min_elo: 1500
