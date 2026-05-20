@@ -25,13 +25,13 @@ if [ -z "$SLURM_JOB_ID" ]; then
 
     # Set parameters dynamically based on model size
     if [ "$MODEL" = "small" ]; then
-        TIME_LIMIT="06:00:00"
+        TIME_LIMIT="6:00:00"
         BATCH_SIZE=64
     elif [ "$MODEL" = "medium" ]; then
-        TIME_LIMIT="08:00:00"
+        TIME_LIMIT="12:00:00"
         BATCH_SIZE=32
     else
-        TIME_LIMIT="12:00:00"
+        TIME_LIMIT="24:00:00"
         BATCH_SIZE=32
     fi
 

@@ -4,7 +4,7 @@
 #SBATCH --error=output/%j_preprocess.err
 #SBATCH --cpus-per-task=12
 #SBATCH --partition=student-cpu
-#SBATCH --time=01:00:00
+#SBATCH --time=02:00:00
 
 USER=ijakus
 USER_DIRECTORY=/Ziob/$USER
