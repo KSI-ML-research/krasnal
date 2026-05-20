@@ -266,8 +266,8 @@ class GPT(nn.Module):
             if stockfish_targets is not None:
                 logits_stockfish = self.stockfish_eval_head(x)
                 loss_stockfish = F.cross_entropy(
-                    logits_stockfish.view(-1, logits_stockfish.size(-1)),
-                    stockfish_targets.view(-1),
+                    logits_stockfish.reshape(-1, logits_stockfish.size(-1)),
+                    stockfish_targets.reshape(-1),
                     ignore_index=ignore_index,
                 )
                 loss = (loss_lm, loss_stockfish)

@@ -71,9 +71,9 @@ def evaluate_loss(
     total_sf_tokens = 0
     with torch.inference_mode():
         for x, y_tokens, y_stockfish_evals in loader:
-            x = x.to(device, non_blocking=True)
-            y_tokens = y_tokens.to(device, non_blocking=True)
-            y_stockfish_evals = y_stockfish_evals.to(device, non_blocking=True)
+            x = x.contiguous().to(device, non_blocking=True)
+            y_tokens = y_tokens.contiguous().to(device, non_blocking=True)
+            y_stockfish_evals = y_stockfish_evals.contiguous().to(device, non_blocking=True)
             _, (loss_lm, loss_sf) = model(
                 x,
                 targets=y_tokens,
@@ -227,9 +227,9 @@ def run_supervised_training(
             for param_group in optimizer.param_groups:
                 param_group["lr"] = lr
 
-            x = x.to(device, non_blocking=True)
-            y_tokens = y_tokens.to(device, non_blocking=True)
-            y_stockfish_evals = y_stockfish_evals.to(device, non_blocking=True)
+            x = x.contiguous().to(device, non_blocking=True)
+            y_tokens = y_tokens.contiguous().to(device, non_blocking=True)
+            y_stockfish_evals = y_stockfish_evals.contiguous().to(device, non_blocking=True)
 
             with ctx:
                 _, loss_tuple = model(
@@ -252,7 +252,7 @@ def run_supervised_training(
             optimizer.zero_grad(set_to_none=True)
 
             # logging training metrics
-            if iter_num % log_interval == 0:
+            if iter_num % log_interval == 0 and iter_num > 0:
                 last_loss_value = float(loss.item())
                 epoch_float = iter_num / max(steps_per_epoch, 1)
                 pbar.set_postfix(
@@ -280,9 +280,9 @@ def run_supervised_training(
                 val_batches = 0
                 with torch.inference_mode():
                     for x_val, y_val_tokens, y_val_evals in val_loader:
-                        x_val = x_val.to(device, non_blocking=True)
-                        y_val_tokens = y_val_tokens.to(device, non_blocking=True)
-                        y_val_evals = y_val_evals.to(device, non_blocking=True)
+                        x_val = x_val.contiguous().to(device, non_blocking=True)
+                        y_val_tokens = y_val_tokens.contiguous().to(device, non_blocking=True)
+                        y_val_evals = y_val_evals.contiguous().to(device, non_blocking=True)
                         _, (loss_lm, loss_sf) = raw_model(
                             x_val,
                             targets=y_val_tokens,
