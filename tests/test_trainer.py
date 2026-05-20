@@ -5,8 +5,9 @@ import pytest
 import torch
 from torch.utils.data import DataLoader, TensorDataset
 
-from krasnal.config import CLOCK_IGNORE_ID
+from krasnal.config import CLOCK_IGNORE_ID, GPTConfig, TrainConfig
 from krasnal.dataset import make_collate_fn
+from krasnal.model import GPT
 from krasnal.tokens import (
     ELO_2000_2099_ID,
     IS_CHECK_ID,
@@ -96,8 +97,6 @@ def test_muon_lr_schedule_uses_separate_base_lr():
         n_embd=64,
         use_time_conditioning=False,
         time_conditioning_hidden=32,
-        use_board_conditioning=False,
-        board_conditioning_hidden=32,
         vocab_size=100,
     )
     model = GPT(cfg)

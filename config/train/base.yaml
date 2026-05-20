@@ -16,7 +16,7 @@ optimizer: adamw  # "adamw" or "muon"
 muon_lr: 0.02
 muon_momentum: 0.95
 log_interval: 10
-eval_interval: 10000
+eval_interval: 20000
 eval_num_games: 1000
 compile: false
 compile_mode: default

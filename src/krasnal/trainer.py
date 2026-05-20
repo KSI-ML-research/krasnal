@@ -371,7 +371,7 @@ def run_supervised_training(
                 if log_fn is not None:
                     log_fn(iter_num, last_loss_value, epoch_float)
 
-            if iter_num % eval_interval == 0:
+            if iter_num > 0 and iter_num % eval_interval == 0:
                 if dinfo.enabled:
                     dist.barrier()
                 if master:
