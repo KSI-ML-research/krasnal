@@ -9,7 +9,7 @@ from torch.nn.utils.rnn import pad_sequence
 from torch.utils.data import Dataset
 
 from krasnal.config import CLOCK_IGNORE_ID
-from krasnal.supervised_target_mask import apply_supervised_loss_mask
+from krasnal.supervised_target_mask import LOSS_IGNORE_INDEX, apply_supervised_loss_mask
 from krasnal.time_conditioning import shift_clock_rows_for_training
 from krasnal.tokens import PAD_ID
 
@@ -88,6 +88,76 @@ class ChessDataset(Dataset[tuple[torch.Tensor, torch.Tensor, torch.Tensor]]):
         return tokens, active_clocks, opponent_clocks
 
 
+class PackedChessDataset(
+    Dataset[tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]]
+):
+    """Fixed-length packed training windows with per-token segment and position metadata."""
+
+    def __init__(self, parquet_path: Path | list[Path]):
+        paths = (
+            [str(path) for path in parquet_path]
+            if isinstance(parquet_path, list)
+            else str(parquet_path)
+        )
+        cache_dir = Path(resolve_hf_datasets_cache_dir())
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        self.dataset = HFDataset.from_parquet(paths, cache_dir=str(cache_dir))
+        required = {
+            "token_ids",
+            "active_clock_ids",
+            "opponent_clock_ids",
+            "segment_ids",
+            "position_ids",
+        }
+        missing = required - set(self.dataset.column_names)
+        if missing:
+            raise ValueError(f"Packed dataset missing columns: {sorted(missing)}")
+        self.dataset.set_format(
+            type="torch",
+            columns=[
+                "token_ids",
+                "active_clock_ids",
+                "opponent_clock_ids",
+                "segment_ids",
+                "position_ids",
+            ],
+        )
+
+    def __len__(self) -> int:
+        return len(self.dataset)
+
+    def __getitem__(self, idx: int):
+        row = self.dataset[idx]
+        tokens = row["token_ids"].to(torch.long)
+        active_clocks = row["active_clock_ids"].to(torch.long)
+        opponent_clocks = row["opponent_clock_ids"].to(torch.long)
+        segment_ids = row["segment_ids"].to(torch.long)
+        position_ids = row["position_ids"].to(torch.long)
+        n = tokens.size(0)
+        if not (
+            active_clocks.size(0)
+            == opponent_clocks.size(0)
+            == segment_ids.size(0)
+            == position_ids.size(0)
+            == n
+        ):
+            raise ValueError(f"Packed row length mismatch at index {idx}")
+        return tokens, active_clocks, opponent_clocks, segment_ids, position_ids
+
+
+def _mask_pad_targets(y: torch.Tensor) -> torch.Tensor:
+    out = y.clone()
+    out[out == PAD_ID] = LOSS_IGNORE_INDEX
+    return out
+
+
+def _mask_cross_segment_targets(y: torch.Tensor, segment_ids: torch.Tensor) -> torch.Tensor:
+    out = y.clone()
+    cross = segment_ids[:, :-1] != segment_ids[:, 1:]
+    out[cross] = LOSS_IGNORE_INDEX
+    return out
+
+
 def _get_bucket_size(seq_len: int, bucket_sizes: tuple[int, ...]) -> int:
     """Return the smallest bucket size that is >= seq_len."""
     for b in bucket_sizes:
@@ -104,7 +174,7 @@ class CollateFn:
 
     def __call__(self, batch):
         """
-        Pad sequences and bucket to stable lengths for torch.compile friendliness.
+        Pad sequences and optionally bucket to stable lengths for eval batches.
 
         The model receives x=padded[:, :-1], y=padded[:, 1:], so we pad to
         (bucket_size + 1) to keep model sequence length exactly bucket_size.
@@ -145,9 +215,39 @@ class CollateFn:
         x = padded[:, :-1]
         active_x, opponent_x = shift_clock_rows_for_training(active_padded, opponent_padded)
         y = apply_supervised_loss_mask(padded[:, 1:])
+        y = _mask_pad_targets(y)
         return x, active_x, opponent_x, y
 
 
+class PackedCollateFn:
+    """Collate fixed-length packed windows for training."""
+
+    def __call__(
+        self,
+        batch: list[tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]],
+    ):
+        tokens, active, opponent, segments, positions = zip(*batch, strict=True)
+        padded = torch.stack(tokens)
+        active_padded = torch.stack(active)
+        opponent_padded = torch.stack(opponent)
+        segment_padded = torch.stack(segments)
+        position_padded = torch.stack(positions)
+
+        x = padded[:, :-1]
+        segment_x = segment_padded[:, :-1]
+        position_x = position_padded[:, :-1]
+        active_x, opponent_x = shift_clock_rows_for_training(active_padded, opponent_padded)
+        y = apply_supervised_loss_mask(padded[:, 1:])
+        y = _mask_pad_targets(y)
+        y = _mask_cross_segment_targets(y, segment_padded)
+        return x, active_x, opponent_x, y, segment_x, position_x
+
+
 def make_collate_fn(bucket_sizes: tuple[int, ...] = ()) -> Callable:
-    """Build a collate function configured with explicit bucket sizes."""
+    """Build a collate function configured with optional bucket sizes (eval)."""
     return CollateFn(bucket_sizes)
+
+
+def make_packed_collate_fn() -> Callable:
+    """Build the collate function for packed training windows."""
+    return PackedCollateFn()
