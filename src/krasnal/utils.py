@@ -41,7 +41,7 @@ def print_model_config(
         f"{'=' * 60}\n"
         f"  {stage}  |  {params_m:.2f}M params  |  {dataset_size:,} {dataset_label}\n"
         f"  layers={config.n_layer}, heads={config.n_head}, embd={config.n_embd}, "
-        f"context={config.block_size}, vocab={vocab_size}\n"
+        f"context={config.block_size}, vocab={vocab_size}, mlp={config.mlp_activation}\n"
         f"  Device: {device}  |  dtype: {dtype}  |  compile: {compile_enabled}\n"
         f"  Artifact dir: {artifact_dir.name}\n"
         f"{'=' * 60}"
@@ -113,6 +113,7 @@ REQUIRED_CONFIG_KEYS = {
     "dropout",
     "use_time_conditioning",
     "time_conditioning_hidden",
+    "mlp_activation",
 }
 
 
@@ -159,4 +160,5 @@ def gpt_config_from_artifact_dict(config: dict[str, Any]) -> GPTConfig:
         dropout=float(config["dropout"]),
         use_time_conditioning=bool(config["use_time_conditioning"]),
         time_conditioning_hidden=int(config["time_conditioning_hidden"]),
+        mlp_activation=str(config["mlp_activation"]),
     )

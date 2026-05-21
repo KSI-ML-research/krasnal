@@ -114,6 +114,7 @@ def _main(cfg: DictConfig, dist_info: DistributedInfo) -> None:
             "dropout": mconf.dropout,
             "use_time_conditioning": mconf.use_time_conditioning,
             "time_conditioning_hidden": mconf.time_conditioning_hidden,
+            "mlp_activation": mconf.mlp_activation,
             "epochs": tconf.epochs,
             "batch_size": tconf.batch_size,
             "learning_rate": tconf.learning_rate,

@@ -1,5 +1,8 @@
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Literal
+
+MlpActivation = Literal["gelu", "swiglu", "relu2"]
 
 DATA_DIR = Path("data")
 RAW_UCI_DIR = DATA_DIR / "1_filtered"
@@ -23,6 +26,8 @@ class GPTConfig:
     time_conditioning_hidden: int
     vocab_size: int | None = None
     dropout: float = 0.0
+    # Transformer block FFN: ``gelu`` / ``relu2`` (4*d MLP) or ``swiglu`` (gated, ~matched params).
+    mlp_activation: MlpActivation = "gelu"
 
 
 @dataclass

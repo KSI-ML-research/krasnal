@@ -22,6 +22,7 @@ def test_write_artifact_config_json_roundtrip(tmp_path):
         "dropout": 0.0,
         "use_time_conditioning": False,
         "time_conditioning_hidden": 1,
+        "mlp_activation": "gelu",
         "extra_metadata": True,
     }
     write_artifact_config_json(tmp_path, cfg)

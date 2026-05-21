@@ -22,7 +22,15 @@ from torch.nn import functional as F
 
 if TYPE_CHECKING:
     from krasnal.inference.kv_cache import KVCache
-from krasnal.config import CLOCK_IGNORE_ID, GPTConfig
+from krasnal.config import CLOCK_IGNORE_ID, GPTConfig, MlpActivation
+
+MLP_ACTIVATIONS: frozenset[MlpActivation] = frozenset({"gelu", "swiglu", "relu2"})
+
+
+def _swiglu_hidden_dim(n_embd: int) -> int:
+    """Intermediate width for SwiGLU FFN (~same params as 4*n_embd GELU MLP)."""
+    hidden = int(8 * n_embd / 3)
+    return ((hidden + 7) // 8) * 8
 
 
 class RoPE(nn.Module):
@@ -203,17 +211,35 @@ class MLP(nn.Module):
 
     def __init__(self, config: GPTConfig) -> None:
         super().__init__()
-        self.c_fc = nn.Linear(config.n_embd, 4 * config.n_embd, bias=False)
-        self.gelu = nn.GELU()
-        self.c_proj = nn.Linear(4 * config.n_embd, config.n_embd, bias=False)
+        activation = config.mlp_activation
+        if activation not in MLP_ACTIVATIONS:
+            raise ValueError(
+                f"mlp_activation must be one of {sorted(MLP_ACTIVATIONS)}, got {activation!r}"
+            )
+        self.activation = activation
         self.dropout = nn.Dropout(config.dropout)
 
+        if activation == "swiglu":
+            hidden = _swiglu_hidden_dim(config.n_embd)
+            self.c_gate = nn.Linear(config.n_embd, hidden, bias=False)
+            self.c_up = nn.Linear(config.n_embd, hidden, bias=False)
+            self.c_proj = nn.Linear(hidden, config.n_embd, bias=False)
+        else:
+            hidden = 4 * config.n_embd
+            self.c_fc = nn.Linear(config.n_embd, hidden, bias=False)
+            self.c_proj = nn.Linear(hidden, config.n_embd, bias=False)
+            if activation == "gelu":
+                self.act = nn.GELU()
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        x = self.c_fc(x)
-        x = self.gelu(x)
+        if self.activation == "swiglu":
+            x = F.silu(self.c_gate(x)) * self.c_up(x)
+        elif self.activation == "gelu":
+            x = self.act(self.c_fc(x))
+        else:
+            x = F.relu(self.c_fc(x)).square()
         x = self.c_proj(x)
-        x = self.dropout(x)
-        return x
+        return self.dropout(x)
 
 
 class Block(nn.Module):

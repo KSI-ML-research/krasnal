@@ -6,3 +6,4 @@ n_embd: 384
 dropout: 0.1
 use_time_conditioning: true
 time_conditioning_hidden: 64
+mlp_activation: gelu
