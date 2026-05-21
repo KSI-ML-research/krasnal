@@ -16,6 +16,7 @@ from krasnal.config import (
     EVAL_DATASET_PATH,
     MOVE_VOCAB_PATH,
     PRETRAIN_DATASET_PATH,
+    PRETRAIN_PACKED_DATASET_PATH,
     RAW_UCI_DIR,
 )
 from krasnal.sampling import sample_bool, whats_on_square_index
@@ -29,6 +30,7 @@ from krasnal.tokens import (
     GAME_START_ID,
     IS_CHECK_ID,
     NO_CHECK_ID,
+    PAD_ID,
     SPECIAL_TOKENS,
     TC_TOKENS,
     UNKNOWN_RESULT_ID,
@@ -675,6 +677,91 @@ def one_row_one_game(lazy_df: pl.LazyFrame, block_size: int) -> pl.LazyFrame:
     )
 
 
+PAD_SEGMENT_ID = -1
+
+
+def pack_games_into_windows(games: pl.DataFrame, block_size: int, seed: int) -> pl.DataFrame:
+    """Concatenate games into fixed-length training windows with segment metadata."""
+    window_size = block_size + 1
+    if games.is_empty():
+        return pl.DataFrame(
+            schema={
+                "token_ids": pl.List(pl.Int64),
+                "active_clock_ids": pl.List(pl.Int64),
+                "opponent_clock_ids": pl.List(pl.Int64),
+                "segment_ids": pl.List(pl.Int32),
+                "position_ids": pl.List(pl.Int32),
+            }
+        )
+
+    shuffled = games.sample(fraction=1.0, shuffle=True, seed=seed)
+    buf_tokens: list[int] = []
+    buf_active: list[int] = []
+    buf_opp: list[int] = []
+    buf_segment: list[int] = []
+    buf_position: list[int] = []
+    segment = -1
+    pos_in_segment = 0
+
+    def append_token(tok: int, act: int, opp: int) -> None:
+        nonlocal segment, pos_in_segment
+        if tok == GAME_START_ID:
+            segment += 1
+            pos_in_segment = 0
+        buf_tokens.append(tok)
+        buf_active.append(act)
+        buf_opp.append(opp)
+        buf_segment.append(segment)
+        buf_position.append(pos_in_segment)
+        pos_in_segment += 1
+
+    def emit_window() -> dict[str, list[int]]:
+        nonlocal buf_tokens, buf_active, buf_opp, buf_segment, buf_position
+        chunk_tokens = buf_tokens[:window_size]
+        chunk_active = buf_active[:window_size]
+        chunk_opp = buf_opp[:window_size]
+        chunk_segment = buf_segment[:window_size]
+        chunk_position = buf_position[:window_size]
+        buf_tokens = buf_tokens[window_size:]
+        buf_active = buf_active[window_size:]
+        buf_opp = buf_opp[window_size:]
+        buf_segment = buf_segment[window_size:]
+        buf_position = buf_position[window_size:]
+
+        pad_len = window_size - len(chunk_tokens)
+        if pad_len > 0:
+            chunk_tokens.extend([PAD_ID] * pad_len)
+            chunk_active.extend([CLOCK_IGNORE_ID] * pad_len)
+            chunk_opp.extend([CLOCK_IGNORE_ID] * pad_len)
+            chunk_segment.extend([PAD_SEGMENT_ID] * pad_len)
+            chunk_position.extend([0] * pad_len)
+
+        return {
+            "token_ids": chunk_tokens,
+            "active_clock_ids": chunk_active,
+            "opponent_clock_ids": chunk_opp,
+            "segment_ids": chunk_segment,
+            "position_ids": chunk_position,
+        }
+
+    rows: list[dict[str, list[int]]] = []
+    for row in shuffled.iter_rows(named=True):
+        tokens = [int(x) for x in row["token_ids"]]
+        active = [int(x) for x in row["active_clock_ids"]]
+        opp = [int(x) for x in row["opponent_clock_ids"]]
+        if not (len(tokens) == len(active) == len(opp)):
+            raise ValueError("Clock/token length mismatch while packing games")
+        for tok, act, o in zip(tokens, active, opp, strict=True):
+            append_token(tok, act, o)
+        while len(buf_tokens) >= window_size:
+            rows.append(emit_window())
+
+    if buf_tokens:
+        rows.append(emit_window())
+
+    return pl.DataFrame(rows)
+
+
 def _chunk_paths(paths: list[Path], chunk_size: int) -> list[list[Path]]:
     if chunk_size < 1:
         raise ValueError(f"preprocess_concat_batch_size must be >= 1, got {chunk_size}")
@@ -688,6 +775,7 @@ def _log_preprocess_to_wandb(
     seq_stats: dict[str, float],
     total_games: int,
     train_rows: int,
+    train_packed_rows: int,
     eval_rows: int,
     over_block_size_count: int,
 ) -> None:
@@ -697,6 +785,7 @@ def _log_preprocess_to_wandb(
 
     wandb.summary["dataset/total_games"] = total_games
     wandb.summary["dataset/train_rows"] = train_rows
+    wandb.summary["dataset/train_packed_rows"] = train_packed_rows
     wandb.summary["dataset/eval_rows"] = eval_rows
     wandb.summary["dataset/removed_over_block_size"] = over_block_size_count
     wandb.summary["dataset/removed_over_block_size_pct"] = (
@@ -1048,18 +1137,30 @@ def main(cfg: DictConfig) -> None:
     pl.concat(pl.scan_parquet(p) for p in train_parts).sink_parquet(PRETRAIN_DATASET_PATH)
     pl.concat(pl.scan_parquet(p) for p in eval_parts).sink_parquet(EVAL_DATASET_PATH)
 
+    train_games = pl.read_parquet(PRETRAIN_DATASET_PATH)
+    packed_train = pack_games_into_windows(train_games, block_size=block_size, seed=seed)
+    packed_train.write_parquet(PRETRAIN_PACKED_DATASET_PATH)
+
     shutil.rmtree(temp_dir)
 
     train_rows = pl.scan_parquet(PRETRAIN_DATASET_PATH).select(pl.len()).collect().item()
+    train_packed_rows = (
+        pl.scan_parquet(PRETRAIN_PACKED_DATASET_PATH).select(pl.len()).collect().item()
+    )
     eval_rows = pl.scan_parquet(EVAL_DATASET_PATH).select(pl.len()).collect().item()
     if train_rows == 0:
         raise RuntimeError("Train dataset is empty. Increase input data or reduce block_size.")
+    if train_packed_rows == 0:
+        raise RuntimeError(
+            "Packed train dataset is empty. Increase input data or reduce block_size."
+        )
 
     logger.info(
-        "Successfully processed {} games -> {} (train rows: {}, eval rows: {})",
+        "Processed {} games -> {} (train: {}, packed: {}, eval: {})",
         stats["total"],
         PRETRAIN_DATASET_PATH.parent,
         train_rows,
+        train_packed_rows,
         eval_rows,
     )
 
@@ -1071,6 +1172,7 @@ def main(cfg: DictConfig) -> None:
         seq_stats=stats,
         total_games=stats["total"],
         train_rows=train_rows,
+        train_packed_rows=train_packed_rows,
         eval_rows=eval_rows,
         over_block_size_count=over_block_size_count,
     )

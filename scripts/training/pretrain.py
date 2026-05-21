@@ -13,11 +13,16 @@ from krasnal.config import (
     ARTIFACTS_DIR,
     EVAL_DATASET_PATH,
     MOVE_VOCAB_PATH,
-    PRETRAIN_DATASET_PATH,
+    PRETRAIN_PACKED_DATASET_PATH,
     GPTConfig,
     TrainConfig,
 )
-from krasnal.dataset import ChessDataset, make_collate_fn
+from krasnal.dataset import (
+    ChessDataset,
+    PackedChessDataset,
+    make_collate_fn,
+    make_packed_collate_fn,
+)
 from krasnal.eval import chess_evaluator_from_config
 from krasnal.tokens import get_vocab_size, load_move_vocab
 from krasnal.trainer import (
@@ -63,25 +68,23 @@ def _main(cfg: DictConfig, dist_info: DistributedInfo) -> None:
     )
     set_seed(cfg.seed + dist_info.rank)
 
-    if not PRETRAIN_DATASET_PATH.exists():
+    if not PRETRAIN_PACKED_DATASET_PATH.exists():
         raise FileNotFoundError(
-            f"Pretraining dataset not found at {PRETRAIN_DATASET_PATH}. "
-            "Run scripts/preprocess.py first to generate it."
+            f"Packed pretraining dataset not found at {PRETRAIN_PACKED_DATASET_PATH}. "
+            "Run scripts/data/preprocess.py first to generate it."
         )
 
     model_cfg = OmegaConf.to_container(cfg.model, resolve=True)
     model_cfg.pop("name", None)
     dataloader_num_workers = int(model_cfg.pop("dataloader_num_workers", 0))
     mconf = GPTConfig(vocab_size=get_vocab_size(), **model_cfg)
-    train_dataset = ChessDataset(
-        PRETRAIN_DATASET_PATH,
-        include_elo=cfg.get("include_elo", True),
-    )
-    dataset_mtime = int(PRETRAIN_DATASET_PATH.stat().st_mtime)
+    train_dataset = PackedChessDataset(PRETRAIN_PACKED_DATASET_PATH)
+    dataset_mtime = int(PRETRAIN_PACKED_DATASET_PATH.stat().st_mtime)
     model = build_model(model_config=mconf)
     vocab_size = get_vocab_size()
     tconf = TrainConfig(**OmegaConf.to_container(cfg.train, resolve=True))
-    collate = make_collate_fn(tconf.padding_bucket_sizes)
+    train_collate = make_packed_collate_fn()
+    eval_collate = make_collate_fn()
     if tconf.epochs <= 0:
         raise ValueError("TrainConfig.epochs must be > 0")
     if dist_info.enabled:
@@ -125,6 +128,8 @@ def _main(cfg: DictConfig, dist_info: DistributedInfo) -> None:
             "move_vocab_path": str(MOVE_VOCAB_PATH),
             "dataset_mtime": dataset_mtime,
             "dataset_size": len(train_dataset),
+            "dataset_packed_windows": len(train_dataset),
+            "tokens_per_step": tconf.batch_size * mconf.block_size,
             "optimizer": tconf.optimizer,
             "model_repr": repr(model),
             "world_size": dist_info.world_size,
@@ -142,7 +147,7 @@ def _main(cfg: DictConfig, dist_info: DistributedInfo) -> None:
             stage="Pretrain",
             params_m=params_M,
             dataset_size=len(train_dataset),
-            dataset_label="games",
+            dataset_label="packed windows",
             config=mconf,
             vocab_size=vocab_size,
             device=device,
@@ -185,7 +190,7 @@ def _main(cfg: DictConfig, dist_info: DistributedInfo) -> None:
         num_workers=train_num_workers,
         persistent_workers=train_num_workers > 0,
         prefetch_factor=4 if train_num_workers > 0 else None,
-        collate_fn=collate,
+        collate_fn=train_collate,
     )
 
     steps_per_epoch = len(train_loader)
@@ -196,8 +201,16 @@ def _main(cfg: DictConfig, dist_info: DistributedInfo) -> None:
     tconf.max_iters = total_iters
     tconf.steps_per_epoch = steps_per_epoch
 
+    tokens_per_step = tconf.batch_size * mconf.block_size
+
     def log_fn(_iter_num, last_loss_value, epoch_float):
-        wandb.log({"train_loss": last_loss_value, "epoch": epoch_float})
+        wandb.log(
+            {
+                "train_loss": last_loss_value,
+                "epoch": epoch_float,
+                "tokens_seen": _iter_num * tokens_per_step,
+            }
+        )
 
     eval_dataset = ChessDataset(
         EVAL_DATASET_PATH,
@@ -211,7 +224,7 @@ def _main(cfg: DictConfig, dist_info: DistributedInfo) -> None:
         num_workers=train_num_workers,
         persistent_workers=train_num_workers > 0,
         prefetch_factor=4 if train_num_workers > 0 else None,
-        collate_fn=collate,
+        collate_fn=eval_collate,
     )
 
     evaluator = (

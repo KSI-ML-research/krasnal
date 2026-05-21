@@ -8,6 +8,7 @@ DATA_DIR = Path("data")
 RAW_UCI_DIR = DATA_DIR / "1_filtered"
 ARTIFACTS_DIR = Path("artifacts")
 PRETRAIN_DATASET_PATH = DATA_DIR / "2_tokenized/pretrain.parquet"
+PRETRAIN_PACKED_DATASET_PATH = DATA_DIR / "2_tokenized/pretrain_packed.parquet"
 EVAL_DATASET_PATH = DATA_DIR / "2_tokenized/eval.parquet"
 MOVE_VOCAB_PATH = DATA_DIR / "2_tokenized/move_vocab.json"
 CLOCK_IGNORE_ID = 2**32 - 1
@@ -65,6 +66,5 @@ class TrainConfig:
     # Compilation
     compile: bool = True
     compile_mode: str = "default"  # "default", "reduce-overhead", "max-autotune"
-    compile_dynamic: bool = False  # False since we use explicit padding buckets
+    compile_dynamic: bool = False  # packed train uses fixed block_size sequences
     compile_fullgraph: bool = True  # captures the entire model into a single graph if True
-    padding_bucket_sizes: tuple[int, ...] = ()
