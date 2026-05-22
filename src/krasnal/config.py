@@ -8,7 +8,6 @@ DATA_DIR = Path("data")
 RAW_UCI_DIR = DATA_DIR / "1_filtered"
 ARTIFACTS_DIR = Path("artifacts")
 PRETRAIN_DATASET_PATH = DATA_DIR / "2_tokenized/pretrain.parquet"
-PRETRAIN_PACKED_DATASET_PATH = DATA_DIR / "2_tokenized/pretrain_packed.parquet"
 EVAL_DATASET_PATH = DATA_DIR / "2_tokenized/eval.parquet"
 MOVE_VOCAB_PATH = DATA_DIR / "2_tokenized/move_vocab.json"
 CLOCK_IGNORE_ID = 2**32 - 1

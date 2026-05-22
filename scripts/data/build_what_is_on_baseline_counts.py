@@ -7,8 +7,8 @@ import random
 from pathlib import Path
 
 from krasnal.config import MOVE_VOCAB_PATH, PRETRAIN_DATASET_PATH
-from krasnal.dataset import ChessDataset
-from krasnal.eval.parsers import parse_row_to_game_tokens
+from krasnal.dataset import PretrainDataset
+from krasnal.eval.parsers import parse_row_to_game_tokens, split_packed_window_token_ids
 from krasnal.eval.replayer import replay_games
 from krasnal.eval.what_is_on_baseline import accumulate_from_eval_contexts
 from krasnal.tokens import load_move_vocab
@@ -20,7 +20,7 @@ def parse_args() -> argparse.Namespace:
         "--train-parquet",
         type=Path,
         default=PRETRAIN_DATASET_PATH,
-        help="Training parquet (default: krasnal pretrain path)",
+        help="Packed training parquet (default: krasnal pretrain path)",
     )
     p.add_argument(
         "--output",
@@ -55,26 +55,48 @@ def main() -> None:
     if not args.train_parquet.exists():
         raise FileNotFoundError(args.train_parquet)
 
-    ds = ChessDataset(args.train_parquet, include_elo=not args.no_include_elo)
-    indices = list(range(len(ds)))
+    ds = PretrainDataset(args.train_parquet)
+    window_indices = list(range(len(ds)))
     if args.max_games > 0:
         rng = random.Random(args.seed)
-        rng.shuffle(indices)
-        indices = indices[: args.max_games]
+        rng.shuffle(window_indices)
+        window_indices = window_indices[: max(1, args.max_games // 4)]
 
     all_ctx = []
     block_size = int(args.block_size)
-    for idx in indices:
-        row = ds[idx]
-        game_tokens = parse_row_to_game_tokens(row)
-        if game_tokens is None:
-            continue
-
-        all_ctx.extend(replay_games([game_tokens], block_size))
+    games_seen = 0
+    for idx in window_indices:
+        tokens, active, opponent, _segment, _position = ds[idx]
+        token_list = tokens.tolist()
+        for start, end in _game_spans(token_list):
+            games_seen += 1
+            if args.max_games > 0 and games_seen > args.max_games:
+                break
+            game_row = (
+                tokens[start:end],
+                active[start:end],
+                opponent[start:end],
+            )
+            game_tokens = parse_row_to_game_tokens(game_row)
+            if game_tokens is None:
+                continue
+            all_ctx.extend(replay_games([game_tokens], block_size))
+        if args.max_games > 0 and games_seen > args.max_games:
+            break
 
     stats = accumulate_from_eval_contexts(all_ctx)
     stats.dump(args.output)
-    print(f"Wrote {args.output} from {len(indices)} games ({len(all_ctx)} positions)")
+    print(f"Wrote {args.output} from {games_seen} games ({len(all_ctx)} positions)")
+
+
+def _game_spans(token_list: list[int]) -> list[tuple[int, int]]:
+    spans: list[tuple[int, int]] = []
+    offset = 0
+    for game_tokens in split_packed_window_token_ids(token_list):
+        n = len(game_tokens)
+        spans.append((offset, offset + n))
+        offset += n
+    return spans
 
 
 if __name__ == "__main__":
