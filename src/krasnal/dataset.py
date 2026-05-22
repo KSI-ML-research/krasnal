@@ -88,10 +88,10 @@ class ChessDataset(Dataset[tuple[torch.Tensor, torch.Tensor, torch.Tensor]]):
         return tokens, active_clocks, opponent_clocks
 
 
-class PackedChessDataset(
+class PretrainDataset(
     Dataset[tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]]
 ):
-    """Fixed-length packed training windows with per-token segment and position metadata."""
+    """Packed training windows (fixed length) with segment and position metadata."""
 
     def __init__(self, parquet_path: Path | list[Path]):
         paths = (

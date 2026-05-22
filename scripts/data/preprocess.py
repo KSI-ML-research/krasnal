@@ -1,5 +1,6 @@
 import json
 import multiprocessing
+import random
 import shutil
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
@@ -16,7 +17,6 @@ from krasnal.config import (
     EVAL_DATASET_PATH,
     MOVE_VOCAB_PATH,
     PRETRAIN_DATASET_PATH,
-    PRETRAIN_PACKED_DATASET_PATH,
     RAW_UCI_DIR,
 )
 from krasnal.sampling import sample_bool, whats_on_square_index
@@ -679,87 +679,219 @@ def one_row_one_game(lazy_df: pl.LazyFrame, block_size: int) -> pl.LazyFrame:
 
 PAD_SEGMENT_ID = -1
 
+_GameRow = tuple[list[int], list[int], list[int]]
 
-def pack_games_into_windows(games: pl.DataFrame, block_size: int, seed: int) -> pl.DataFrame:
-    """Concatenate games into fixed-length training windows with segment metadata."""
-    window_size = block_size + 1
-    if games.is_empty():
-        return pl.DataFrame(
-            schema={
-                "token_ids": pl.List(pl.Int64),
-                "active_clock_ids": pl.List(pl.Int64),
-                "opponent_clock_ids": pl.List(pl.Int64),
-                "segment_ids": pl.List(pl.Int32),
-                "position_ids": pl.List(pl.Int32),
-            }
-        )
 
-    shuffled = games.sample(fraction=1.0, shuffle=True, seed=seed)
-    buf_tokens: list[int] = []
-    buf_active: list[int] = []
-    buf_opp: list[int] = []
-    buf_segment: list[int] = []
-    buf_position: list[int] = []
-    segment = -1
-    pos_in_segment = 0
+def _pad_window_row(
+    tokens: list[int],
+    active: list[int],
+    opp: list[int],
+    segments: list[int],
+    positions: list[int],
+    *,
+    window_size: int,
+) -> dict[str, list[int]]:
+    pad_len = window_size - len(tokens)
+    if pad_len > 0:
+        tokens.extend([PAD_ID] * pad_len)
+        active.extend([CLOCK_IGNORE_ID] * pad_len)
+        opp.extend([CLOCK_IGNORE_ID] * pad_len)
+        segments.extend([PAD_SEGMENT_ID] * pad_len)
+        positions.extend([0] * pad_len)
+    return {
+        "token_ids": tokens,
+        "active_clock_ids": active,
+        "opponent_clock_ids": opp,
+        "segment_ids": segments,
+        "position_ids": positions,
+    }
 
-    def append_token(tok: int, act: int, opp: int) -> None:
-        nonlocal segment, pos_in_segment
+
+def _append_game_prefix(
+    game: _GameRow,
+    start: int,
+    *,
+    window_size: int,
+    tokens: list[int],
+    active: list[int],
+    opp: list[int],
+    segments: list[int],
+    positions: list[int],
+    segment: int,
+    pos_in_segment: int,
+) -> tuple[int, int, int]:
+    """Append game tokens from ``start``; return (segment, pos, resume_index) when full."""
+    game_tokens, game_active, game_opp = game
+    for idx in range(start, len(game_tokens)):
+        if len(tokens) >= window_size:
+            return segment, pos_in_segment, idx
+        tok = game_tokens[idx]
         if tok == GAME_START_ID:
             segment += 1
             pos_in_segment = 0
-        buf_tokens.append(tok)
-        buf_active.append(act)
-        buf_opp.append(opp)
-        buf_segment.append(segment)
-        buf_position.append(pos_in_segment)
+        tokens.append(tok)
+        active.append(game_active[idx])
+        opp.append(game_opp[idx])
+        segments.append(segment)
+        positions.append(pos_in_segment)
         pos_in_segment += 1
+    return segment, pos_in_segment, len(game_tokens)
 
-    def emit_window() -> dict[str, list[int]]:
-        nonlocal buf_tokens, buf_active, buf_opp, buf_segment, buf_position
-        chunk_tokens = buf_tokens[:window_size]
-        chunk_active = buf_active[:window_size]
-        chunk_opp = buf_opp[:window_size]
-        chunk_segment = buf_segment[:window_size]
-        chunk_position = buf_position[:window_size]
-        buf_tokens = buf_tokens[window_size:]
-        buf_active = buf_active[window_size:]
-        buf_opp = buf_opp[window_size:]
-        buf_segment = buf_segment[window_size:]
-        buf_position = buf_position[window_size:]
 
-        pad_len = window_size - len(chunk_tokens)
-        if pad_len > 0:
-            chunk_tokens.extend([PAD_ID] * pad_len)
-            chunk_active.extend([CLOCK_IGNORE_ID] * pad_len)
-            chunk_opp.extend([CLOCK_IGNORE_ID] * pad_len)
-            chunk_segment.extend([PAD_SEGMENT_ID] * pad_len)
-            chunk_position.extend([0] * pad_len)
+_PACKED_SCHEMA = {
+    "token_ids": pl.List(pl.Int64),
+    "active_clock_ids": pl.List(pl.Int64),
+    "opponent_clock_ids": pl.List(pl.Int64),
+    "segment_ids": pl.List(pl.Int32),
+    "position_ids": pl.List(pl.Int32),
+}
 
-        return {
-            "token_ids": chunk_tokens,
-            "active_clock_ids": chunk_active,
-            "opponent_clock_ids": chunk_opp,
-            "segment_ids": chunk_segment,
-            "position_ids": chunk_position,
-        }
 
-    rows: list[dict[str, list[int]]] = []
-    for row in shuffled.iter_rows(named=True):
+class PackedWindowBuilder:
+    """Memory-bounded packer: feeds games incrementally and spills windows to parquet parts."""
+
+    def __init__(self, block_size: int, *, flush_every: int = 8_000) -> None:
+        self.window_size = block_size + 1
+        self.flush_every = max(1, flush_every)
+        self.pending: _GameRow | None = None
+        self._games: list[_GameRow] = []
+        self.row_buffer: list[dict[str, list[int]]] = []
+        self.part_paths: list[Path] = []
+
+    @staticmethod
+    def _parse_game_row(row: dict[str, object]) -> _GameRow:
         tokens = [int(x) for x in row["token_ids"]]
         active = [int(x) for x in row["active_clock_ids"]]
         opp = [int(x) for x in row["opponent_clock_ids"]]
         if not (len(tokens) == len(active) == len(opp)):
             raise ValueError("Clock/token length mismatch while packing games")
-        for tok, act, o in zip(tokens, active, opp, strict=True):
-            append_token(tok, act, o)
-        while len(buf_tokens) >= window_size:
-            rows.append(emit_window())
+        return tokens, active, opp
 
-    if buf_tokens:
-        rows.append(emit_window())
+    def feed_game(self, game: _GameRow) -> None:
+        if len(game[0]) > self.window_size:
+            raise ValueError(
+                f"Game length {len(game[0])} exceeds packed window size {self.window_size}; "
+                "filter games before packing"
+            )
+        self._games.append(game)
+        while self._emit_one_window():
+            pass
 
-    return pl.DataFrame(rows)
+    def feed_dataframe(self, games: pl.DataFrame, shuffle_seed: int) -> None:
+        """Queue all games from a frame, then call ``drain()`` (used in tests)."""
+        if games.is_empty():
+            return
+        shuffled = games.sample(fraction=1.0, shuffle=True, seed=shuffle_seed)
+        for row in shuffled.iter_rows(named=True):
+            game = self._parse_game_row(row)
+            if len(game[0]) > self.window_size:
+                raise ValueError(
+                    f"Game length {len(game[0])} exceeds packed window size {self.window_size}; "
+                    "filter games before packing"
+                )
+            self._games.append(game)
+
+    def drain(self) -> None:
+        while self._emit_one_window():
+            pass
+
+    def _emit_one_window(self) -> bool:
+        if self.pending is None and not self._games:
+            return False
+
+        tokens: list[int] = []
+        active: list[int] = []
+        opp: list[int] = []
+        segments: list[int] = []
+        positions: list[int] = []
+        segment = -1
+        pos_in_segment = 0
+
+        if self.pending is not None:
+            segment, pos_in_segment, resume = _append_game_prefix(
+                self.pending,
+                0,
+                window_size=self.window_size,
+                tokens=tokens,
+                active=active,
+                opp=opp,
+                segments=segments,
+                positions=positions,
+                segment=segment,
+                pos_in_segment=pos_in_segment,
+            )
+            self.pending = self.pending if resume < len(self.pending[0]) else None
+
+        while self.pending is None and self._games and len(tokens) < self.window_size:
+            game = self._games.pop(0)
+            segment, pos_in_segment, resume = _append_game_prefix(
+                game,
+                0,
+                window_size=self.window_size,
+                tokens=tokens,
+                active=active,
+                opp=opp,
+                segments=segments,
+                positions=positions,
+                segment=segment,
+                pos_in_segment=pos_in_segment,
+            )
+            if resume < len(game[0]):
+                self.pending = game
+
+        self.row_buffer.append(
+            _pad_window_row(
+                tokens,
+                active,
+                opp,
+                segments,
+                positions,
+                window_size=self.window_size,
+            )
+        )
+        return True
+
+    def maybe_flush(self, part_dir: Path) -> None:
+        if len(self.row_buffer) < self.flush_every:
+            return
+        part_dir.mkdir(parents=True, exist_ok=True)
+        path = part_dir / f"part_{len(self.part_paths):04d}.parquet"
+        pl.DataFrame(self.row_buffer).write_parquet(path)
+        self.part_paths.append(path)
+        self.row_buffer.clear()
+
+    def finish(self, output_path: Path, *, part_dir: Path | None = None) -> None:
+        self.drain()
+        if part_dir is not None:
+            part_dir.mkdir(parents=True, exist_ok=True)
+            if self.row_buffer:
+                path = part_dir / f"part_{len(self.part_paths):04d}.parquet"
+                pl.DataFrame(self.row_buffer).write_parquet(path)
+                self.part_paths.append(path)
+                self.row_buffer.clear()
+
+        if self.part_paths:
+            pl.concat(pl.scan_parquet(p) for p in self.part_paths).sink_parquet(output_path)
+            return
+
+        if self.row_buffer:
+            pl.DataFrame(self.row_buffer).write_parquet(output_path)
+            return
+
+        pl.DataFrame(schema=_PACKED_SCHEMA).write_parquet(output_path)
+
+
+def pack_games_into_windows(games: pl.DataFrame, block_size: int, seed: int) -> pl.DataFrame:
+    """Pack games into fixed windows; split games restart from ``<game_start>`` in the next row."""
+    if games.is_empty():
+        return pl.DataFrame(schema=_PACKED_SCHEMA)
+
+    builder = PackedWindowBuilder(block_size, flush_every=len(games) + 1)
+    builder.feed_dataframe(games, shuffle_seed=seed)
+    builder.drain()
+    if not builder.row_buffer:
+        return pl.DataFrame(schema=_PACKED_SCHEMA)
+    return pl.DataFrame(builder.row_buffer)
 
 
 def _chunk_paths(paths: list[Path], chunk_size: int) -> list[list[Path]]:
@@ -774,8 +906,7 @@ def _log_preprocess_to_wandb(
     token_mix: dict[str, float],
     seq_stats: dict[str, float],
     total_games: int,
-    train_rows: int,
-    train_packed_rows: int,
+    train_window_rows: int,
     eval_rows: int,
     over_block_size_count: int,
 ) -> None:
@@ -784,8 +915,7 @@ def _log_preprocess_to_wandb(
     wandb.init(project=project, job_type="preprocess", tags=["preprocess"])
 
     wandb.summary["dataset/total_games"] = total_games
-    wandb.summary["dataset/train_rows"] = train_rows
-    wandb.summary["dataset/train_packed_rows"] = train_packed_rows
+    wandb.summary["dataset/train_window_rows"] = train_window_rows
     wandb.summary["dataset/eval_rows"] = eval_rows
     wandb.summary["dataset/removed_over_block_size"] = over_block_size_count
     wandb.summary["dataset/removed_over_block_size_pct"] = (
@@ -1002,43 +1132,59 @@ def main(cfg: DictConfig) -> None:
         raise RuntimeError("No data generated")
 
     concat_batch_size = max(1, int(cfg.get("preprocess_concat_batch_size", 10)))
-    train_batches_dir = temp_dir / "train_batches"
     eval_batches_dir = temp_dir / "eval_batches"
-    shutil.rmtree(train_batches_dir, ignore_errors=True)
+    packed_batches_dir = temp_dir / "packed_batches"
     shutil.rmtree(eval_batches_dir, ignore_errors=True)
-    train_batches_dir.mkdir(parents=True)
+    shutil.rmtree(packed_batches_dir, ignore_errors=True)
     eval_batches_dir.mkdir(parents=True)
+
+    pack_flush_windows = max(1, int(cfg.get("pack_flush_windows", 8_000)))
+    packed_builder = PackedWindowBuilder(block_size, flush_every=pack_flush_windows)
 
     max_tokens = block_size
     len_chunks: list[pl.DataFrame] = []
     mix_raw: tuple[int, ...] | None = None
 
-    for batch_idx, batch_paths in enumerate(_chunk_paths(all_parts, concat_batch_size)):
-        shard_lf = pl.concat(pl.scan_parquet(p) for p in batch_paths)
-        len_chunks.append(shard_lf.select(pl.col("token_ids").list.len().alias("len")).collect())
-        filtered_lf = shard_lf.filter(pl.col("token_ids").list.len() <= max_tokens)
-        mix_raw = _merge_token_mix_raw(
-            mix_raw,
-            _token_mix_raw_sums(filtered_lf.select("token_ids")),
-        )
-        train_lf = one_row_one_game(
-            filtered_lf.filter(pl.col("split_bucket") != 0).select(
-                "token_ids",
-                "active_clock_ids",
-                "opponent_clock_ids",
-            ),
-            block_size=block_size,
-        )
-        eval_lf = one_row_one_game(
-            filtered_lf.filter(pl.col("split_bucket") == 0).select(
-                "token_ids",
-                "active_clock_ids",
-                "opponent_clock_ids",
-            ),
-            block_size=block_size,
-        )
-        train_lf.sink_parquet(train_batches_dir / f"{batch_idx:04d}.parquet")
-        eval_lf.sink_parquet(eval_batches_dir / f"{batch_idx:04d}.parquet")
+    batch_jobs = list(enumerate(_chunk_paths(all_parts, concat_batch_size)))
+    random.Random(seed).shuffle(batch_jobs)
+
+    for _batch_idx, batch_paths in batch_jobs:
+        for part_path in batch_paths:
+            part_lf = pl.scan_parquet(part_path)
+            len_chunks.append(
+                part_lf.select(pl.col("token_ids").list.len().alias("len"))
+                .filter(pl.col("len") <= max_tokens)
+                .collect()
+            )
+            filtered_lf = part_lf.filter(pl.col("token_ids").list.len() <= max_tokens)
+            mix_raw = _merge_token_mix_raw(
+                mix_raw,
+                _token_mix_raw_sums(filtered_lf.select("token_ids")),
+            )
+            train_lf = one_row_one_game(
+                filtered_lf.filter(pl.col("split_bucket") != 0).select(
+                    "token_ids",
+                    "active_clock_ids",
+                    "opponent_clock_ids",
+                ),
+                block_size=block_size,
+            )
+            eval_lf = one_row_one_game(
+                filtered_lf.filter(pl.col("split_bucket") == 0).select(
+                    "token_ids",
+                    "active_clock_ids",
+                    "opponent_clock_ids",
+                ),
+                block_size=block_size,
+            )
+            eval_lf.sink_parquet(eval_batches_dir / f"{part_path.stem}.parquet")
+            train_df = train_lf.collect()
+            for row in train_df.iter_rows(named=True):
+                packed_builder.feed_game(PackedWindowBuilder._parse_game_row(row))
+            packed_builder.maybe_flush(packed_batches_dir)
+
+        packed_builder.drain()
+        packed_builder.maybe_flush(packed_batches_dir)
 
     seq_lens = pl.concat(len_chunks, how="vertical")
     stats = _seq_len_stats_from_lf(seq_lens.lazy(), block_size)
@@ -1132,35 +1278,23 @@ def main(cfg: DictConfig) -> None:
         json.dump(token_mix, f, indent=2, sort_keys=True)
         f.write("\n")
 
-    train_parts = sorted(train_batches_dir.glob("*.parquet"))
     eval_parts = sorted(eval_batches_dir.glob("*.parquet"))
-    pl.concat(pl.scan_parquet(p) for p in train_parts).sink_parquet(PRETRAIN_DATASET_PATH)
     pl.concat(pl.scan_parquet(p) for p in eval_parts).sink_parquet(EVAL_DATASET_PATH)
-
-    train_games = pl.read_parquet(PRETRAIN_DATASET_PATH)
-    packed_train = pack_games_into_windows(train_games, block_size=block_size, seed=seed)
-    packed_train.write_parquet(PRETRAIN_PACKED_DATASET_PATH)
+    PRETRAIN_DATASET_PATH.parent.mkdir(parents=True, exist_ok=True)
+    packed_builder.finish(PRETRAIN_DATASET_PATH, part_dir=packed_batches_dir)
 
     shutil.rmtree(temp_dir)
 
-    train_rows = pl.scan_parquet(PRETRAIN_DATASET_PATH).select(pl.len()).collect().item()
-    train_packed_rows = (
-        pl.scan_parquet(PRETRAIN_PACKED_DATASET_PATH).select(pl.len()).collect().item()
-    )
+    train_window_rows = pl.scan_parquet(PRETRAIN_DATASET_PATH).select(pl.len()).collect().item()
     eval_rows = pl.scan_parquet(EVAL_DATASET_PATH).select(pl.len()).collect().item()
-    if train_rows == 0:
+    if train_window_rows == 0:
         raise RuntimeError("Train dataset is empty. Increase input data or reduce block_size.")
-    if train_packed_rows == 0:
-        raise RuntimeError(
-            "Packed train dataset is empty. Increase input data or reduce block_size."
-        )
 
     logger.info(
-        "Processed {} games -> {} (train: {}, packed: {}, eval: {})",
+        "Processed {} games -> {} (train windows: {}, eval games: {})",
         stats["total"],
         PRETRAIN_DATASET_PATH.parent,
-        train_rows,
-        train_packed_rows,
+        train_window_rows,
         eval_rows,
     )
 
@@ -1171,8 +1305,7 @@ def main(cfg: DictConfig) -> None:
         token_mix=token_mix,
         seq_stats=stats,
         total_games=stats["total"],
-        train_rows=train_rows,
-        train_packed_rows=train_packed_rows,
+        train_window_rows=train_window_rows,
         eval_rows=eval_rows,
         over_block_size_count=over_block_size_count,
     )

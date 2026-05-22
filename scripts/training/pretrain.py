@@ -13,16 +13,11 @@ from krasnal.config import (
     ARTIFACTS_DIR,
     EVAL_DATASET_PATH,
     MOVE_VOCAB_PATH,
-    PRETRAIN_PACKED_DATASET_PATH,
+    PRETRAIN_DATASET_PATH,
     GPTConfig,
     TrainConfig,
 )
-from krasnal.dataset import (
-    ChessDataset,
-    PackedChessDataset,
-    make_collate_fn,
-    make_packed_collate_fn,
-)
+from krasnal.dataset import ChessDataset, PretrainDataset, make_collate_fn, make_packed_collate_fn
 from krasnal.eval import chess_evaluator_from_config
 from krasnal.tokens import get_vocab_size, load_move_vocab
 from krasnal.trainer import (
@@ -68,9 +63,9 @@ def _main(cfg: DictConfig, dist_info: DistributedInfo) -> None:
     )
     set_seed(cfg.seed + dist_info.rank)
 
-    if not PRETRAIN_PACKED_DATASET_PATH.exists():
+    if not PRETRAIN_DATASET_PATH.exists():
         raise FileNotFoundError(
-            f"Packed pretraining dataset not found at {PRETRAIN_PACKED_DATASET_PATH}. "
+            f"Pretraining dataset not found at {PRETRAIN_DATASET_PATH}. "
             "Run scripts/data/preprocess.py first to generate it."
         )
 
@@ -78,8 +73,8 @@ def _main(cfg: DictConfig, dist_info: DistributedInfo) -> None:
     model_cfg.pop("name", None)
     dataloader_num_workers = int(model_cfg.pop("dataloader_num_workers", 0))
     mconf = GPTConfig(vocab_size=get_vocab_size(), **model_cfg)
-    train_dataset = PackedChessDataset(PRETRAIN_PACKED_DATASET_PATH)
-    dataset_mtime = int(PRETRAIN_PACKED_DATASET_PATH.stat().st_mtime)
+    train_dataset = PretrainDataset(PRETRAIN_DATASET_PATH)
+    dataset_mtime = int(PRETRAIN_DATASET_PATH.stat().st_mtime)
     model = build_model(model_config=mconf)
     vocab_size = get_vocab_size()
     tconf = TrainConfig(**OmegaConf.to_container(cfg.train, resolve=True))
@@ -128,7 +123,7 @@ def _main(cfg: DictConfig, dist_info: DistributedInfo) -> None:
             "move_vocab_path": str(MOVE_VOCAB_PATH),
             "dataset_mtime": dataset_mtime,
             "dataset_size": len(train_dataset),
-            "dataset_packed_windows": len(train_dataset),
+            "train_window_rows": len(train_dataset),
             "tokens_per_step": tconf.batch_size * mconf.block_size,
             "optimizer": tconf.optimizer,
             "model_repr": repr(model),

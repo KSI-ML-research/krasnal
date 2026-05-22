@@ -17,5 +17,7 @@ time_control:
   enabled: true
 
 preprocess_workers: 4
-# Merge this many part_*.parquet shards at a time when writing train/eval (avoids high RAM use).
+# How many tokenized part_*.parquet shards to group per shuffle batch (pack one shard at a time).
 preprocess_concat_batch_size: 10
+# Spill packed training windows to disk every N rows while preprocessing (bounds RAM).
+pack_flush_windows: 8000

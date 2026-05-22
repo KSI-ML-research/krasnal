@@ -20,6 +20,41 @@ pack_games_into_windows = _MODULE.pack_games_into_windows
 PAD_SEGMENT_ID = _MODULE.PAD_SEGMENT_ID
 
 
+def test_pack_restarts_split_game_from_start_in_next_window():
+    block_size = 8
+    window_size = block_size + 1
+    games = pl.DataFrame(
+        {
+            "token_ids": [
+                [GAME_START_ID, WHITE_WON_ID, 100, GAME_END_ID],
+                [GAME_START_ID, WHITE_WON_ID, 200, 201, 202, 203, 204, GAME_END_ID],
+            ],
+            "active_clock_ids": [
+                [CLOCK_IGNORE_ID] * 4,
+                [CLOCK_IGNORE_ID] * 8,
+            ],
+            "opponent_clock_ids": [
+                [CLOCK_IGNORE_ID] * 4,
+                [CLOCK_IGNORE_ID] * 8,
+            ],
+        }
+    )
+
+    packed = pack_games_into_windows(games, block_size=block_size, seed=0)
+    assert len(packed) == 2
+
+    row0 = packed.row(0, named=True)
+    row1 = packed.row(1, named=True)
+    assert len(row0["token_ids"]) == window_size
+    assert len(row1["token_ids"]) == window_size
+
+    # Window 1 ends with a prefix of game B; window 2 restarts game B from <game_start>.
+    assert row0["token_ids"][0] == GAME_START_ID
+    assert row1["token_ids"][0] == GAME_START_ID
+    assert row1["position_ids"][0] == 0
+    assert row1["token_ids"][-1] == PAD_ID
+
+
 def test_pack_games_emits_fixed_window_size_and_segment_ids():
     block_size = 8
     games = pl.DataFrame(
@@ -55,7 +90,6 @@ def test_pack_games_emits_fixed_window_size_and_segment_ids():
     ]
     assert len(non_pad) == 9
     assert {seg for _, seg, _ in non_pad} == {0, 1}
-    assert [tok for tok, _, _ in non_pad].count(GAME_START_ID) == 2
     for tok, _seg, pos in non_pad:
         if tok == GAME_START_ID:
             assert pos == 0
