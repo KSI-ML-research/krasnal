@@ -9,6 +9,7 @@ from typing import Any, Final
 import bulletchess
 
 from krasnal.config import MOVE_VOCAB_PATH
+from krasnal.sampling import whats_on_square_index
 
 GAME_START_ID = 0
 GAME_END_ID = 1
@@ -583,6 +584,44 @@ def uci_to_token_id(
     mover_piece_type: object | None = None,
 ) -> int | None:
     return move_token_id_for_turn(uci, turn, mover_piece_type)
+
+
+def square_index_to_str(sq_idx: int) -> str:
+    file_char = chr(97 + (sq_idx % 8))
+    rank_char = str(1 + (sq_idx // 8))
+    return f"{file_char}{rank_char}"
+
+
+def whats_on_prompt_token_id(sq_str: str) -> int:
+    return WHATS_ON_SQUARE[f"<whats_on_{sq_str}>"]
+
+
+def whats_on_answer_token_id(board: bulletchess.Board, sq_str: str) -> int:
+    piece = board[bulletchess.Square.from_str(sq_str)]
+    if piece is None:
+        return EMPTY_ID
+    color_str = "w" if str(piece.color) == "White" else "b"
+    piece_str = str(piece.piece_type).lower()
+    return COLORED_PIECE_TOKENS[f"<{color_str}:{piece_str}>"]
+
+
+def whats_on_probe_labels(
+    board: bulletchess.Board,
+    *,
+    post_move_fen: str,
+    game_key: str,
+    ply: int,
+    seed: int,
+) -> tuple[str, int, int]:
+    """Square name plus prompt/answer token ids for a whats_on probe."""
+    sq_idx = whats_on_square_index(
+        post_move_fen=post_move_fen,
+        game_key=game_key,
+        ply=ply,
+        seed=seed,
+    )
+    sq_str = square_index_to_str(sq_idx)
+    return sq_str, whats_on_prompt_token_id(sq_str), whats_on_answer_token_id(board, sq_str)
 
 
 def _piece_type_for_board_move(board: bulletchess.Board, move: bulletchess.Move) -> str:

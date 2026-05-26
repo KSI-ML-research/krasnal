@@ -26,8 +26,15 @@ def replay_game_tokens(game_tokens: GameTokens) -> list[EvalContext]:
     contexts: list[EvalContext] = []
     board = bulletchess.Board()
     context = game_tokens.initial_context.copy()
-    clock_active = [CLOCK_IGNORE_ID] * len(context)
-    clock_opponent = [CLOCK_IGNORE_ID] * len(context)
+    if (
+        game_tokens.prefix_active_seconds is not None
+        and game_tokens.prefix_opponent_seconds is not None
+    ):
+        pa, po = game_tokens.prefix_active_seconds, game_tokens.prefix_opponent_seconds
+    else:
+        pa, po = CLOCK_IGNORE_ID, CLOCK_IGNORE_ID
+    clock_active = [pa] * len(context)
+    clock_opponent = [po] * len(context)
 
     for move_idx, move_token in enumerate(game_tokens.move_tokens):
         legal_ids = legal_token_ids(board)
@@ -70,7 +77,6 @@ def replay_game_tokens(game_tokens: GameTokens) -> list[EvalContext]:
                 gives_check=gives_check,
                 fen=fen,
                 post_move_fen=post_move_fen,
-                top1_fen=None,
                 what_is_on_game_key=what_is_on_game_key,
                 what_is_on_ply=move_idx,
                 active_clock_seconds=_clock_for_metric(game_tokens.move_active_seconds, move_idx),

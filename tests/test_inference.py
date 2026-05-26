@@ -1,3 +1,4 @@
+import pytest
 import torch
 
 from krasnal.config import CLOCK_IGNORE_ID, GPTConfig
@@ -140,7 +141,7 @@ def test_model_time_conditioning_forward_accepts_clock_tensors():
 
 
 def test_time_conditioning_prefix_sync_preserves_tail():
-    active, opponent, go_active, go_opponent = new_clock_tracks(6, enabled=True)
+    active, opponent, go_active, go_opponent = new_clock_tracks(6, enabled=True, initial_seconds=99)
     active[4] = 41
     opponent[4] = 52
 
@@ -149,12 +150,13 @@ def test_time_conditioning_prefix_sync_preserves_tail():
         opponent,
         prefix_len=4,
         total_len=6,
+        prefix_clock_seconds=99,
     )
 
-    assert synced_active[:4] == [CLOCK_IGNORE_ID] * 4
-    assert synced_opponent[:4] == [CLOCK_IGNORE_ID] * 4
-    assert synced_active[4:] == [41, CLOCK_IGNORE_ID]
-    assert synced_opponent[4:] == [52, CLOCK_IGNORE_ID]
+    assert synced_active[:4] == [99] * 4
+    assert synced_opponent[:4] == [99] * 4
+    assert synced_active[4:] == [41, 99]
+    assert synced_opponent[4:] == [52, 99]
     assert go_active == CLOCK_IGNORE_ID
     assert go_opponent == CLOCK_IGNORE_ID
 
@@ -186,12 +188,39 @@ def test_prepare_go_clocks_clears_kv_cache():
         time_conditioning_hidden=32,
     )
     model = GPT(config).to(device).eval()
-    session = InferenceSession(model, device, outcome_token=WHITE_WON_ID)
-    session.feed_uci("e2e4")
+    session = InferenceSession(
+        model,
+        device,
+        outcome_token=WHITE_WON_ID,
+        clock_initial_seconds=180,
+    )
+    session.feed_uci("e2e4", clock_active=180, clock_opponent=180)
     session.get_raw_logits()
     assert session.kv_cache is not None
     session.prepare_go_clocks(GoParams(wtime_ms=60_000, btime_ms=60_000))
     assert session.kv_cache is None
+
+
+def test_prepare_go_clocks_requires_wtime_and_btime():
+    device = torch.device("cpu")
+    config = GPTConfig(
+        block_size=128,
+        vocab_size=get_vocab_size(),
+        n_layer=2,
+        n_head=2,
+        n_embd=64,
+        use_time_conditioning=True,
+        time_conditioning_hidden=32,
+    )
+    model = GPT(config).to(device).eval()
+    session = InferenceSession(
+        model,
+        device,
+        outcome_token=WHITE_WON_ID,
+        clock_initial_seconds=180,
+    )
+    with pytest.raises(ValueError, match="wtime and btime"):
+        session.prepare_go_clocks(GoParams())
 
 
 def _build_test_model(device: torch.device) -> GPT:

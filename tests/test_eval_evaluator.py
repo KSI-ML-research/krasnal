@@ -2,6 +2,7 @@ from types import SimpleNamespace
 
 from krasnal.eval.evaluator import ChessEvaluator
 from krasnal.eval.metrics import EvalContext
+from krasnal.eval.qa_probes import build_what_is_on_heatmap, compute_binary_f1_metrics
 from krasnal.tokens import (
     GAME_END_ID,
     GAME_START_ID,
@@ -11,7 +12,7 @@ from krasnal.tokens import (
 
 
 def test_compute_binary_f1_metrics_returns_expected_values():
-    result = ChessEvaluator._compute_binary_f1_metrics(tp=3, fp=1, fn=2)
+    result = compute_binary_f1_metrics(tp=3, fp=1, fn=2)
 
     assert result["qa/is_check/precision"] == 0.75
     assert result["qa/is_check/recall"] == 0.6
@@ -21,7 +22,7 @@ def test_compute_binary_f1_metrics_returns_expected_values():
 def test_build_what_is_on_heatmap_uses_all_squares():
     square_accs = {f"{file}{rank}": float(rank) for rank in range(1, 9) for file in "abcdefgh"}
 
-    heatmap = ChessEvaluator._build_what_is_on_heatmap(square_accs)
+    heatmap = build_what_is_on_heatmap(square_accs)
 
     assert heatmap is not None
 

@@ -1,10 +1,19 @@
 import json
-from importlib import util
-from pathlib import Path
 
 import polars as pl
 import pytest
 
+import krasnal.preprocess.tokenize as tokenize_module
+from krasnal.preprocess import (
+    InvalidClockDataError,
+    PreprocessConfig,
+    build_move_vocab_from_corpus,
+)
+from krasnal.preprocess.stats import compute_token_mix_stats
+from krasnal.preprocess.tokenize import (
+    _build_game_tokens,
+    _compute_check_qa_probs,
+)
 from krasnal.tokens import (
     ELO_1500_1599_ID,
     GAME_END_ID,
@@ -14,18 +23,6 @@ from krasnal.tokens import (
     TC_TOKENS,
     WHITE_WON_ID,
 )
-
-_MODULE_PATH = Path(__file__).resolve().parents[1] / "scripts" / "data" / "preprocess.py"
-_SPEC = util.spec_from_file_location("preprocess_module", _MODULE_PATH)
-assert _SPEC is not None
-assert _SPEC.loader is not None
-_MODULE = util.module_from_spec(_SPEC)
-_SPEC.loader.exec_module(_MODULE)
-
-_compute_check_qa_probs = _MODULE._compute_check_qa_probs
-build_move_vocab_from_corpus = _MODULE.build_move_vocab_from_corpus
-_build_game_tokens = _MODULE._build_game_tokens
-compute_token_mix_stats = _MODULE.compute_token_mix_stats
 
 
 def test_compute_check_qa_probs_balances_yes_no_average():
@@ -89,8 +86,15 @@ def test_build_move_vocab_from_corpus_fails_on_malformed_piece_moved(tmp_path):
 
 
 def test_build_game_tokens_adds_time_control_after_game_start(monkeypatch):
-    monkeypatch.setattr(_MODULE, "move_token_id_for_ply", lambda *_args: 500)
+    monkeypatch.setattr(tokenize_module, "move_token_id_for_ply", lambda *_args: 500)
 
+    cfg = PreprocessConfig(
+        seed=1,
+        block_size=1024,
+        time_control_enabled=True,
+        include_check_qa=False,
+        check_qa_prob=0.0,
+    )
     tokens, active_clocks, opponent_clocks = _build_game_tokens(
         uci_moves="e2e4",
         is_check=[False],
@@ -100,10 +104,7 @@ def test_build_game_tokens_adds_time_control_after_game_start(monkeypatch):
         black_rating=1500,
         time_initial=180,
         time_increment=2,
-        time_control_enabled=True,
-        include_check_qa=False,
-        check_qa_prob=0.0,
-        seed=1,
+        cfg=cfg,
         p_no=0.0,
         clocks_white=[170],
         clocks_black=[],
@@ -118,13 +119,22 @@ def test_build_game_tokens_adds_time_control_after_game_start(monkeypatch):
         500,
         GAME_END_ID,
     ]
+    assert active_clocks[0] == 180
+    assert opponent_clocks[0] == 180
     assert active_clocks[-2] == 170
     assert opponent_clocks[-2] == 180
 
 
 def test_build_game_tokens_skips_time_control_when_disabled(monkeypatch):
-    monkeypatch.setattr(_MODULE, "move_token_id_for_ply", lambda *_args: 500)
+    monkeypatch.setattr(tokenize_module, "move_token_id_for_ply", lambda *_args: 500)
 
+    cfg = PreprocessConfig(
+        seed=1,
+        block_size=1024,
+        time_control_enabled=False,
+        include_check_qa=False,
+        check_qa_prob=0.0,
+    )
     tokens, active_clocks, opponent_clocks = _build_game_tokens(
         uci_moves="e2e4",
         is_check=[False],
@@ -134,10 +144,7 @@ def test_build_game_tokens_skips_time_control_when_disabled(monkeypatch):
         black_rating=1500,
         time_initial=180,
         time_increment=2,
-        time_control_enabled=False,
-        include_check_qa=False,
-        check_qa_prob=0.0,
-        seed=1,
+        cfg=cfg,
         p_no=0.0,
         clocks_white=[170],
         clocks_black=[],
@@ -151,8 +158,63 @@ def test_build_game_tokens_skips_time_control_when_disabled(monkeypatch):
         500,
         GAME_END_ID,
     ]
+    assert active_clocks[0] == 180
     assert active_clocks[-2] == 170
     assert opponent_clocks[-2] == 180
+
+
+def test_build_game_tokens_raises_on_missing_clocks(monkeypatch):
+    monkeypatch.setattr(tokenize_module, "move_token_id_for_ply", lambda *_args: 500)
+
+    cfg = PreprocessConfig(
+        seed=1,
+        block_size=1024,
+        time_control_enabled=True,
+        include_check_qa=False,
+        check_qa_prob=0.0,
+    )
+    with pytest.raises(InvalidClockDataError, match="missing"):
+        _build_game_tokens(
+            uci_moves="e2e4",
+            is_check=[False],
+            piece_moved=["p"],
+            result="1-0",
+            white_rating=1500,
+            black_rating=1500,
+            time_initial=180,
+            time_increment=0,
+            cfg=cfg,
+            p_no=0.0,
+            clocks_white=None,
+            clocks_black=None,
+        )
+
+
+def test_build_game_tokens_raises_on_mismatched_clock_lengths(monkeypatch):
+    monkeypatch.setattr(tokenize_module, "move_token_id_for_ply", lambda *_args: 500)
+
+    cfg = PreprocessConfig(
+        seed=1,
+        block_size=1024,
+        time_control_enabled=True,
+        include_check_qa=False,
+        check_qa_prob=0.0,
+    )
+    with pytest.raises(InvalidClockDataError, match="clock lengths"):
+        _build_game_tokens(
+            uci_moves="e2e4 e7e5 g1f3",
+            is_check=[False, False, False],
+            piece_moved=["p", "p", "n"],
+            result="1-0",
+            white_rating=1500,
+            black_rating=1500,
+            time_initial=180,
+            time_increment=0,
+            cfg=cfg,
+            p_no=0.0,
+            clocks_white=[170],
+            clocks_black=[165],
+        )
 
 
 def test_token_mix_stats_counts_time_control_buckets():
