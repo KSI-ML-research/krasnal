@@ -16,7 +16,7 @@ qa:
 time_control:
   enabled: true
 
-preprocess_workers: 4
+preprocess_workers: 2
 # How many tokenized part_*.parquet shards to group per shuffle batch (pack one shard at a time).
 preprocess_concat_batch_size: 10
 # Spill packed training windows to disk every N rows while preprocessing (bounds RAM).
