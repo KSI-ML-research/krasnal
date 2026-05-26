@@ -1,7 +1,7 @@
 defaults:
   - base
 
-batch_size: 128
+num_workers: 12
 pin_memory: true
 compile: true
 compile_fullgraph: true

@@ -26,19 +26,23 @@ if [ -z "$SLURM_JOB_ID" ]; then
     # Set parameters dynamically based on model size
     if [ "$MODEL" = "small" ]; then
         TIME_LIMIT="6:00:00"
-        BATCH_SIZE=64
+        BATCH_SIZE=192
+        NUM_WORKERS=12
     elif [ "$MODEL" = "medium" ]; then
         TIME_LIMIT="12:00:00"
-        BATCH_SIZE=32
+        BATCH_SIZE=128
+        NUM_WORKERS=10
     else
         TIME_LIMIT="24:00:00"
         BATCH_SIZE=32
+        NUM_WORKERS=8
     fi
 
     echo "Submitting Slurm pretraining job..."
     echo "  - Model: $MODEL"
     echo "  - Epochs: $EPOCHS"
     echo "  - Batch Size: $BATCH_SIZE"
+    echo "  - Num Workers: $NUM_WORKERS"
     echo "  - Time Limit: $TIME_LIMIT"
 
     sbatch \
@@ -49,7 +53,7 @@ if [ -z "$SLURM_JOB_ID" ]; then
       --cpus-per-task=24 \
       --partition="student-nvidia" \
       --time="${TIME_LIMIT}" \
-      --export="ALL,RUN_MODEL=${MODEL},RUN_EPOCHS=${EPOCHS},RUN_BATCH_SIZE=${BATCH_SIZE}" \
+      --export="ALL,RUN_MODEL=${MODEL},RUN_EPOCHS=${EPOCHS},RUN_BATCH_SIZE=${BATCH_SIZE},RUN_NUM_WORKERS=${NUM_WORKERS}" \
       "$0"
 
     exit 0
@@ -78,4 +82,5 @@ uv run torchrun --standalone --nproc_per_node=2 scripts/training/pretrain.py \
     model="${RUN_MODEL}" \
     train=cuda \
     train.epochs="${RUN_EPOCHS}" \
-    train.batch_size="${RUN_BATCH_SIZE}"
+    train.batch_size="${RUN_BATCH_SIZE}" \
+    train.num_workers="${RUN_NUM_WORKERS}"

@@ -27,7 +27,7 @@ class GPTConfig:
     vocab_size: int | None = None
     dropout: float = 0.0
     # Transformer block FFN: ``gelu`` / ``relu2`` (4*d MLP) or ``swiglu`` (gated, ~matched params).
-    mlp_activation: MlpActivation = "gelu"
+    mlp_activation: MlpActivation = "swiglu"
 
 
 @dataclass
@@ -59,7 +59,7 @@ class TrainConfig:
     steps_per_epoch: int | None = None  # set after computing from dataset size
 
     # Data loading
-    num_workers: int = 4
+    num_workers: int = 8
     pin_memory: bool = True
 
     # Compilation
