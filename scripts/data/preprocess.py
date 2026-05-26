@@ -33,14 +33,48 @@ from krasnal.preprocess import (
     seq_len_stats,
     token_mix_from_raw_sums,
 )
-from krasnal.preprocess.stats import _token_mix_raw_sums
 from krasnal.tokens import ELO_TOKENS, TC_TOKENS, load_move_vocab
 
+EVAL_MONTH = "2019-12"
+EVAL_GAMES_PER_BIN = 10_000
+EVAL_MIN_CLOCK = 30
 
-def _chunk_paths(paths: list[Path], chunk_size: int) -> list[list[Path]]:
-    if chunk_size < 1:
-        raise ValueError(f"preprocess_concat_batch_size must be >= 1, got {chunk_size}")
-    return [paths[i : i + chunk_size] for i in range(0, len(paths), chunk_size)]
+
+def _sample_eval_games(raw_path: Path, output_path: Path, seed: int) -> None:
+    """Maia-style balanced same-bin sampling with time-pressure filtering."""
+    df = pl.read_parquet(raw_path)
+
+    # Time-pressure filter: exclude games where any clock value < EVAL_MIN_CLOCK
+    df = df.filter(
+        (pl.col("clocks_white").list.len() > 0)
+        & (pl.col("clocks_black").list.len() > 0)
+        & pl.col("clocks_white").list.eval(pl.element().ge(EVAL_MIN_CLOCK)).list.all()
+        & pl.col("clocks_black").list.eval(pl.element().ge(EVAL_MIN_CLOCK)).list.all()
+    )
+
+    # Same 100-pt Elo bin (≥1500) for both players
+    df = df.with_columns(
+        (pl.col("white_rating") // 100 * 100).alias("white_bin"),
+        (pl.col("black_rating") // 100 * 100).alias("black_bin"),
+    ).filter((pl.col("white_bin") == pl.col("black_bin")) & (pl.col("white_bin") >= 1500))
+
+    # Shuffle to ensure unbiased selection across the entire month
+    if len(df) > 0:
+        df = df.sample(fraction=1.0, shuffle=True, seed=seed)
+
+    # Sample up to EVAL_GAMES_PER_BIN per bin
+    sampled = (
+        df.with_columns(pl.int_range(1, pl.len() + 1).over("white_bin").alias("_row_within_bin"))
+        .filter(pl.col("_row_within_bin") <= EVAL_GAMES_PER_BIN)
+        .drop("white_bin", "black_bin", "_row_within_bin")
+    )
+
+    logger.info(
+        "Eval sampling: {} -> {} games after time-pressure + same-bin filter",
+        len(df),
+        len(sampled),
+    )
+    sampled.write_parquet(output_path)
 
 
 @hydra.main(version_base=None, config_path="../../config", config_name="preprocess")
@@ -84,6 +118,16 @@ def main(cfg: DictConfig) -> None:
     if not parquet_files:
         raise FileNotFoundError(f"No Aix-filtered games found in {RAW_UCI_DIR}")
 
+    # Maia-style eval sampling: if 2019-12 is present, sample and replace
+    temp_dir = PRETRAIN_DATASET_PATH.parent / "temp_preprocess"
+    temp_dir.mkdir(parents=True, exist_ok=True)
+    eval_raw = [p for p in parquet_files if EVAL_MONTH in p.name]
+    if eval_raw:
+        eval_sampled_path = temp_dir / f"eval_sampled_{EVAL_MONTH}.parquet"
+        _sample_eval_games(eval_raw[0], eval_sampled_path, seed=seed)
+        parquet_files = [eval_sampled_path if EVAL_MONTH in p.name else p for p in parquet_files]
+
+    # --- Build move vocab (skips eval files internally) ---
     PRETRAIN_DATASET_PATH.parent.mkdir(parents=True, exist_ok=True)
     build_move_vocab_from_corpus(
         parquet_files,
@@ -97,10 +141,9 @@ def main(cfg: DictConfig) -> None:
         side_prefixed_moves=side_prefixed_moves,
     )
 
-    temp_dir = PRETRAIN_DATASET_PATH.parent / "temp_preprocess"
-    temp_dir.mkdir(parents=True, exist_ok=True)
-
+    # --- Phase 1: Parallel tokenization + stats ---
     total_games = 0
+    mix_raw: dict[str, int] | None = None
     max_workers = int(cfg.preprocess_workers)
     logger.info("Processing {} shards with {} workers", len(parquet_files), max_workers)
 
@@ -109,30 +152,31 @@ def main(cfg: DictConfig) -> None:
     ) as executor:
         futures = {}
         for idx, parquet_path in enumerate(parquet_files):
-            output_path = temp_dir / f"part_{idx:04d}.parquet"
-            future = executor.submit(
-                process_one_shard,
-                parquet_path,
-                output_path,
-                pp_cfg,
-            )
+            prefix = "eval" if EVAL_MONTH in parquet_path.name else "train"
+            output_path = temp_dir / f"{prefix}_{idx:04d}.parquet"
+            future = executor.submit(process_one_shard, parquet_path, output_path, pp_cfg)
             futures[future] = parquet_path.name
 
         for future in as_completed(futures):
             parquet_name = futures[future]
             try:
-                done_name, count, output_name = future.result()
+                done_name, count, output_name, shard_mix = future.result()
                 total_games += count
+                mix_raw = merge_token_mix_raw(mix_raw, shard_mix)
                 logger.info("Processed {}: {} games -> {}", done_name, count, output_name)
             except Exception as e:
                 logger.error("Failed to process {}: {}", parquet_name, e)
                 raise
 
-    all_parts = sorted(temp_dir.glob("part_*.parquet"))
+    # --- Phase 2: Split + pack ---
+    all_parts = sorted(
+        p
+        for p in temp_dir.glob("*.parquet")
+        if p.name.startswith(("train_", "eval_")) and "sampled" not in p.name
+    )
     if not all_parts:
         raise RuntimeError("No data generated")
 
-    concat_batch_size = max(1, int(cfg.get("preprocess_concat_batch_size", 10)))
     eval_batches_dir = temp_dir / "eval_batches"
     packed_batches_dir = temp_dir / "packed_batches"
     shutil.rmtree(eval_batches_dir, ignore_errors=True)
@@ -144,49 +188,37 @@ def main(cfg: DictConfig) -> None:
 
     max_tokens = block_size
     len_chunks: list[pl.DataFrame] = []
-    mix_raw: dict[str, int] | None = None
 
-    batch_jobs = list(enumerate(_chunk_paths(all_parts, concat_batch_size)))
-    random.Random(seed).shuffle(batch_jobs)
+    shuffled_parts = list(all_parts)
+    random.Random(seed).shuffle(shuffled_parts)
 
-    for _batch_idx, batch_paths in batch_jobs:
-        for part_path in batch_paths:
-            part_lf = pl.scan_parquet(part_path)
-            len_chunks.append(
-                part_lf.select(pl.col("token_ids").list.len().alias("len"))
-                .filter(pl.col("len") <= max_tokens)
-                .collect()
+    for part_path in shuffled_parts:
+        part_lf = pl.scan_parquet(part_path)
+
+        # Collect sequence lengths
+        len_chunks.append(
+            part_lf.select(pl.col("token_ids").list.len().alias("len"))
+            .filter(pl.col("len") <= max_tokens)
+            .collect()
+        )
+
+        filtered_lf = part_lf.filter(pl.col("token_ids").list.len() <= max_tokens)
+        cols = ["token_ids", "active_clock_ids", "opponent_clock_ids"]
+        game_lf = one_row_one_game(filtered_lf.select(*cols), block_size=block_size)
+
+        if part_path.name.startswith("eval"):
+            game_lf.sink_parquet(eval_batches_dir / f"{part_path.stem}.parquet")
+        else:
+            train_df = game_lf.collect()
+            packed_builder.feed_from_columns(
+                train_df["token_ids"].to_list(),
+                train_df["active_clock_ids"].to_list(),
+                train_df["opponent_clock_ids"].to_list(),
             )
-            filtered_lf = part_lf.filter(pl.col("token_ids").list.len() <= max_tokens)
-            mix_raw = merge_token_mix_raw(
-                mix_raw,
-                _token_mix_raw_sums(filtered_lf.select("token_ids")),
-            )
-            train_lf = one_row_one_game(
-                filtered_lf.filter(pl.col("split_bucket") != 0).select(
-                    "token_ids",
-                    "active_clock_ids",
-                    "opponent_clock_ids",
-                ),
-                block_size=block_size,
-            )
-            eval_lf = one_row_one_game(
-                filtered_lf.filter(pl.col("split_bucket") == 0).select(
-                    "token_ids",
-                    "active_clock_ids",
-                    "opponent_clock_ids",
-                ),
-                block_size=block_size,
-            )
-            eval_lf.sink_parquet(eval_batches_dir / f"{part_path.stem}.parquet")
-            train_df = train_lf.collect()
-            for row in train_df.iter_rows(named=True):
-                packed_builder.feed_game(PackedWindowBuilder._parse_game_row(row))
+            packed_builder.drain()
             packed_builder.maybe_flush(packed_batches_dir)
 
-        packed_builder.drain()
-        packed_builder.maybe_flush(packed_batches_dir)
-
+    # --- Sequence length stats ---
     seq_lens = pl.concat(len_chunks, how="vertical")
     stats = seq_len_stats(seq_lens.lazy(), block_size)
     if stats["total"] == 0:
@@ -212,51 +244,23 @@ def main(cfg: DictConfig) -> None:
         pct_long,
     )
 
+    # --- Token mix report ---
     if mix_raw is None:
         raise RuntimeError("Token mix aggregation failed")
     token_mix = token_mix_from_raw_sums(mix_raw)
     logger.info("Token distribution:")
     logger.info("  total: 100.00% ({})", token_mix["total_tokens"])
-    logger.info(
-        "  moves: {:.2f}% ({})",
-        token_mix["uci_move_pct"],
-        token_mix["uci_move_count"],
-    )
-    logger.info(
-        "  qa_is_check: {:.2f}% ({})",
-        token_mix["check_qa_pct"],
-        token_mix["check_qa_count"],
-    )
-    logger.info(
-        "  qa_whats_on_prompt: {:.2f}% ({})",
-        token_mix["what_is_on_pct"],
-        token_mix["what_is_on_count"],
-    )
-    logger.info(
-        "  qa_whats_on_answer_empty: {:.2f}% ({})",
-        token_mix["empty_pct"],
-        token_mix["empty_count"],
-    )
-    logger.info(
-        "  qa_whats_on_answer_piece: {:.2f}% ({})",
-        token_mix["piece_answer_pct"],
-        token_mix["piece_answer_count"],
-    )
-    logger.info(
-        "  conditioning_prefix: {:.2f}% ({})",
-        token_mix["outcome_prefix_pct"],
-        token_mix["outcome_prefix_count"],
-    )
-    logger.info(
-        "  game_start: {:.2f}% ({})",
-        token_mix["game_start_pct"],
-        token_mix["game_start_count"],
-    )
-    logger.info(
-        "  game_end: {:.2f}% ({})",
-        token_mix["game_end_pct"],
-        token_mix["game_end_count"],
-    )
+    for label, pct_key, count_key in [
+        ("moves", "uci_move_pct", "uci_move_count"),
+        ("qa_is_check", "check_qa_pct", "check_qa_count"),
+        ("qa_whats_on_prompt", "what_is_on_pct", "what_is_on_count"),
+        ("qa_whats_on_answer_empty", "empty_pct", "empty_count"),
+        ("qa_whats_on_answer_piece", "piece_answer_pct", "piece_answer_count"),
+        ("conditioning_prefix", "outcome_prefix_pct", "outcome_prefix_count"),
+        ("game_start", "game_start_pct", "game_start_count"),
+        ("game_end", "game_end_pct", "game_end_count"),
+    ]:
+        logger.info("  {}: {:.2f}% ({})", label, token_mix[pct_key], token_mix[count_key])
 
     logger.info("ELO Bucket Distribution:")
     total_elo = sum(token_mix[f"elo_{b}_count"] for b in ELO_TOKENS)
@@ -279,8 +283,20 @@ def main(cfg: DictConfig) -> None:
         json.dump(token_mix, f, indent=2, sort_keys=True)
         f.write("\n")
 
+    # --- Finalize datasets ---
     eval_parts = sorted(eval_batches_dir.glob("*.parquet"))
-    pl.concat(pl.scan_parquet(p) for p in eval_parts).sink_parquet(EVAL_DATASET_PATH)
+    if eval_parts:
+        pl.concat(pl.scan_parquet(p) for p in eval_parts).sink_parquet(EVAL_DATASET_PATH)
+    else:
+        logger.warning("No eval games found; writing empty eval dataset")
+        pl.DataFrame(
+            schema={
+                "token_ids": pl.List(pl.UInt16),
+                "active_clock_ids": pl.List(pl.UInt32),
+                "opponent_clock_ids": pl.List(pl.UInt32),
+            }
+        ).write_parquet(EVAL_DATASET_PATH)
+
     PRETRAIN_DATASET_PATH.parent.mkdir(parents=True, exist_ok=True)
     packed_builder.finish(PRETRAIN_DATASET_PATH, part_dir=packed_batches_dir)
 
@@ -299,6 +315,25 @@ def main(cfg: DictConfig) -> None:
         eval_rows,
     )
 
+    # --- Eval Elo bin report ---
+    if eval_rows > 0:
+        eval_df = pl.read_parquet(EVAL_DATASET_PATH)
+        logger.info("Eval Dataset Elo Bin Distribution ({} games):", eval_rows)
+        # Elo token is at position 3 or 4 in the prefix depending on time control
+        # We count elo token occurrences across all games
+        from krasnal.tokens import ELO_TOKENS as ELO_MAP
+
+        elo_id_to_name = {v: k for k, v in ELO_MAP.items()}
+        elo_counts: dict[str, int] = {name: 0 for name in ELO_MAP}
+        for token_ids in eval_df["token_ids"].to_list():
+            for tid in token_ids:
+                if tid in elo_id_to_name:
+                    elo_counts[elo_id_to_name[tid]] += 1
+                    break  # first elo token = white elo
+        for bucket_name, count in elo_counts.items():
+            if count > 0:
+                logger.info("  {}: {} games", bucket_name, count)
+
     run_clock_report(EVAL_DATASET_PATH)
 
     log_preprocess_to_wandb(
@@ -309,6 +344,7 @@ def main(cfg: DictConfig) -> None:
         train_window_rows=train_window_rows,
         eval_rows=eval_rows,
         over_block_size_count=over_block_size_count,
+        eval_elo_bins={k: v for k, v in elo_counts.items() if v > 0} if eval_rows > 0 else {},
     )
 
 

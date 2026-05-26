@@ -259,10 +259,8 @@ def process_file_streaming(
         token_ids_list = []
         active_clock_ids_list = []
         opponent_clock_ids_list = []
-        split_bucket_list = []
 
         uci_moves_list = batch.get_column("uci_moves").to_list()
-        split_buckets_in = batch.get_column("split_bucket").to_list()
         is_check_list = batch.get_column("is_check").to_list()
         piece_moved_list = batch.get_column("piece_moved").to_list()
         result_list = batch.get_column("result").to_list()
@@ -281,7 +279,6 @@ def process_file_streaming(
         fen_list = batch.get_column("fen").to_list() if has_fen else [None] * len(batch)
 
         for (
-            split_bucket,
             uci_moves,
             is_check,
             piece_moved,
@@ -294,7 +291,6 @@ def process_file_streaming(
             time_increment,
             fen,
         ) in zip(
-            split_buckets_in,
             uci_moves_list,
             is_check_list,
             piece_moved_list,
@@ -328,7 +324,6 @@ def process_file_streaming(
                 logger.warning("Skipping game due to invalid clock data: {}", exc)
                 continue
 
-            split_bucket_list.append(split_bucket)
             token_ids_list.append(token_ids)
             active_clock_ids_list.append(active_clock_ids)
             opponent_clock_ids_list.append(opponent_clock_ids)
@@ -336,7 +331,6 @@ def process_file_streaming(
         if not token_ids_list:
             return pl.DataFrame(
                 schema={
-                    "split_bucket": pl.UInt64,
                     "token_ids": pl.List(pl.UInt16),
                     "active_clock_ids": pl.List(pl.UInt32),
                     "opponent_clock_ids": pl.List(pl.UInt32),
@@ -345,26 +339,21 @@ def process_file_streaming(
 
         return pl.DataFrame(
             {
-                "split_bucket": split_bucket_list,
                 "token_ids": token_ids_list,
                 "active_clock_ids": active_clock_ids_list,
                 "opponent_clock_ids": opponent_clock_ids_list,
             },
             schema={
-                "split_bucket": pl.UInt64,
                 "token_ids": pl.List(pl.UInt16),
                 "active_clock_ids": pl.List(pl.UInt32),
                 "opponent_clock_ids": pl.List(pl.UInt32),
             },
         )
 
-    lf = lf.with_columns((pl.col("uci_moves").hash(seed=cfg.seed) % 1000).alias("split_bucket"))
-
     row_count = lf.select(pl.len()).collect().item()
     lf.map_batches(
         build_tokens_batch,
         schema={
-            "split_bucket": pl.UInt64,
             "token_ids": pl.List(pl.UInt16),
             "active_clock_ids": pl.List(pl.UInt32),
             "opponent_clock_ids": pl.List(pl.UInt32),
@@ -436,12 +425,15 @@ def process_one_shard(
     parquet_path: Path,
     output_path: Path,
     cfg: PreprocessConfig,
-) -> tuple[str, int, str]:
-    """Multiprocess worker: load vocab, tokenize one parquet shard."""
+) -> tuple[str, int, str, dict[str, int]]:
+    """Multiprocess worker: load vocab, tokenize one parquet shard, compute stats."""
+    from .stats import _token_mix_raw_sums
+
     load_move_vocab(
         cfg.move_vocab_path,
         piece_aware_moves=cfg.piece_aware_moves,
         side_prefixed_moves=cfg.side_prefixed_moves,
     )
     count = process_file_streaming(parquet_path, output_path, cfg)
-    return parquet_path.name, count, output_path.name
+    raw_sums = _token_mix_raw_sums(pl.scan_parquet(output_path).select("token_ids"))
+    return parquet_path.name, count, output_path.name, raw_sums
