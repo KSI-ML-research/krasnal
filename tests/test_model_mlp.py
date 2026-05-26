@@ -5,7 +5,7 @@ from krasnal.config import GPTConfig
 from krasnal.model import GPT, MLP, _swiglu_hidden_dim
 
 
-def _tiny_config(*, mlp_activation: str = "gelu") -> GPTConfig:
+def _tiny_config(*, mlp_activation: str = "swiglu") -> GPTConfig:
     return GPTConfig(
         block_size=16,
         n_layer=1,

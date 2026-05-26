@@ -5,8 +5,8 @@ learning_rate: 5e-4
 min_lr: 5e-5
 epochs: 1.0
 warmup_iters: 100
-batch_size: 64
-num_workers: 4
+batch_size: 256
+num_workers: 8
 pin_memory: false
 weight_decay: 0.1
 beta1: 0.9
