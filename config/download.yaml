@@ -1,4 +1,5 @@
 defaults:
+  - _self_
   - pipeline
 
 # Target number of games to collect
