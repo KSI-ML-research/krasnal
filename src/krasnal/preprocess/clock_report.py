@@ -8,71 +8,72 @@ import polars as pl
 from loguru import logger
 
 from krasnal.config import CLOCK_IGNORE_ID, EVAL_DATASET_PATH
-from krasnal.tokens import get_move_clock_pairs, get_moves_only
+from krasnal.tokens import SPECIAL_TOKENS
 
 _THRESHOLD = 30
 
+_BUCKET_EDGES = [10, 30, 60, 120, 300]
 _BUCKET_LABELS = ("<10s", "10-30s", "30-60s", "60-120s", "120-300s", ">300s")
 
-
-def _bucket(seconds: int) -> str:
-    if seconds < 10:
-        return "<10s"
-    if seconds < 30:
-        return "10-30s"
-    if seconds < 60:
-        return "30-60s"
-    if seconds < 120:
-        return "60-120s"
-    if seconds < 300:
-        return "120-300s"
-    return ">300s"
+_SPECIAL_IDS = frozenset(SPECIAL_TOKENS.values())
 
 
 def run_clock_report(path: Path = EVAL_DATASET_PATH, threshold: int = _THRESHOLD) -> None:
-    df = (
-        pl.scan_parquet(path)
-        .select(pl.col("token_ids", "active_clock_ids", "opponent_clock_ids"))
-        .collect()
+    df = pl.read_parquet(path)
+    total_games = len(df)
+
+    # Explode into per-token rows, filter to move tokens only
+    exploded = (
+        df.select(
+            pl.int_range(pl.len()).alias("game_idx"),
+            pl.col("token_ids"),
+            pl.col("active_clock_ids"),
+            pl.col("opponent_clock_ids"),
+        )
+        .explode("token_ids", "active_clock_ids", "opponent_clock_ids")
+        .filter(~pl.col("token_ids").is_in(list(_SPECIAL_IDS)))
+        .rename({"active_clock_ids": "active", "opponent_clock_ids": "opponent"})
     )
 
-    total_games = len(df)
-    total_plies = 0
-    plies_both = 0
-    games_with_clock = 0
-    plies_low_active = 0
-    plies_low_both = 0
-    buckets = {label: 0 for label in _BUCKET_LABELS}
+    total_plies = len(exploded)
+    if total_plies == 0:
+        logger.info("Clock Report — no move plies found")
+        return
 
-    for row in df.iter_rows(named=True):
-        token_ids = [int(x) for x in row["token_ids"]]
-        act = [int(x) for x in row["active_clock_ids"]]
-        opp = [int(x) for x in row["opponent_clock_ids"]]
-        moves = get_moves_only(token_ids)
-        pairs = get_move_clock_pairs(token_ids, act, opp)
+    both_known = exploded.filter(
+        (pl.col("active") != CLOCK_IGNORE_ID) & (pl.col("opponent") != CLOCK_IGNORE_ID)
+    )
+    plies_both = len(both_known)
+    games_with_clock = both_known["game_idx"].n_unique()
 
-        if pairs is None or len(pairs) != len(moves):
-            continue
+    active_known = exploded.filter(pl.col("active") != CLOCK_IGNORE_ID)
+    plies_low_active = active_known.filter(pl.col("active") < threshold).height
+    plies_low_both = both_known.filter(
+        (pl.col("active") < threshold) & (pl.col("opponent") < threshold)
+    ).height
 
-        game_has_clock = False
-        for a, o in pairs:
-            total_plies += 1
-            a_ok = a != CLOCK_IGNORE_ID
-            o_ok = o != CLOCK_IGNORE_ID
-
-            if a_ok and o_ok:
-                plies_both += 1
-                game_has_clock = True
-
-            if a_ok:
-                if a < threshold:
-                    plies_low_active += 1
-                    if o_ok and o < threshold:
-                        plies_low_both += 1
-                buckets[_bucket(a)] += 1
-
-        if game_has_clock:
-            games_with_clock += 1
+    # Bucket distribution
+    bucket_counts = (
+        active_known.select(
+            pl.when(pl.col("active") < 10)
+            .then(pl.lit("<10s"))
+            .when(pl.col("active") < 30)
+            .then(pl.lit("10-30s"))
+            .when(pl.col("active") < 60)
+            .then(pl.lit("30-60s"))
+            .when(pl.col("active") < 120)
+            .then(pl.lit("60-120s"))
+            .when(pl.col("active") < 300)
+            .then(pl.lit("120-300s"))
+            .otherwise(pl.lit(">300s"))
+            .alias("bucket")
+        )
+        .group_by("bucket")
+        .len()
+    )
+    buckets = dict(
+        zip(bucket_counts["bucket"].to_list(), bucket_counts["len"].to_list(), strict=True)
+    )
 
     logger.info(f"Clock Report — {path}")
     logger.info(f"Total games: {total_games}")
@@ -99,5 +100,5 @@ def run_clock_report(path: Path = EVAL_DATASET_PATH, threshold: int = _THRESHOLD
     plies_with_active = sum(buckets.values())
     logger.info("Clock Distribution (active clock):")
     for label in _BUCKET_LABELS:
-        pct = 100.0 * buckets[label] / plies_with_active if plies_with_active else 0.0
+        pct = 100.0 * buckets.get(label, 0) / plies_with_active if plies_with_active else 0.0
         logger.info(f"  {label:>8s}: {pct:.2f}%")

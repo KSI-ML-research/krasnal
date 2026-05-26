@@ -97,15 +97,6 @@ class PackedWindowBuilder:
         self.row_buffer: list[dict[str, list[int]]] = []
         self.part_paths: list[Path] = []
 
-    @staticmethod
-    def _parse_game_row(row: dict[str, object]) -> _GameRow:
-        tokens = [int(x) for x in row["token_ids"]]
-        active = [int(x) for x in row["active_clock_ids"]]
-        opp = [int(x) for x in row["opponent_clock_ids"]]
-        if not (len(tokens) == len(active) == len(opp)):
-            raise ValueError("Clock/token length mismatch while packing games")
-        return tokens, active, opp
-
     def feed_game(self, game: _GameRow) -> None:
         if len(game[0]) > self.window_size:
             raise ValueError(
@@ -116,19 +107,31 @@ class PackedWindowBuilder:
         while self._emit_one_window():
             pass
 
+    def feed_from_columns(
+        self,
+        token_ids_col: list[list[int]],
+        active_col: list[list[int]],
+        opp_col: list[list[int]],
+    ) -> None:
+        """Queue games from three parallel list-of-lists (e.g. from Polars ``.to_list()``)."""
+        for tokens, active, opp in zip(token_ids_col, active_col, opp_col, strict=True):
+            if len(tokens) > self.window_size:
+                raise ValueError(
+                    f"Game length {len(tokens)} exceeds packed window size {self.window_size}; "
+                    "filter games before packing"
+                )
+            self._games.append((tokens, active, opp))
+
     def feed_dataframe(self, games: pl.DataFrame, shuffle_seed: int) -> None:
         """Queue all games from a frame, then call ``drain()`` (used in tests)."""
         if games.is_empty():
             return
         shuffled = games.sample(fraction=1.0, shuffle=True, seed=shuffle_seed)
-        for row in shuffled.iter_rows(named=True):
-            game = self._parse_game_row(row)
-            if len(game[0]) > self.window_size:
-                raise ValueError(
-                    f"Game length {len(game[0])} exceeds packed window size {self.window_size}; "
-                    "filter games before packing"
-                )
-            self._games.append(game)
+        self.feed_from_columns(
+            shuffled["token_ids"].to_list(),
+            shuffled["active_clock_ids"].to_list(),
+            shuffled["opponent_clock_ids"].to_list(),
+        )
 
     def drain(self) -> None:
         while self._emit_one_window():

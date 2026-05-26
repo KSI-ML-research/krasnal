@@ -44,7 +44,8 @@ OUTPUT_DIR = Path("data/1_filtered")
 # If ``end_month`` is null, months run through this (HF catalog / default cap).
 DEFAULT_END_MONTH = "2026-03"
 
-SKIP_MONTHS = {"2020-12", "2021-01", "2020-07", "2016-12"}
+SKIP_MONTHS = {"2020-12", "2021-01", "2020-07", "2016-12", "2019-12"}
+EVAL_MONTH = "2019-12"
 
 
 def _parse_month(label: str) -> tuple[int, int]:
@@ -279,6 +280,30 @@ def main(cfg: DictConfig) -> None:
     logger.info("=" * 60)
 
     con.close()
+
+    # Always ensure eval month is available
+    eval_output = OUTPUT_DIR / f"filtered_{EVAL_MONTH}.parquet"
+    if not eval_output.exists():
+        logger.info("Downloading eval month {}...", EVAL_MONTH)
+        con2 = duckdb.connect()
+        con2.execute("INSTALL aixchess FROM community")
+        con2.execute("LOAD aixchess")
+        try:
+            eval_parquet = download_aix_file(EVAL_MONTH, compression)
+            filter_month(
+                eval_parquet,
+                EVAL_MONTH,
+                OUTPUT_DIR,
+                con2,
+                min_elo,
+                min_time,
+                require_evals,
+            )
+        except Exception as e:
+            logger.error("Failed to download/filter eval month {}: {}", EVAL_MONTH, e)
+        con2.close()
+    else:
+        logger.info("Eval month {} already present: {}", EVAL_MONTH, eval_output)
 
 
 if __name__ == "__main__":

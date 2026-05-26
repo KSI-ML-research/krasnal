@@ -45,22 +45,25 @@ _TOKEN_MIX_COUNTERS: list[tuple[str, int | frozenset[int]]] = [
 ]
 
 
-def _build_count_expr(name: str, ids: int | frozenset[int]) -> pl.Expr:
-    """Build a Polars expression counting occurrences of token id(s) in a list column."""
-    if isinstance(ids, int):
-        inner = (pl.element() == ids).cast(pl.UInt32)
-    else:
-        inner = pl.element().is_in(list(ids)).cast(pl.UInt32)
-    return pl.col("token_ids").list.eval(inner, parallel=True).list.sum().sum().alias(name)
-
-
 def _token_mix_raw_sums(tokenized_lf: pl.LazyFrame) -> dict[str, int]:
-    exprs = [
-        pl.col("token_ids").list.len().sum().alias("total_tokens"),
-        *(_build_count_expr(name, ids) for name, ids in _TOKEN_MIX_COUNTERS),
-    ]
-    row = tokenized_lf.select(*exprs).collect().row(0, named=True)
-    return {k: int(v or 0) for k, v in row.items()}
+    total = tokenized_lf.select(pl.col("token_ids").list.len().sum()).collect().item() or 0
+    counts_df = (
+        tokenized_lf.select(pl.col("token_ids").explode().alias("tid"))
+        .group_by("tid")
+        .len()
+        .collect()
+    )
+    id_to_count: dict[int, int] = dict(
+        zip(counts_df["tid"].to_list(), counts_df["len"].to_list(), strict=True)
+    )
+
+    result: dict[str, int] = {"total_tokens": int(total)}
+    for name, ids in _TOKEN_MIX_COUNTERS:
+        if isinstance(ids, int):
+            result[name] = id_to_count.get(ids, 0)
+        else:
+            result[name] = sum(id_to_count.get(i, 0) for i in ids)
+    return result
 
 
 def merge_token_mix_raw(
@@ -158,6 +161,7 @@ def log_preprocess_to_wandb(
     train_window_rows: int,
     eval_rows: int,
     over_block_size_count: int,
+    eval_elo_bins: dict[str, int] | None = None,
 ) -> None:
     """Log dataset statistics to a W&B run tagged 'preprocess'."""
     project = str(cfg.get("wandb_project", "uwr-ksai/krasnal"))
@@ -197,6 +201,10 @@ def log_preprocess_to_wandb(
         count = token_mix.get(f"tc_{bucket_name}_count", 0)
         pct = (count / total_tc * 100.0) if total_tc > 0 else 0.0
         wandb.summary[f"dataset/tc/{bucket_name}"] = pct
+
+    if eval_elo_bins:
+        for bucket_name, count in eval_elo_bins.items():
+            wandb.summary[f"dataset/eval_elo/{bucket_name}"] = count
 
     wandb.finish()
     logger.info("Preprocessing statistics logged to W&B project '{}'", project)
