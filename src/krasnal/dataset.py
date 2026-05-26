@@ -11,7 +11,7 @@ from torch.utils.data import Dataset
 from krasnal.config import CLOCK_IGNORE_ID
 from krasnal.supervised_target_mask import LOSS_IGNORE_INDEX, apply_supervised_loss_mask
 from krasnal.time_conditioning import shift_clock_rows_for_training
-from krasnal.tokens import PAD_ID
+from krasnal.tokens import ELO_TOKENS, PAD_ID
 
 
 def resolve_hf_datasets_cache_dir() -> str:
@@ -46,18 +46,16 @@ class ChessDataset(Dataset[tuple[torch.Tensor, torch.Tensor, torch.Tensor]]):
         cache_dir = Path(resolve_hf_datasets_cache_dir())
         cache_dir.mkdir(parents=True, exist_ok=True)
         self.dataset = HFDataset.from_parquet(paths, cache_dir=str(cache_dir))
-        self.has_clock_columns = {
-            "active_clock_ids",
-            "opponent_clock_ids",
-        }.issubset(self.dataset.column_names)
-        columns = ["token_ids"]
-        if self.has_clock_columns:
-            columns.extend(["active_clock_ids", "opponent_clock_ids"])
-        self.dataset.set_format(type="torch", columns=columns)
+        required_clock_columns = {"active_clock_ids", "opponent_clock_ids"}
+        missing = required_clock_columns - set(self.dataset.column_names)
+        if missing:
+            raise ValueError(f"Dataset missing required clock columns {sorted(missing)}: {paths}")
+        self.dataset.set_format(
+            type="torch",
+            columns=["token_ids", "active_clock_ids", "opponent_clock_ids"],
+        )
 
         self.include_elo = include_elo
-        from krasnal.tokens import ELO_TOKENS
-
         self.elo_tensor = torch.tensor(list(ELO_TOKENS.values()), dtype=torch.long)
 
     def __len__(self):
@@ -69,12 +67,8 @@ class ChessDataset(Dataset[tuple[torch.Tensor, torch.Tensor, torch.Tensor]]):
         if tokens.min() < 0:
             raise ValueError(f"Invalid negative tokens found at index {idx}: {tokens[tokens < 0]}")
 
-        if self.has_clock_columns:
-            active_clocks = row["active_clock_ids"].to(torch.long)
-            opponent_clocks = row["opponent_clock_ids"].to(torch.long)
-        else:
-            active_clocks = torch.full_like(tokens, CLOCK_IGNORE_ID)
-            opponent_clocks = torch.full_like(tokens, CLOCK_IGNORE_ID)
+        active_clocks = row["active_clock_ids"].to(torch.long)
+        opponent_clocks = row["opponent_clock_ids"].to(torch.long)
 
         if not self.include_elo:
             mask = ~torch.isin(tokens, self.elo_tensor)

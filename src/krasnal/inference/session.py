@@ -6,13 +6,12 @@ import bulletchess
 import torch
 import torch.nn.functional as F
 
-from krasnal.config import CLOCK_IGNORE_ID
 from krasnal.inference.game import Game
 from krasnal.inference.kv_cache import KVCache
 from krasnal.inference.utils import create_amp_context
 from krasnal.model import GPT
 from krasnal.time_conditioning import (
-    clock_pair_for_input_index,
+    clock_pairs_for_window,
     new_clock_tracks,
     sync_prefix_clock_tracks,
 )
@@ -47,10 +46,12 @@ class InferenceSession:
         white_elo_token: int = ELO_ABOVE_2200_ID,
         black_elo_token: int = ELO_ABOVE_2200_ID,
         time_control_token: int = TC_UNKNOWN_ID,
+        clock_initial_seconds: int | None = None,
     ):
         self.model = model
         self.device = device
         self._amp_ctx = create_amp_context(device)
+        self._clock_initial_seconds = clock_initial_seconds
 
         if game is None:
             if outcome_token is None:
@@ -82,12 +83,18 @@ class InferenceSession:
         )
 
     def _init_clock_tracks(self) -> None:
+        enabled = self.model.config.use_time_conditioning
+        initial = self._clock_initial_seconds
+        if enabled and initial is None:
+            raise ValueError(
+                "clock_initial_seconds is required when use_time_conditioning is enabled"
+            )
         (
             self._per_token_active,
             self._per_token_opp,
             self._go_active_sec,
             self._go_opp_sec,
-        ) = new_clock_tracks(len(self.context), enabled=self.model.config.use_time_conditioning)
+        ) = new_clock_tracks(len(self.context), enabled=enabled, initial_seconds=initial)
 
     def new_game(self, game: Game) -> None:
         """Replace the stored game and reset runtime-only state."""
@@ -107,6 +114,7 @@ class InferenceSession:
                 self._per_token_opp,
                 prefix_len=len(prefix),
                 total_len=len(self.context),
+                prefix_clock_seconds=self._clock_initial_seconds,
             )
         self._reset_cache_state()
 
@@ -138,23 +146,34 @@ class InferenceSession:
         if not self.model.config.use_time_conditioning:
             return
         if go is None or go.wtime_ms is None or go.btime_ms is None:
-            self._go_active_sec = CLOCK_IGNORE_ID
-            self._go_opp_sec = CLOCK_IGNORE_ID
+            raise ValueError(
+                "go must include wtime and btime when use_time_conditioning is enabled"
+            )
+        w_s = uci_ms_to_clock_seconds(go.wtime_ms)
+        b_s = uci_ms_to_clock_seconds(go.btime_ms)
+        if self.game.board.turn == bulletchess.WHITE:
+            self._go_active_sec, self._go_opp_sec = w_s, b_s
         else:
-            w_s = uci_ms_to_clock_seconds(go.wtime_ms)
-            b_s = uci_ms_to_clock_seconds(go.btime_ms)
-            if self.game.board.turn == bulletchess.WHITE:
-                self._go_active_sec, self._go_opp_sec = w_s, b_s
-            else:
-                self._go_active_sec, self._go_opp_sec = b_s, w_s
+            self._go_active_sec, self._go_opp_sec = b_s, w_s
         self._reset_cache_state()
 
-    def feed_token(self, token_id: int) -> None:
+    def _append_clock_tracks(self, clock_active: int, clock_opponent: int) -> None:
+        self._per_token_active.append(int(clock_active))
+        self._per_token_opp.append(int(clock_opponent))
+
+    def feed_token(
+        self,
+        token_id: int,
+        *,
+        clock_active: int | None = None,
+        clock_opponent: int | None = None,
+    ) -> None:
         """Append a token to model context and update game if it is a legal move token."""
         self.context.append(token_id)
         if self.model.config.use_time_conditioning:
-            self._per_token_active.append(CLOCK_IGNORE_ID)
-            self._per_token_opp.append(CLOCK_IGNORE_ID)
+            if clock_active is None or clock_opponent is None:
+                raise ValueError("clock_active and clock_opponent are required for feed_token")
+            self._append_clock_tracks(clock_active, clock_opponent)
         with contextlib.suppress(ValueError):
             self.game.feed_token(token_id)
         self._last_logits = None
@@ -169,10 +188,9 @@ class InferenceSession:
         self.game.feed_uci(uci)
         self.context.append(self.game.tokens[-1])
         if self.model.config.use_time_conditioning:
-            ca = CLOCK_IGNORE_ID if clock_active is None else int(clock_active)
-            co = CLOCK_IGNORE_ID if clock_opponent is None else int(clock_opponent)
-            self._per_token_active.append(ca)
-            self._per_token_opp.append(co)
+            if clock_active is None or clock_opponent is None:
+                raise ValueError("clock_active and clock_opponent are required for feed_uci")
+            self._append_clock_tracks(clock_active, clock_opponent)
         self._last_logits = None
 
     def get_raw_logits(self) -> torch.Tensor:
@@ -214,30 +232,16 @@ class InferenceSession:
         with torch.inference_mode(), self._amp_ctx:
             if self.model.config.use_time_conditioning:
                 first_g = len(self.context) - len(tokens_to_process)
-                act = [
-                    clock_pair_for_input_index(
-                        first_g + i,
-                        context_len=len(self.context),
-                        per_token_active=self._per_token_active,
-                        per_token_opp=self._per_token_opp,
-                        go_active_sec=self._go_active_sec,
-                        go_opp_sec=self._go_opp_sec,
-                        enabled=self.model.config.use_time_conditioning,
-                    )[0]
-                    for i in range(len(tokens_to_process))
-                ]
-                opp = [
-                    clock_pair_for_input_index(
-                        first_g + i,
-                        context_len=len(self.context),
-                        per_token_active=self._per_token_active,
-                        per_token_opp=self._per_token_opp,
-                        go_active_sec=self._go_active_sec,
-                        go_opp_sec=self._go_opp_sec,
-                        enabled=self.model.config.use_time_conditioning,
-                    )[1]
-                    for i in range(len(tokens_to_process))
-                ]
+                act, opp = clock_pairs_for_window(
+                    first_g,
+                    len(tokens_to_process),
+                    context_len=len(self.context),
+                    per_token_active=self._per_token_active,
+                    per_token_opp=self._per_token_opp,
+                    go_active_sec=self._go_active_sec,
+                    go_opp_sec=self._go_opp_sec,
+                    enabled=True,
+                )
                 active_t = torch.tensor([act], dtype=torch.long, device=self.device)
                 opp_t = torch.tensor([opp], dtype=torch.long, device=self.device)
                 logits, _ = self.model(

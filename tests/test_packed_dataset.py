@@ -1,23 +1,11 @@
-from importlib import util
-from pathlib import Path
-
 import polars as pl
 import torch
 
 from krasnal.config import CLOCK_IGNORE_ID
 from krasnal.dataset import make_collate_fn, make_packed_collate_fn
+from krasnal.preprocess import pack_games_into_windows
 from krasnal.supervised_target_mask import LOSS_IGNORE_INDEX
 from krasnal.tokens import GAME_END_ID, GAME_START_ID, PAD_ID, WHITE_WON_ID
-
-_MODULE_PATH = Path(__file__).resolve().parents[1] / "scripts" / "data" / "preprocess.py"
-_SPEC = util.spec_from_file_location("preprocess_module", _MODULE_PATH)
-assert _SPEC is not None
-assert _SPEC.loader is not None
-_MODULE = util.module_from_spec(_SPEC)
-_SPEC.loader.exec_module(_MODULE)
-
-pack_games_into_windows = _MODULE.pack_games_into_windows
-PAD_SEGMENT_ID = _MODULE.PAD_SEGMENT_ID
 
 
 def test_pack_restarts_split_game_from_start_in_next_window():

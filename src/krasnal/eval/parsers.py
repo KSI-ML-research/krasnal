@@ -2,6 +2,7 @@ from dataclasses import dataclass
 
 import torch
 
+from krasnal.config import CLOCK_IGNORE_ID
 from krasnal.tokens import (
     DRAW_ID,
     ELO_TOKENS,
@@ -24,6 +25,8 @@ class GameTokens:
     move_tokens: list[int]
     move_active_seconds: list[int] | None = None
     move_opponent_seconds: list[int] | None = None
+    prefix_active_seconds: int | None = None
+    prefix_opponent_seconds: int | None = None
 
     @property
     def initial_context(self) -> list[int]:
@@ -102,7 +105,7 @@ def split_packed_window_token_ids(token_ids: list[int]) -> list[list[int]]:
 
 
 def parse_row_to_game_tokens(row: tuple[torch.Tensor, ...] | torch.Tensor) -> GameTokens | None:
-    """Parse a single dataset row (with optional clock tensors) into GameTokens."""
+    """Parse a dataset row with token_ids and aligned clock columns into GameTokens."""
     token_ids = row[0].tolist() if isinstance(row, tuple) else row.tolist()
 
     game_tokens = parse_game_tokens(token_ids)
@@ -112,12 +115,20 @@ def parse_row_to_game_tokens(row: tuple[torch.Tensor, ...] | torch.Tensor) -> Ga
     moves = get_moves_only(token_ids)
     game_tokens.move_tokens = moves
 
-    if isinstance(row, tuple) and len(row) >= 3:
-        active_list = row[1].tolist()
-        opponent_list = row[2].tolist()
-        pairs = get_move_clock_pairs(token_ids, active_list, opponent_list)
-        if pairs is not None and len(pairs) == len(moves):
-            game_tokens.move_active_seconds = [p[0] for p in pairs]
-            game_tokens.move_opponent_seconds = [p[1] for p in pairs]
+    if not isinstance(row, tuple) or len(row) < 3:
+        return None
 
+    active_list = row[1].tolist()
+    opponent_list = row[2].tolist()
+    pairs = get_move_clock_pairs(token_ids, active_list, opponent_list)
+    if pairs is None or len(pairs) != len(moves):
+        return None
+    if any(a >= CLOCK_IGNORE_ID or o >= CLOCK_IGNORE_ID for a, o in pairs):
+        return None
+
+    game_tokens.move_active_seconds = [p[0] for p in pairs]
+    game_tokens.move_opponent_seconds = [p[1] for p in pairs]
+    if active_list[0] < CLOCK_IGNORE_ID:
+        game_tokens.prefix_active_seconds = int(active_list[0])
+        game_tokens.prefix_opponent_seconds = int(opponent_list[0])
     return game_tokens

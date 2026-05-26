@@ -1,9 +1,12 @@
 import json
 
+import bulletchess
 import pytest
 
+from krasnal.sampling import whats_on_square_index
 from krasnal.tokens import (
     BLACK_WON_ID,
+    COLORED_PIECE_TOKENS,
     DRAW_ID,
     ELO_1000_1099_ID,
     ELO_1500_1599_ID,
@@ -12,6 +15,7 @@ from krasnal.tokens import (
     ELO_ABOVE_2200_ID,
     ELO_BELOW_1000_ID,
     ELO_TOKENS,
+    EMPTY_ID,
     GAME_END_ID,
     GAME_START_ID,
     IS_CHECK_ID,
@@ -26,6 +30,7 @@ from krasnal.tokens import (
     TC_RAPID_NO_INC_ID,
     TC_TOKENS,
     TC_UNKNOWN_ID,
+    WHATS_ON_SQUARE,
     WHITE_WON_ID,
     YES_CHECK_ID,
     build_move_key,
@@ -37,6 +42,10 @@ from krasnal.tokens import (
     make_move_vocab_artifact,
     move_key_for_ply,
     normalize_history_uci_moves,
+    square_index_to_str,
+    whats_on_answer_token_id,
+    whats_on_probe_labels,
+    whats_on_prompt_token_id,
 )
 
 
@@ -283,3 +292,50 @@ def test_move_vocab_manifest_mismatch_fails(tmp_path):
 
     with pytest.raises(ValueError, match="manifest does not match runtime config"):
         load_move_vocab(path, piece_aware_moves=True, side_prefixed_moves=True)
+
+
+_WHATS_ON_PROBE_KWARGS = dict(
+    post_move_fen="rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 2",
+    game_key="e2e4 e7e5",
+    ply=1,
+    seed=123,
+)
+
+
+def test_square_index_to_str_corners():
+    assert square_index_to_str(0) == "a1"
+    assert square_index_to_str(7) == "h1"
+    assert square_index_to_str(56) == "a8"
+    assert square_index_to_str(63) == "h8"
+
+
+def test_whats_on_prompt_token_id_matches_whats_on_square_map():
+    assert whats_on_prompt_token_id("e4") == WHATS_ON_SQUARE["<whats_on_e4>"]
+
+
+def test_whats_on_answer_token_id_empty_square():
+    board = bulletchess.Board()
+    assert whats_on_answer_token_id(board, "e4") == EMPTY_ID
+
+
+def test_whats_on_answer_token_id_occupied_square():
+    board = bulletchess.Board()
+    board.apply(bulletchess.Move.from_uci("e2e4"))
+    assert whats_on_answer_token_id(board, "e4") == COLORED_PIECE_TOKENS["<w:pawn>"]
+
+
+def test_whats_on_probe_labels_matches_decomposed_helpers():
+    board = bulletchess.Board.from_fen(_WHATS_ON_PROBE_KWARGS["post_move_fen"])
+    sq_str, prompt_id, ans_id = whats_on_probe_labels(board, **_WHATS_ON_PROBE_KWARGS)
+
+    sq_idx = whats_on_square_index(**_WHATS_ON_PROBE_KWARGS)
+    assert sq_str == square_index_to_str(sq_idx)
+    assert prompt_id == whats_on_prompt_token_id(sq_str)
+    assert ans_id == whats_on_answer_token_id(board, sq_str)
+
+
+def test_whats_on_probe_labels_deterministic():
+    board = bulletchess.Board.from_fen(_WHATS_ON_PROBE_KWARGS["post_move_fen"])
+    first = whats_on_probe_labels(board, **_WHATS_ON_PROBE_KWARGS)
+    second = whats_on_probe_labels(board, **_WHATS_ON_PROBE_KWARGS)
+    assert first == second

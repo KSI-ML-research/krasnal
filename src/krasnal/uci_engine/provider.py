@@ -12,6 +12,7 @@ from loguru import logger
 from krasnal.inference import Game, InferenceSession, load_model
 from krasnal.inference.exceptions import NoLegalMovesError
 from krasnal.inference.sampling import sample_token
+from krasnal.time_conditioning import uniform_clock_pair
 from krasnal.tokens import (
     ELO_ABOVE_2200_ID,
     TC_UNKNOWN_ID,
@@ -171,18 +172,28 @@ class ModelProvider(ChessModelProvider):
             target_outcome_token=outcome_token,
         )
 
+    def _clock_initial_seconds_for_session(self) -> int | None:
+        if not self.model.config.use_time_conditioning:
+            return None
+        if self._tc_initial_sec is not None:
+            return self._tc_initial_sec
+        raw = self.artifact_config.get("time_initial")
+        if raw is not None:
+            return int(raw)
+        raise ModelProviderError(
+            "krasnalInitialSeconds setoption (or time_initial in model config) is required "
+            "when use_time_conditioning is enabled"
+        )
+
     def reset_session(self, outcome_token: int) -> None:
-        """Reset for a new game; clears ``go`` metadata and optional UCI overrides."""
+        """Reset for a new game; clears ``go`` metadata but keeps setoption TC/Elo."""
         self.outcome_token = outcome_token
         self._last_go = None
-        self._white_elo = None
-        self._black_elo = None
-        self._tc_initial_sec = None
-        self._tc_inc_sec = None
         self.session = InferenceSession(
             self.model,
             self.device,
             game=self._build_game(outcome_token),
+            clock_initial_seconds=self._clock_initial_seconds_for_session(),
         )
 
     def set_go_params(self, params: GoParams | None) -> None:
@@ -228,7 +239,10 @@ class ModelProvider(ChessModelProvider):
 
         for move_str in move_list[len(current_moves) :]:
             try:
-                session.feed_uci(move_str, clock_active=None, clock_opponent=None)
+                session.feed_uci(
+                    move_str,
+                    *uniform_clock_pair(self._clock_initial_seconds_for_session()),
+                )
             except ValueError as exc:
                 raise ModelProviderError(f"Invalid move in history: {move_str}") from exc
 
