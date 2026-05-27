@@ -88,25 +88,6 @@ def build_what_is_on_heatmap(square_accs: dict[str, float]) -> wandb.Plotly:
     return wandb.Plotly(fig)
 
 
-def evaluate_is_check_probe(
-    contexts: list[EvalContext],
-    model: torch.nn.Module,
-    device: torch.device,
-    *,
-    include_confusion_matrix: bool = False,
-    batch_size: int = 64,
-) -> dict[str, float]:
-    """Run a batched is_check probe and return precision/recall/F1 metrics."""
-    counts = evaluate_is_check_probe_counts(contexts, model, device, batch_size=batch_size)
-    metrics = compute_binary_f1_metrics(tp=counts["tp"], fp=counts["fp"], fn=counts["fn"])
-    if include_confusion_matrix:
-        metrics["qa/is_check/confusion_matrix/tp"] = float(counts["tp"])
-        metrics["qa/is_check/confusion_matrix/fp"] = float(counts["fp"])
-        metrics["qa/is_check/confusion_matrix/tn"] = float(counts["tn"])
-        metrics["qa/is_check/confusion_matrix/fn"] = float(counts["fn"])
-    return metrics
-
-
 def evaluate_is_check_probe_counts(
     contexts: list[EvalContext],
     model: torch.nn.Module,
@@ -153,32 +134,6 @@ def evaluate_is_check_probe_counts(
     fn = sum(1 for pred, label in zip(preds, labels, strict=True) if pred == 0 and label == 1)
 
     return {"tp": tp, "fp": fp, "tn": tn, "fn": fn}
-
-
-def evaluate_what_is_on_probe(
-    contexts: list[EvalContext],
-    model: torch.nn.Module,
-    device: torch.device,
-    eval_seed: int,
-    *,
-    include_per_square: bool = False,
-    baseline: WhatIsOnBaselineCounts | None = None,
-    batch_size: int = 64,
-) -> dict[str, Any]:
-    """Run a batched what_is_on probe and return accuracy metrics."""
-    stats = evaluate_what_is_on_probe_stats(
-        contexts,
-        model,
-        device,
-        eval_seed,
-        baseline=baseline,
-        batch_size=batch_size,
-    )
-    return finalize_what_is_on_probe_stats(
-        stats,
-        include_per_square=include_per_square,
-        include_baseline=baseline is not None,
-    )
 
 
 def empty_what_is_on_probe_stats() -> dict[str, Any]:
@@ -276,15 +231,6 @@ def evaluate_what_is_on_probe_stats(
             key = "square_baseline_correct"
             stats[key][sq] = stats[key].get(sq, 0) + 1
     return stats
-
-
-def merge_what_is_on_probe_stats(dst: dict[str, Any], src: dict[str, Any]) -> None:
-    dst["correct"] += src["correct"]
-    dst["total"] += src["total"]
-    dst["baseline_correct"] += src["baseline_correct"]
-    for key in ("square_correct", "square_count", "square_baseline_correct"):
-        for sq, count in src[key].items():
-            dst[key][sq] = dst[key].get(sq, 0) + count
 
 
 def finalize_what_is_on_probe_stats(

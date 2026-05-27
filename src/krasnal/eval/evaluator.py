@@ -148,8 +148,6 @@ class _MoveMetricAccumulator:
 
 
 def _is_legal_token_in_position(ctx: EvalContext, token_id: int) -> bool:
-    if ctx.legal_ids is not None:
-        return token_id in ctx.legal_ids
     if ctx.fen is None:
         return False
 

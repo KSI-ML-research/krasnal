@@ -223,9 +223,8 @@ def test_collate_shifts_clock_features_to_prediction_targets():
 
 
 def test_format_eval_metric_key_groups_game_metrics():
-    assert format_eval_metric_key("illegal_mass") == "eval/game/illegal_mass"
     assert format_eval_metric_key("top1_legal") == "eval/game/top1_legal"
-    assert format_eval_metric_key("acc_when_low_time") == "eval/game/acc_when_low_time"
+    assert format_eval_metric_key("acc_when_in_check") == "eval/game/acc_when_in_check"
     key = "qa/what_is_on/acc_matrix"
     assert format_eval_metric_key(key) == "eval/qa/what_is_on/acc_matrix"
     assert format_eval_metric_key("val_loss") == "eval/val_loss"

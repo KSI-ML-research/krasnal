@@ -17,6 +17,7 @@ from krasnal.tokens import (
     ELO_1600_1699_ID,
     GAME_END_ID,
     GAME_START_ID,
+    get_vocab_size,
     move_token_id_for_turn,
 )
 
@@ -71,6 +72,22 @@ def test_evaluate_num_games_zero_uses_all_games(monkeypatch):
 
 
 def test_move_metric_accumulator_computes_requested_metrics():
+    board = bulletchess.Board()
+    legal_move = bulletchess.Move.from_uci("e2e4")
+    legal_piece = board[legal_move.origin]
+    legal_token = move_token_id_for_turn("e2e4", board.turn, legal_piece.piece_type)
+    black_board = board.copy()
+    black_board.apply(legal_move)
+    black_move = bulletchess.Move.from_uci("e7e5")
+    black_piece = black_board[black_move.origin]
+    illegal_for_start_position = move_token_id_for_turn(
+        "e7e5",
+        black_board.turn,
+        black_piece.piece_type,
+    )
+    assert legal_token is not None
+    assert illegal_for_start_position is not None
+
     metrics = [
         "acc",
         "acc_opening",
@@ -84,9 +101,8 @@ def test_move_metric_accumulator_computes_requested_metrics():
     ]
     contexts = [
         EvalContext(
-            probs=torch.tensor([0.05, 0.70, 0.15, 0.10]),
-            legal_ids=[1, 2],
-            actual_token=1,
+            fen=board.fen(),
+            actual_token=legal_token,
             in_check=False,
             phase="opening",
             player_elo_token=ELO_1500_1599_ID,
@@ -94,9 +110,8 @@ def test_move_metric_accumulator_computes_requested_metrics():
             active_clock_seconds=90,
         ),
         EvalContext(
-            probs=torch.tensor([0.60, 0.20, 0.15, 0.05]),
-            legal_ids=[2, 3],
-            actual_token=2,
+            fen=board.fen(),
+            actual_token=legal_token,
             in_check=True,
             phase="middlegame",
             player_elo_token=ELO_1600_1699_ID,
@@ -104,9 +119,8 @@ def test_move_metric_accumulator_computes_requested_metrics():
             active_clock_seconds=20,
         ),
         EvalContext(
-            probs=torch.tensor([0.05, 0.10, 0.25, 0.60]),
-            legal_ids=[2, 3],
-            actual_token=3,
+            fen=board.fen(),
+            actual_token=legal_token,
             in_check=False,
             phase="endgame",
             player_elo_token=ELO_1500_1599_ID,
@@ -116,7 +130,10 @@ def test_move_metric_accumulator_computes_requested_metrics():
     ]
 
     accumulator = _MoveMetricAccumulator(metrics)
-    logits = torch.stack([ctx.probs for ctx in contexts if ctx.probs is not None])
+    logits = torch.zeros((3, get_vocab_size()))
+    logits[0, legal_token] = 1.0
+    logits[1, illegal_for_start_position] = 1.0
+    logits[2, legal_token] = 1.0
     accumulator.update(contexts, logits)
     result = accumulator.finalize()
 
