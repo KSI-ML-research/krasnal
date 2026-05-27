@@ -27,7 +27,7 @@ if [ -z "$SLURM_JOB_ID" ]; then
     if [ "$MODEL" = "small" ]; then
         TIME_LIMIT="6:00:00"
         BATCH_SIZE=192
-        NUM_WORKERS=12
+        NUM_WORKERS=10
     elif [ "$MODEL" = "medium" ]; then
         TIME_LIMIT="12:00:00"
         BATCH_SIZE=128
