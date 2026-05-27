@@ -23,9 +23,6 @@ def main():
     cfg.eval = eval_cfg
     cfg.seed = 42
 
-    # We want baseline
-    cfg.eval.qa.what_is_on.baseline_counts_path = "data/2_tokenized/what_is_on_baseline_counts.json"
-
     load_move_vocab(
         MOVE_VOCAB_PATH,
         piece_aware_moves=cfg.get("piece_aware_moves", False),

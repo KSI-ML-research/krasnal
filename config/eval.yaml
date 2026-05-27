@@ -10,9 +10,7 @@ qa:
   what_is_on:
     enabled: true
     accuracy_per_square: true
-    # Set to e.g. data/2_tokenized/what_is_on_baseline_counts.json after running
-    # scripts/data/build_what_is_on_baseline_counts.py
-    baseline_counts_path: null
+    baseline_counts_path: data/2_tokenized/what_is_on_baseline_counts.json
 
 # null means use train.batch_size
 inference_batch_size: null

@@ -12,6 +12,7 @@ from pathlib import Path
 
 import hydra
 import polars as pl
+import pyarrow.parquet as pq
 from loguru import logger
 from omegaconf import DictConfig
 
@@ -20,11 +21,13 @@ from krasnal.config import (
     MOVE_VOCAB_PATH,
     PRETRAIN_DATASET_PATH,
     RAW_UCI_DIR,
+    WHAT_IS_ON_BASELINE_COUNTS_PATH,
 )
 from krasnal.preprocess import (
     PackedWindowBuilder,
     PreprocessConfig,
     build_move_vocab_from_corpus,
+    build_what_is_on_baseline_counts,
     log_preprocess_to_wandb,
     merge_token_mix_raw,
     one_row_one_game,
@@ -38,6 +41,41 @@ from krasnal.tokens import ELO_TOKENS, TC_TOKENS, load_move_vocab
 EVAL_MONTH = "2019-12"
 EVAL_GAMES_PER_BIN = 10_000
 EVAL_MIN_CLOCK = 30
+
+
+def _pack_train_part(
+    parquet_path: Path,
+    *,
+    packed_builder: PackedWindowBuilder,
+    packed_batches_dir: Path,
+    block_size: int,
+    batch_size: int,
+) -> None:
+    columns = ["token_ids", "active_clock_ids", "opponent_clock_ids"]
+    window_size = block_size + 1
+    for batch in pq.ParquetFile(parquet_path).iter_batches(
+        batch_size=batch_size,
+        columns=columns,
+    ):
+        data = batch.to_pydict()
+        token_rows = []
+        active_rows = []
+        opponent_rows = []
+        for tokens, active, opponent in zip(
+            data["token_ids"],
+            data["active_clock_ids"],
+            data["opponent_clock_ids"],
+            strict=True,
+        ):
+            if len(tokens) > block_size:
+                continue
+            token_rows.append(tokens[:window_size])
+            active_rows.append(active[:window_size])
+            opponent_rows.append(opponent[:window_size])
+        if token_rows:
+            packed_builder.feed_from_columns(token_rows, active_rows, opponent_rows)
+            packed_builder.drain()
+            packed_builder.maybe_flush(packed_batches_dir)
 
 
 def _sample_eval_games(raw_path: Path, output_path: Path, seed: int) -> None:
@@ -97,6 +135,9 @@ def main(cfg: DictConfig) -> None:
     what_is_on_prob = float(what_is_on_cfg.get("prob", 0.0))
     if not 0.0 <= what_is_on_prob <= 1.0:
         raise ValueError(f"qa.what_is_on.prob must be in [0, 1], got {what_is_on_prob}")
+    baseline_cfg = what_is_on_cfg.get("baseline", {})
+    build_what_is_on_baseline = bool(baseline_cfg.get("enabled", True))
+    what_is_on_baseline_max_games = int(baseline_cfg.get("max_games", 100_000))
 
     time_control_cfg = cfg.get("time_control", {})
     time_control_enabled = bool(time_control_cfg.get("enabled", True))
@@ -203,6 +244,7 @@ def main(cfg: DictConfig) -> None:
     eval_batches_dir.mkdir(parents=True)
 
     pack_flush_windows = max(1, int(cfg.get("pack_flush_windows", 8_000)))
+    pack_stream_batch_size = max(1, int(cfg.get("pack_stream_batch_size", 10_000)))
     packed_builder = PackedWindowBuilder(block_size, flush_every=pack_flush_windows)
 
     max_tokens = block_size
@@ -230,14 +272,13 @@ def main(cfg: DictConfig) -> None:
         if part_path.name.startswith("eval"):
             game_lf.sink_parquet(eval_batches_dir / f"{part_path.stem}.parquet")
         else:
-            train_df = game_lf.collect()
-            packed_builder.feed_from_columns(
-                train_df["token_ids"].to_list(),
-                train_df["active_clock_ids"].to_list(),
-                train_df["opponent_clock_ids"].to_list(),
+            _pack_train_part(
+                part_path,
+                packed_builder=packed_builder,
+                packed_batches_dir=packed_batches_dir,
+                block_size=block_size,
+                batch_size=pack_stream_batch_size,
             )
-            packed_builder.drain()
-            packed_builder.maybe_flush(packed_batches_dir)
         logger.info(
             "Finished packing part {}/{}: {}", part_idx, len(shuffled_parts), part_path.name
         )
@@ -331,6 +372,15 @@ def main(cfg: DictConfig) -> None:
     eval_rows = pl.scan_parquet(EVAL_DATASET_PATH).select(pl.len()).collect().item()
     if train_window_rows == 0:
         raise RuntimeError("Train dataset is empty. Increase input data or reduce block_size.")
+
+    if build_what_is_on_baseline:
+        build_what_is_on_baseline_counts(
+            train_dataset_path=PRETRAIN_DATASET_PATH,
+            output_path=WHAT_IS_ON_BASELINE_COUNTS_PATH,
+            block_size=block_size,
+            max_games=what_is_on_baseline_max_games,
+            seed=seed,
+        )
 
     logger.info(
         "Processed {} games -> {} (train windows: {}, eval games: {})",

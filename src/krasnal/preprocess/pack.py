@@ -111,9 +111,9 @@ class PackedWindowBuilder:
 
     def feed_from_columns(
         self,
-        token_ids_col: list[list[int]],
-        active_col: list[list[int]],
-        opp_col: list[list[int]],
+        token_ids_col,
+        active_col,
+        opp_col,
     ) -> None:
         """Queue games from three parallel list-of-lists (e.g. from Polars ``.to_list()``)."""
         for tokens, active, opp in zip(token_ids_col, active_col, opp_col, strict=True):
