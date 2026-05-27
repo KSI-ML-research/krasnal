@@ -143,6 +143,7 @@ def main(cfg: DictConfig) -> None:
 
     # --- Phase 1: Parallel tokenization + stats ---
     total_games = 0
+    invalid_clock_skips = 0
     mix_raw: dict[str, int] | None = None
     max_workers = int(cfg.preprocess_workers)
     logger.info("Processing {} shards with {} workers", len(parquet_files), max_workers)
@@ -160,13 +161,24 @@ def main(cfg: DictConfig) -> None:
         for future in as_completed(futures):
             parquet_name = futures[future]
             try:
-                done_name, count, output_name, shard_mix = future.result()
+                done_name, count, shard_invalid_clock_skips, output_name, shard_mix = (
+                    future.result()
+                )
                 total_games += count
+                invalid_clock_skips += shard_invalid_clock_skips
                 mix_raw = merge_token_mix_raw(mix_raw, shard_mix)
-                logger.info("Processed {}: {} games -> {}", done_name, count, output_name)
+                logger.info(
+                    "Processed {}: {} games -> {} (skipped invalid clock: {})",
+                    done_name,
+                    count,
+                    output_name,
+                    shard_invalid_clock_skips,
+                )
             except Exception as e:
                 logger.error("Failed to process {}: {}", parquet_name, e)
                 raise
+
+    logger.info("Skipped {} games due to invalid clock data", invalid_clock_skips)
 
     # --- Phase 2: Split + pack ---
     all_parts = sorted(
