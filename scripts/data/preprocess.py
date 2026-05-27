@@ -155,6 +155,13 @@ def main(cfg: DictConfig) -> None:
         for idx, parquet_path in enumerate(parquet_files):
             prefix = "eval" if EVAL_MONTH in parquet_path.name else "train"
             output_path = temp_dir / f"{prefix}_{idx:04d}.parquet"
+            logger.info(
+                "Submitting shard {}/{}: {} -> {}",
+                idx + 1,
+                len(parquet_files),
+                parquet_path.name,
+                output_path.name,
+            )
             future = executor.submit(process_one_shard, parquet_path, output_path, pp_cfg)
             futures[future] = parquet_path.name
 
@@ -203,8 +210,10 @@ def main(cfg: DictConfig) -> None:
 
     shuffled_parts = list(all_parts)
     random.Random(seed).shuffle(shuffled_parts)
+    logger.info("Packing {} tokenized parts", len(shuffled_parts))
 
-    for part_path in shuffled_parts:
+    for part_idx, part_path in enumerate(shuffled_parts, start=1):
+        logger.info("Packing part {}/{}: {}", part_idx, len(shuffled_parts), part_path.name)
         part_lf = pl.scan_parquet(part_path)
 
         # Collect sequence lengths
@@ -229,6 +238,9 @@ def main(cfg: DictConfig) -> None:
             )
             packed_builder.drain()
             packed_builder.maybe_flush(packed_batches_dir)
+        logger.info(
+            "Finished packing part {}/{}: {}", part_idx, len(shuffled_parts), part_path.name
+        )
 
     # --- Sequence length stats ---
     seq_lens = pl.concat(len_chunks, how="vertical")
