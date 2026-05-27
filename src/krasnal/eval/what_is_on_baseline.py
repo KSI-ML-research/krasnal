@@ -13,10 +13,19 @@ from krasnal.eval.metrics.context import EvalContext
 from krasnal.tokens import COLORED_PIECE_TOKENS, EMPTY_ID
 
 _WHAT_IS_ON_LABEL_IDS: tuple[int, ...] = (EMPTY_ID, *sorted(COLORED_PIECE_TOKENS.values()))
+_SQUARES: tuple[tuple[str, bulletchess.Square], ...] = tuple(
+    (f"{file}{rank}", bulletchess.Square.from_str(f"{file}{rank}"))
+    for file in "abcdefgh"
+    for rank in range(1, 9)
+)
 
 
 def _label_id_for_square(board: bulletchess.Board, sq_str: str) -> int:
     piece = board[bulletchess.Square.from_str(sq_str)]
+    return _label_id_for_piece(piece)
+
+
+def _label_id_for_piece(piece) -> int:
     if piece is None:
         return EMPTY_ID
     color_str = "w" if str(piece.color) == "White" else "b"
@@ -71,28 +80,38 @@ class WhatIsOnBaselineCounts:
 
 def accumulate_from_eval_contexts(contexts: list[EvalContext]) -> WhatIsOnBaselineCounts:
     """Build counts from replayed contexts (``post_move_fen``, ``what_is_on_ply``)."""
-    by_sq_ply_dd: dict[tuple[str, int], defaultdict[int, int]] = defaultdict(
-        lambda: defaultdict(int)
-    )
-    by_sq_dd: dict[str, defaultdict[int, int]] = defaultdict(lambda: defaultdict(int))
+    accumulator = WhatIsOnBaselineAccumulator()
+    accumulator.update(contexts)
+    return accumulator.to_counts()
 
-    files = "abcdefgh"
-    for ctx in contexts:
-        if ctx.post_move_fen is None or ctx.what_is_on_ply is None:
-            continue
-        board = bulletchess.Board.from_fen(ctx.post_move_fen)
-        ply = int(ctx.what_is_on_ply)
-        for fi in range(8):
-            for ri in range(8):
-                sq = f"{files[fi]}{ri + 1}"
-                lid = _label_id_for_square(board, sq)
-                by_sq_ply_dd[(sq, ply)][lid] += 1
-                by_sq_dd[sq][lid] += 1
 
-    return WhatIsOnBaselineCounts(
-        {k: dict(v) for k, v in by_sq_ply_dd.items()},
-        {k: dict(v) for k, v in by_sq_dd.items()},
-    )
+class WhatIsOnBaselineAccumulator:
+    """Incrementally accumulates empirical ``what_is_on`` baseline counts."""
+
+    def __init__(self) -> None:
+        self.by_sq_ply: dict[tuple[str, int], defaultdict[int, int]] = defaultdict(
+            lambda: defaultdict(int)
+        )
+        self.by_sq: dict[str, defaultdict[int, int]] = defaultdict(lambda: defaultdict(int))
+
+    def update(self, contexts: list[EvalContext]) -> None:
+        for ctx in contexts:
+            if ctx.post_move_fen is None or ctx.what_is_on_ply is None:
+                continue
+            board = bulletchess.Board.from_fen(ctx.post_move_fen)
+            self.update_board(board, int(ctx.what_is_on_ply))
+
+    def update_board(self, board: bulletchess.Board, ply: int) -> None:
+        for sq, bullet_sq in _SQUARES:
+            lid = _label_id_for_piece(board[bullet_sq])
+            self.by_sq_ply[(sq, ply)][lid] += 1
+            self.by_sq[sq][lid] += 1
+
+    def to_counts(self) -> WhatIsOnBaselineCounts:
+        return WhatIsOnBaselineCounts(
+            {k: dict(v) for k, v in self.by_sq_ply.items()},
+            {k: dict(v) for k, v in self.by_sq.items()},
+        )
 
 
 def macro_f1_multiclass(y_true: list[int], y_pred: list[int], *, labels: tuple[int, ...]) -> float:

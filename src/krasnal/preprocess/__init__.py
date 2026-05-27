@@ -21,6 +21,7 @@ from .tokenize import (
     process_file_streaming,
     process_one_shard,
 )
+from .what_is_on_baseline import build_what_is_on_baseline_counts
 
 __all__ = [
     "PAD_SEGMENT_ID",
@@ -28,6 +29,7 @@ __all__ = [
     "PackedWindowBuilder",
     "PreprocessConfig",
     "build_move_vocab_from_corpus",
+    "build_what_is_on_baseline_counts",
     "compute_token_mix_stats",
     "log_preprocess_to_wandb",
     "merge_token_mix_raw",

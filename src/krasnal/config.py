@@ -10,6 +10,7 @@ ARTIFACTS_DIR = Path("artifacts")
 PRETRAIN_DATASET_PATH = DATA_DIR / "2_tokenized/pretrain"
 EVAL_DATASET_PATH = DATA_DIR / "2_tokenized/eval.parquet"
 MOVE_VOCAB_PATH = DATA_DIR / "2_tokenized/move_vocab.json"
+WHAT_IS_ON_BASELINE_COUNTS_PATH = DATA_DIR / "2_tokenized/what_is_on_baseline_counts.json"
 CLOCK_IGNORE_ID = 2**32 - 1
 
 
