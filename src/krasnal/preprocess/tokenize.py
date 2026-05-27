@@ -191,10 +191,13 @@ def _build_game_tokens(
                 append_token(NO_CHECK_ID, active_clock_id, opponent_clock_id)
 
         if cfg.include_what_is_on_qa:
-            for m in b.legal_moves():
-                if m.uci() == move:
-                    b.apply(m)
-                    break
+            parsed_move = bulletchess.Move.from_uci(move)
+            try:
+                b.apply(parsed_move)
+            except ValueError as exc:
+                raise ValueError(
+                    f"game {uci_moves[:80]!r}: illegal move at ply {ply}: {move}"
+                ) from exc
 
             if sample_bool(
                 seed=cfg.seed + 20, game_key=uci_moves, ply=ply, probability=cfg.what_is_on_prob
@@ -432,6 +435,7 @@ def process_one_shard(
     """Multiprocess worker: load vocab, tokenize one parquet shard, compute stats."""
     from .stats import _token_mix_raw_sums
 
+    logger.info("Started processing {} -> {}", parquet_path.name, output_path.name)
     load_move_vocab(
         cfg.move_vocab_path,
         piece_aware_moves=cfg.piece_aware_moves,
