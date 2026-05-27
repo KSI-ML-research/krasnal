@@ -27,15 +27,15 @@ if [ -z "$SLURM_JOB_ID" ]; then
     if [ "$MODEL" = "small" ]; then
         TIME_LIMIT="6:00:00"
         BATCH_SIZE=192
-        NUM_WORKERS=10
+        NUM_WORKERS=4
     elif [ "$MODEL" = "medium" ]; then
         TIME_LIMIT="12:00:00"
         BATCH_SIZE=128
-        NUM_WORKERS=10
+        NUM_WORKERS=4
     else
         TIME_LIMIT="24:00:00"
         BATCH_SIZE=32
-        NUM_WORKERS=8
+        NUM_WORKERS=4
     fi
 
     echo "Submitting Slurm pretraining job..."
@@ -71,6 +71,8 @@ export XDG_RUNTIME_DIR=/tmp/$USER/runtime
 export UV_CACHE_DIR=$USER_DIRECTORY/.cache/uv
 export UV_LINK_MODE=copy
 export HF_HOME=$USER_DIRECTORY/.cache/huggingface
+export OMP_NUM_THREADS=4
+export MKL_NUM_THREADS=4
 mkdir -p $XDG_RUNTIME_DIR
 mkdir -p $UV_CACHE_DIR
 mkdir -p $HF_HOME
