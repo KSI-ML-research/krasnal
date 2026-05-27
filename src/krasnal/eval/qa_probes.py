@@ -94,8 +94,27 @@ def evaluate_is_check_probe(
     device: torch.device,
     *,
     include_confusion_matrix: bool = False,
+    batch_size: int = 64,
 ) -> dict[str, float]:
     """Run a batched is_check probe and return precision/recall/F1 metrics."""
+    counts = evaluate_is_check_probe_counts(contexts, model, device, batch_size=batch_size)
+    metrics = compute_binary_f1_metrics(tp=counts["tp"], fp=counts["fp"], fn=counts["fn"])
+    if include_confusion_matrix:
+        metrics["qa/is_check/confusion_matrix/tp"] = float(counts["tp"])
+        metrics["qa/is_check/confusion_matrix/fp"] = float(counts["fp"])
+        metrics["qa/is_check/confusion_matrix/tn"] = float(counts["tn"])
+        metrics["qa/is_check/confusion_matrix/fn"] = float(counts["fn"])
+    return metrics
+
+
+def evaluate_is_check_probe_counts(
+    contexts: list[EvalContext],
+    model: torch.nn.Module,
+    device: torch.device,
+    *,
+    batch_size: int = 64,
+) -> dict[str, int]:
+    """Run a batched is_check probe and return additive confusion counts."""
     probe_sequences: list[list[int]] = []
     probe_active: list[list[int]] = []
     probe_opponent: list[list[int]] = []
@@ -115,34 +134,25 @@ def evaluate_is_check_probe(
         labels.append(1 if ctx.gives_check else 0)
 
     if not probe_sequences:
-        return {
-            "qa/is_check/precision": 0.0,
-            "qa/is_check/recall": 0.0,
-            "qa/is_check/f1": 0.0,
-        }
+        return {"tp": 0, "fp": 0, "tn": 0, "fn": 0}
 
     batch_session = StatelessBatchInferenceSession(model, device)
-    probs = batch_session.get_raw_probs_batch(
+    logits = batch_session.get_raw_logits_batch(
         probe_sequences,
         active_clock_sequences=probe_active,
         opponent_clock_sequences=probe_opponent,
+        batch_size=batch_size,
     )
     preds: list[int] = []
-    for prob in probs:
-        preds.append(1 if prob[YES_CHECK_ID] >= prob[NO_CHECK_ID] else 0)
+    for logit in logits:
+        preds.append(1 if logit[YES_CHECK_ID] >= logit[NO_CHECK_ID] else 0)
 
     tp = sum(1 for pred, label in zip(preds, labels, strict=True) if pred == 1 and label == 1)
     fp = sum(1 for pred, label in zip(preds, labels, strict=True) if pred == 1 and label == 0)
     tn = sum(1 for pred, label in zip(preds, labels, strict=True) if pred == 0 and label == 0)
     fn = sum(1 for pred, label in zip(preds, labels, strict=True) if pred == 0 and label == 1)
 
-    metrics = compute_binary_f1_metrics(tp=tp, fp=fp, fn=fn)
-    if include_confusion_matrix:
-        metrics["qa/is_check/confusion_matrix/tp"] = float(tp)
-        metrics["qa/is_check/confusion_matrix/fp"] = float(fp)
-        metrics["qa/is_check/confusion_matrix/tn"] = float(tn)
-        metrics["qa/is_check/confusion_matrix/fn"] = float(fn)
-    return metrics
+    return {"tp": tp, "fp": fp, "tn": tn, "fn": fn}
 
 
 def evaluate_what_is_on_probe(
@@ -153,8 +163,45 @@ def evaluate_what_is_on_probe(
     *,
     include_per_square: bool = False,
     baseline: WhatIsOnBaselineCounts | None = None,
+    batch_size: int = 64,
 ) -> dict[str, Any]:
     """Run a batched what_is_on probe and return accuracy metrics."""
+    stats = evaluate_what_is_on_probe_stats(
+        contexts,
+        model,
+        device,
+        eval_seed,
+        baseline=baseline,
+        batch_size=batch_size,
+    )
+    return finalize_what_is_on_probe_stats(
+        stats,
+        include_per_square=include_per_square,
+        include_baseline=baseline is not None,
+    )
+
+
+def empty_what_is_on_probe_stats() -> dict[str, Any]:
+    return {
+        "correct": 0,
+        "total": 0,
+        "baseline_correct": 0,
+        "square_correct": {},
+        "square_count": {},
+        "square_baseline_correct": {},
+    }
+
+
+def evaluate_what_is_on_probe_stats(
+    contexts: list[EvalContext],
+    model: torch.nn.Module,
+    device: torch.device,
+    eval_seed: int,
+    *,
+    baseline: WhatIsOnBaselineCounts | None = None,
+    batch_size: int = 64,
+) -> dict[str, Any]:
+    """Run a batched what_is_on probe and return additive accuracy counts."""
     probe_sequences: list[list[int]] = []
     probe_active: list[list[int]] = []
     probe_opponent: list[list[int]] = []
@@ -190,68 +237,85 @@ def evaluate_what_is_on_probe(
         sq_strs.append(sq_str)
         plies.append(int(ply))
 
-    metrics: dict[str, Any] = {
-        "qa/what_is_on/acc": 0.0,
-    }
-    if include_per_square:
-        empty_acc = {f"{f}{r}": 0.0 for f in "abcdefgh" for r in range(1, 9)}
-        metrics["qa/what_is_on/acc_matrix"] = build_what_is_on_heatmap(empty_acc)
-
     if not probe_sequences:
-        return metrics
+        return empty_what_is_on_probe_stats()
 
     batch_session = StatelessBatchInferenceSession(model, device)
-    probs = batch_session.get_raw_probs_batch(
+    logits = batch_session.get_raw_logits_batch(
         probe_sequences,
         active_clock_sequences=probe_active,
         opponent_clock_sequences=probe_opponent,
+        batch_size=batch_size,
     )
     preds: list[int] = []
 
-    for prob in probs:
-        pred_id = max(_WHAT_IS_ON_LABEL_IDS, key=lambda pid: float(prob[pid]))
+    for logit in logits:
+        pred_id = max(_WHAT_IS_ON_LABEL_IDS, key=lambda pid: float(logit[pid]))
         preds.append(pred_id)
 
     correct = sum(1 for pred, label in zip(preds, labels, strict=True) if pred == label)
     total = len(labels)
 
-    metrics["qa/what_is_on/acc"] = correct / total if total > 0 else 0.0
-
     baseline_preds: list[int] | None = None
+    baseline_correct = 0
     if baseline is not None:
         baseline_preds = [baseline.predict(sq, pl) for sq, pl in zip(sq_strs, plies, strict=True)]
         baseline_correct = sum(
             1 for bp, label in zip(baseline_preds, labels, strict=True) if bp == label
         )
-        metrics["qa/what_is_on/acc_baseline"] = baseline_correct / total if total > 0 else 0.0
 
-    if include_per_square:
-        square_acc: dict[str, float] = {}
-        for file_i in range(8):
-            for rank_i in range(8):
-                sq = f"{chr(97 + file_i)}{1 + rank_i}"
-                sq_indices = [i for i, s in enumerate(sq_strs) if s == sq]
-                if not sq_indices:
-                    square_acc[sq] = 0.0
-                    continue
-                square_acc[sq] = sum(1 for i in sq_indices if preds[i] == labels[i]) / len(
-                    sq_indices
-                )
+    stats = empty_what_is_on_probe_stats()
+    stats["correct"] = correct
+    stats["total"] = total
+    stats["baseline_correct"] = baseline_correct
+    for i, sq in enumerate(sq_strs):
+        stats["square_count"][sq] = stats["square_count"].get(sq, 0) + 1
+        if preds[i] == labels[i]:
+            stats["square_correct"][sq] = stats["square_correct"].get(sq, 0) + 1
+        if baseline_preds is not None and baseline_preds[i] == labels[i]:
+            key = "square_baseline_correct"
+            stats[key][sq] = stats[key].get(sq, 0) + 1
+    return stats
 
-        metrics["qa/what_is_on/acc_matrix"] = build_what_is_on_heatmap(square_acc)
 
-        if baseline_preds is not None:
-            square_acc_bl: dict[str, float] = {}
-            for file_i in range(8):
-                for rank_i in range(8):
-                    sq = f"{chr(97 + file_i)}{1 + rank_i}"
-                    sq_indices = [i for i, s in enumerate(sq_strs) if s == sq]
-                    if not sq_indices:
-                        square_acc_bl[sq] = 0.0
-                        continue
-                    square_acc_bl[sq] = sum(
-                        1 for i in sq_indices if baseline_preds[i] == labels[i]
-                    ) / len(sq_indices)
-            metrics["qa/what_is_on/acc_matrix_baseline"] = build_what_is_on_heatmap(square_acc_bl)
+def merge_what_is_on_probe_stats(dst: dict[str, Any], src: dict[str, Any]) -> None:
+    dst["correct"] += src["correct"]
+    dst["total"] += src["total"]
+    dst["baseline_correct"] += src["baseline_correct"]
+    for key in ("square_correct", "square_count", "square_baseline_correct"):
+        for sq, count in src[key].items():
+            dst[key][sq] = dst[key].get(sq, 0) + count
 
+
+def finalize_what_is_on_probe_stats(
+    stats: dict[str, Any],
+    *,
+    include_per_square: bool = False,
+    include_baseline: bool = False,
+) -> dict[str, Any]:
+    total = stats["total"]
+    metrics: dict[str, Any] = {
+        "qa/what_is_on/acc": stats["correct"] / total if total > 0 else 0.0,
+    }
+    if include_baseline:
+        metrics["qa/what_is_on/acc_baseline"] = (
+            stats["baseline_correct"] / total if total > 0 else 0.0
+        )
+    if not include_per_square:
+        return metrics
+
+    square_acc: dict[str, float] = {}
+    square_acc_bl: dict[str, float] = {}
+    for file_i in range(8):
+        for rank_i in range(8):
+            sq = f"{chr(97 + file_i)}{1 + rank_i}"
+            count = stats["square_count"].get(sq, 0)
+            square_acc[sq] = stats["square_correct"].get(sq, 0) / count if count else 0.0
+            square_acc_bl[sq] = (
+                stats["square_baseline_correct"].get(sq, 0) / count if count else 0.0
+            )
+
+    metrics["qa/what_is_on/acc_matrix"] = build_what_is_on_heatmap(square_acc)
+    if include_baseline:
+        metrics["qa/what_is_on/acc_matrix_baseline"] = build_what_is_on_heatmap(square_acc_bl)
     return metrics

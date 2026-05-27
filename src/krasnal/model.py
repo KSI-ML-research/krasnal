@@ -395,6 +395,7 @@ class GPT(nn.Module):
         opponent_clock_ids: torch.Tensor | None = None,
         segment_ids: torch.Tensor | None = None,
         position_ids: torch.Tensor | None = None,
+        return_all_logits: bool = False,
     ) -> tuple[torch.Tensor, torch.Tensor | None]:
         """Transformer forward pass with optional targets and time conditioning."""
         assert len(idx.shape) == 2, "idx must be a 2D tensor of shape (B, T)"
@@ -440,13 +441,15 @@ class GPT(nn.Module):
         x = self.transformer.ln_f(x)
 
         if targets is not None:
-            # Training/validation: calculate loss across all sequence tokens
             logits = self.lm_head(x)
             loss = F.cross_entropy(
                 logits.view(-1, logits.size(-1)),
                 targets.view(-1),
                 ignore_index=ignore_index,
             )
+        elif return_all_logits:
+            logits = self.lm_head(x)
+            loss = None
         else:
             # Inference: only compute the language modeling head on the last token to save FLOPs
             logits = self.lm_head(x[:, [-1], :])  # preserves the sequence dimension shape (B, 1, V)
