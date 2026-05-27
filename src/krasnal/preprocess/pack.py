@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import json
+import shutil
 from collections import deque
 from pathlib import Path
 
+import numpy as np
 import polars as pl
 
 from krasnal.config import CLOCK_IGNORE_ID
@@ -21,6 +24,14 @@ _PACKED_SCHEMA = {
     "segment_ids": pl.List(pl.Int32),
     "position_ids": pl.List(pl.Int32),
 }
+
+_SHARD_COLUMNS = (
+    ("token_ids", np.uint16),
+    ("active_clock_ids", np.uint32),
+    ("opponent_clock_ids", np.uint32),
+    ("segment_ids", np.int16),
+    ("position_ids", np.int16),
+)
 
 
 def one_row_one_game(lazy_df: pl.LazyFrame, block_size: int) -> pl.LazyFrame:
@@ -88,7 +99,7 @@ def _append_game_prefix(
 
 
 class PackedWindowBuilder:
-    """Memory-bounded packer: feeds games incrementally and spills windows to parquet parts."""
+    """Memory-bounded packer: feeds games incrementally and spills fixed-array shards."""
 
     def __init__(self, block_size: int, *, flush_every: int = 8_000) -> None:
         self.window_size = block_size + 1
@@ -96,17 +107,7 @@ class PackedWindowBuilder:
         self.pending: _GameRow | None = None
         self._games: deque[_GameRow] = deque()
         self.row_buffer: list[dict[str, list[int]]] = []
-        self.part_paths: list[Path] = []
-
-    def feed_game(self, game: _GameRow) -> None:
-        if len(game[0]) > self.window_size:
-            raise ValueError(
-                f"Game length {len(game[0])} exceeds packed window size {self.window_size}; "
-                "filter games before packing"
-            )
-        self._games.append(game)
-        while self._emit_one_window():
-            pass
+        self.shard_paths: list[tuple[Path, int]] = []
 
     def feed_from_columns(
         self,
@@ -198,30 +199,21 @@ class PackedWindowBuilder:
         if len(self.row_buffer) < self.flush_every:
             return
         part_dir.mkdir(parents=True, exist_ok=True)
-        path = part_dir / f"part_{len(self.part_paths):04d}.parquet"
-        pl.DataFrame(self.row_buffer).write_parquet(path)
-        self.part_paths.append(path)
+        path = part_dir / f"part_{len(self.shard_paths):04d}"
+        rows = _write_packed_shard(path, self.row_buffer, self.window_size)
+        self.shard_paths.append((path, rows))
         self.row_buffer.clear()
 
-    def finish(self, output_path: Path, *, part_dir: Path | None = None) -> None:
+    def finish(self, output_path: Path, *, part_dir: Path) -> None:
         self.drain()
-        if part_dir is not None:
-            part_dir.mkdir(parents=True, exist_ok=True)
-            if self.row_buffer:
-                path = part_dir / f"part_{len(self.part_paths):04d}.parquet"
-                pl.DataFrame(self.row_buffer).write_parquet(path)
-                self.part_paths.append(path)
-                self.row_buffer.clear()
-
-        if self.part_paths:
-            pl.concat(pl.scan_parquet(p) for p in self.part_paths).sink_parquet(output_path)
-            return
-
+        part_dir.mkdir(parents=True, exist_ok=True)
         if self.row_buffer:
-            pl.DataFrame(self.row_buffer).write_parquet(output_path)
-            return
+            path = part_dir / f"part_{len(self.shard_paths):04d}"
+            rows = _write_packed_shard(path, self.row_buffer, self.window_size)
+            self.shard_paths.append((path, rows))
+            self.row_buffer.clear()
 
-        pl.DataFrame(schema=_PACKED_SCHEMA).write_parquet(output_path)
+        _write_packed_dataset_manifest(output_path, self.shard_paths, self.window_size)
 
 
 def pack_games_into_windows(games: pl.DataFrame, block_size: int, seed: int) -> pl.DataFrame:
@@ -235,3 +227,66 @@ def pack_games_into_windows(games: pl.DataFrame, block_size: int, seed: int) -> 
     if not builder.row_buffer:
         return pl.DataFrame(schema=_PACKED_SCHEMA)
     return pl.DataFrame(builder.row_buffer)
+
+
+def _rows_to_arrays(
+    rows: list[dict[str, list[int]]],
+    window_size: int,
+) -> dict[str, np.ndarray]:
+    arrays = {}
+    for column, dtype in _SHARD_COLUMNS:
+        arr = np.asarray([row[column] for row in rows], dtype=dtype)
+        if arr.ndim != 2 or arr.shape[1] != window_size:
+            raise ValueError(f"{column} shard has invalid shape {arr.shape}")
+        arrays[column] = arr
+    return arrays
+
+
+def _write_packed_shard(
+    path: Path,
+    rows: list[dict[str, list[int]]],
+    window_size: int,
+) -> int:
+    if path.exists():
+        shutil.rmtree(path)
+    path.mkdir(parents=True)
+    arrays = _rows_to_arrays(rows, window_size)
+    for column, arr in arrays.items():
+        np.save(path / f"{column}.npy", arr)
+    return len(rows)
+
+
+def _write_packed_dataset_manifest(
+    output_path: Path,
+    shard_paths: list[tuple[Path, int]],
+    window_size: int,
+) -> None:
+    if output_path.is_dir():
+        shutil.rmtree(output_path)
+    elif output_path.exists():
+        output_path.unlink()
+    output_path.mkdir(parents=True, exist_ok=True)
+
+    shards = []
+    total_rows = 0
+    for idx, (src_path, rows) in enumerate(shard_paths):
+        dst_path = output_path / f"part_{idx:04d}"
+        if src_path.resolve() != dst_path.resolve():
+            shutil.copytree(src_path, dst_path)
+        total_rows += rows
+        shards.append({"path": dst_path.name, "rows": rows})
+
+    with (output_path / "metadata.json").open("w") as f:
+        json.dump(
+            {
+                "format": "krasnal-packed-npy",
+                "version": 1,
+                "window_size": window_size,
+                "rows": total_rows,
+                "columns": [name for name, _dtype in _SHARD_COLUMNS],
+                "shards": shards,
+            },
+            f,
+            indent=2,
+        )
+        f.write("\n")

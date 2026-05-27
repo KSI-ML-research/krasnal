@@ -2,8 +2,8 @@ import polars as pl
 import torch
 
 from krasnal.config import CLOCK_IGNORE_ID
-from krasnal.dataset import make_collate_fn, make_packed_collate_fn
-from krasnal.preprocess import pack_games_into_windows
+from krasnal.dataset import PretrainDataset, make_collate_fn, make_packed_collate_fn
+from krasnal.preprocess import PackedWindowBuilder, pack_games_into_windows
 from krasnal.supervised_target_mask import LOSS_IGNORE_INDEX
 from krasnal.tokens import GAME_END_ID, GAME_START_ID, PAD_ID, WHITE_WON_ID
 
@@ -156,3 +156,37 @@ def test_single_game_packed_matches_unpacked_collate_on_supervised_positions():
         assert py[0, i].item() == y[0, i].item()
         assert pa[0, i].item() == a[0, i].item()
         assert po[0, i].item() == o[0, i].item()
+
+
+def test_packed_builder_writes_mmap_dataset(tmp_path):
+    block_size = 4
+    games = pl.DataFrame(
+        {
+            "token_ids": [
+                [GAME_START_ID, 10, GAME_END_ID],
+                [GAME_START_ID, 20, GAME_END_ID],
+            ],
+            "active_clock_ids": [[CLOCK_IGNORE_ID] * 3, [CLOCK_IGNORE_ID] * 3],
+            "opponent_clock_ids": [[CLOCK_IGNORE_ID] * 3, [CLOCK_IGNORE_ID] * 3],
+        }
+    )
+    builder = PackedWindowBuilder(block_size, flush_every=1)
+    builder.feed_from_columns(
+        games["token_ids"].to_list(),
+        games["active_clock_ids"].to_list(),
+        games["opponent_clock_ids"].to_list(),
+    )
+    builder.drain()
+    builder.maybe_flush(tmp_path / "parts")
+    builder.finish(tmp_path / "pretrain", part_dir=tmp_path / "parts")
+
+    ds = PretrainDataset(tmp_path / "pretrain")
+    assert len(ds) == 2
+    tokens, active, opponent, segments, positions = ds[0]
+    assert tokens.dtype == torch.long
+    assert active.dtype == torch.long
+    assert opponent.dtype == torch.long
+    assert segments.dtype == torch.long
+    assert positions.dtype == torch.long
+    assert tokens.shape == (block_size + 1,)
+    assert tokens[0].item() == GAME_START_ID

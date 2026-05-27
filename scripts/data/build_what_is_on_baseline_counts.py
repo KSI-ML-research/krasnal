@@ -17,10 +17,10 @@ from krasnal.tokens import load_move_vocab
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser()
     p.add_argument(
-        "--train-parquet",
+        "--train-dataset",
         type=Path,
         default=PRETRAIN_DATASET_PATH,
-        help="Packed training parquet (default: krasnal pretrain path)",
+        help="Packed training dataset directory (default: krasnal pretrain path)",
     )
     p.add_argument(
         "--output",
@@ -52,10 +52,10 @@ def main() -> None:
         side_prefixed_moves=True,
     )
 
-    if not args.train_parquet.exists():
-        raise FileNotFoundError(args.train_parquet)
+    if not args.train_dataset.exists():
+        raise FileNotFoundError(args.train_dataset)
 
-    ds = PretrainDataset(args.train_parquet)
+    ds = PretrainDataset(args.train_dataset)
     window_indices = list(range(len(ds)))
     if args.max_games > 0:
         rng = random.Random(args.seed)
