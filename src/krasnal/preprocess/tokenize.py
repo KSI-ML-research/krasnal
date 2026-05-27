@@ -2,25 +2,27 @@
 
 from __future__ import annotations
 
+from hashlib import blake2b
 from pathlib import Path
 
 import bulletchess
 import polars as pl
 from loguru import logger
 
-from krasnal.sampling import sample_bool
 from krasnal.time_conditioning import uniform_clock_pair
 from krasnal.tokens import (
+    BLACK_PREFIX,
     GAME_END_ID,
     GAME_START_ID,
     IS_CHECK_ID,
+    MOVE_TO_ID,
     NO_CHECK_ID,
+    WHITE_PREFIX,
     YES_CHECK_ID,
     get_elo_bucket,
     get_time_control_bucket,
     load_move_vocab,
     move_key_for_ply,
-    move_token_id_for_ply,
     normalize_piece_type,
     result_to_token_id,
     save_move_vocab,
@@ -66,6 +68,30 @@ def _compute_check_qa_probs(
     return check_qa_prob, min(max(p_no, 0.0), 1.0)
 
 
+def _sample_bool_with_prefix(prefix: bytes, ply: int, probability: float) -> bool:
+    if probability <= 0.0:
+        return False
+    if probability >= 1.0:
+        return True
+    digest = blake2b(prefix + str(ply).encode(), digest_size=8).digest()
+    value = int.from_bytes(digest, byteorder="big") / 2**64
+    return value < probability
+
+
+def _move_token_id_for_ply(
+    move: str,
+    ply: int,
+    piece_type: str,
+    cfg: PreprocessConfig,
+) -> int | None:
+    key = move
+    if cfg.piece_aware_moves:
+        key = f"{piece_type}:{key}"
+    if cfg.side_prefixed_moves:
+        key = f"{WHITE_PREFIX if ply % 2 == 0 else BLACK_PREFIX}{key}"
+    return MOVE_TO_ID.get(key)
+
+
 def _clock_seconds(value: object, *, context: str) -> int:
     from krasnal.config import CLOCK_IGNORE_ID
 
@@ -79,14 +105,14 @@ def _clock_seconds(value: object, *, context: str) -> int:
     return seconds
 
 
-def _validated_clock_arrays(
+def _validated_clock_initial(
     clocks_white: object,
     clocks_black: object,
     moves_list: list[str],
     *,
     time_initial: int | None,
     context: str,
-) -> tuple[list[tuple[int, int]], int]:
+) -> int:
     if clocks_white is None or clocks_black is None:
         raise InvalidClockDataError(f"{context}: clocks_white or clocks_black is missing")
     if not isinstance(clocks_white, list) or not isinstance(clocks_black, list):
@@ -100,24 +126,7 @@ def _validated_clock_arrays(
             f"do not match expected white={expected_white}, black={expected_black}"
         )
 
-    initial = _clock_seconds(time_initial, context=f"{context}: time_initial")
-    white_remaining = initial
-    black_remaining = initial
-    clock_pairs: list[tuple[int, int]] = []
-    for ply in range(len(moves_list)):
-        if ply % 2 == 0:
-            white_remaining = _clock_seconds(
-                clocks_white[ply // 2],
-                context=f"{context}: clocks_white[{ply // 2}]",
-            )
-            clock_pairs.append((white_remaining, black_remaining))
-        else:
-            black_remaining = _clock_seconds(
-                clocks_black[ply // 2],
-                context=f"{context}: clocks_black[{ply // 2}]",
-            )
-            clock_pairs.append((black_remaining, white_remaining))
-    return clock_pairs, initial
+    return _clock_seconds(time_initial, context=f"{context}: time_initial")
 
 
 def _build_game_tokens(
@@ -147,18 +156,25 @@ def _build_game_tokens(
         moves_list,
         context=f"game {uci_moves[:80]!r}",
     )
-    move_clock_pairs, time_initial_sec = _validated_clock_arrays(
+    context = f"game {uci_moves[:80]!r}"
+    time_initial_sec = _validated_clock_initial(
         clocks_white,
         clocks_black,
         moves_list,
         time_initial=time_initial,
-        context=f"game {uci_moves[:80]!r}",
+        context=context,
     )
     start_clock = uniform_clock_pair(time_initial_sec)
+    white_remaining = time_initial_sec
+    black_remaining = time_initial_sec
+    end_active = time_initial_sec
+    end_opponent = time_initial_sec
 
     result_tokens = []
     active_clock_ids = []
     opponent_clock_ids = []
+    check_sample_prefix = f"{cfg.seed}|{uci_moves}|".encode()
+    whats_on_sample_prefix = f"{cfg.seed + 20}|{uci_moves}|".encode()
 
     def append_token(
         token_id: int,
@@ -171,22 +187,38 @@ def _build_game_tokens(
 
     for ply, move in enumerate(moves_list):
         piece_type = piece_types[ply]
-        move_id = move_token_id_for_ply(move, ply, piece_type)
+        move_id = _move_token_id_for_ply(move, ply, piece_type, cfg)
         if move_id is None:
-            key = move_key_for_ply(move, ply, piece_type)
+            key = move_key_for_ply(
+                move,
+                ply,
+                piece_type,
+                piece_aware_moves=cfg.piece_aware_moves,
+                side_prefixed_moves=cfg.side_prefixed_moves,
+            )
             raise ValueError(f"Move key {key!r} is missing from generated move vocab")
-        active_clock_id, opponent_clock_id = move_clock_pairs[ply]
+        if ply % 2 == 0:
+            white_remaining = _clock_seconds(
+                clocks_white[ply // 2],
+                context=f"{context}: clocks_white[{ply // 2}]",
+            )
+            active_clock_id, opponent_clock_id = white_remaining, black_remaining
+        else:
+            black_remaining = _clock_seconds(
+                clocks_black[ply // 2],
+                context=f"{context}: clocks_black[{ply // 2}]",
+            )
+            active_clock_id, opponent_clock_id = black_remaining, white_remaining
+        end_active, end_opponent = active_clock_id, opponent_clock_id
         append_token(move_id, active_clock_id, opponent_clock_id)
 
         if cfg.include_check_qa:
             gives_check = ply < len(is_check) and bool(is_check[ply])
             if gives_check:
-                if sample_bool(
-                    seed=cfg.seed, game_key=uci_moves, ply=ply, probability=cfg.check_qa_prob
-                ):
+                if _sample_bool_with_prefix(check_sample_prefix, ply, cfg.check_qa_prob):
                     append_token(IS_CHECK_ID, active_clock_id, opponent_clock_id)
                     append_token(YES_CHECK_ID, active_clock_id, opponent_clock_id)
-            elif sample_bool(seed=cfg.seed, game_key=uci_moves, ply=ply, probability=p_no):
+            elif _sample_bool_with_prefix(check_sample_prefix, ply, p_no):
                 append_token(IS_CHECK_ID, active_clock_id, opponent_clock_id)
                 append_token(NO_CHECK_ID, active_clock_id, opponent_clock_id)
 
@@ -199,9 +231,7 @@ def _build_game_tokens(
                     f"game {uci_moves[:80]!r}: illegal move at ply {ply}: {move}"
                 ) from exc
 
-            if sample_bool(
-                seed=cfg.seed + 20, game_key=uci_moves, ply=ply, probability=cfg.what_is_on_prob
-            ):
+            if _sample_bool_with_prefix(whats_on_sample_prefix, ply, cfg.what_is_on_prob):
                 _, whats_on_token_id, ans_id = whats_on_probe_labels(
                     b,
                     post_move_fen=b.fen(),
@@ -222,7 +252,6 @@ def _build_game_tokens(
         prefix_tokens.append(get_time_control_bucket(time_initial, time_increment))
     prefix_tokens.extend([result_to_token_id(result), white_elo, black_elo])
     prefix_active, prefix_opponent = zip(*[start_clock] * len(prefix_tokens), strict=True)
-    end_active, end_opponent = move_clock_pairs[-1] if move_clock_pairs else start_clock
     token_ids = prefix_tokens + result_tokens + [GAME_END_ID]
     active_ids = list(prefix_active) + active_clock_ids + [end_active]
     opponent_ids = list(prefix_opponent) + opponent_clock_ids + [end_opponent]

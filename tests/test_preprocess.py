@@ -3,7 +3,6 @@ import json
 import polars as pl
 import pytest
 
-import krasnal.preprocess.tokenize as tokenize_module
 from krasnal.preprocess import (
     InvalidClockDataError,
     PreprocessConfig,
@@ -14,16 +13,23 @@ from krasnal.preprocess.stats import compute_token_mix_stats
 from krasnal.preprocess.tokenize import (
     _build_game_tokens,
     _compute_check_qa_probs,
+    _sample_bool_with_prefix,
 )
+from krasnal.sampling import sample_bool
 from krasnal.tokens import (
     ELO_1500_1599_ID,
     GAME_END_ID,
     GAME_START_ID,
+    MOVE_TO_ID,
     TC_BLITZ_INC_ID,
     TC_BLITZ_NO_INC_ID,
     TC_TOKENS,
     WHITE_WON_ID,
 )
+
+
+def _install_test_move(monkeypatch, move_key: str = "w:e2e4", token_id: int = 500) -> None:
+    monkeypatch.setitem(MOVE_TO_ID, move_key, token_id)
 
 
 def test_compute_check_qa_probs_balances_yes_no_average():
@@ -38,6 +44,18 @@ def test_compute_check_qa_probs_handles_no_non_check_positions():
 
     assert p_yes == 0.5
     assert p_no == 0.0
+
+
+def test_sample_bool_with_prefix_matches_shared_sampler():
+    game_key = "e2e4 e7e5 g1f3"
+    seed = 123
+    prefix = f"{seed}|{game_key}|".encode()
+
+    for probability in [0.0, 0.1, 0.5, 1.0]:
+        assert [_sample_bool_with_prefix(prefix, ply, probability) for ply in range(20)] == [
+            sample_bool(seed=seed, game_key=game_key, ply=ply, probability=probability)
+            for ply in range(20)
+        ]
 
 
 def test_build_move_vocab_from_corpus_writes_sorted_manifest_vocab(tmp_path):
@@ -87,7 +105,7 @@ def test_build_move_vocab_from_corpus_fails_on_malformed_piece_moved(tmp_path):
 
 
 def test_build_game_tokens_adds_time_control_after_game_start(monkeypatch):
-    monkeypatch.setattr(tokenize_module, "move_token_id_for_ply", lambda *_args: 500)
+    _install_test_move(monkeypatch)
 
     cfg = PreprocessConfig(
         seed=1,
@@ -127,7 +145,7 @@ def test_build_game_tokens_adds_time_control_after_game_start(monkeypatch):
 
 
 def test_build_game_tokens_skips_time_control_when_disabled(monkeypatch):
-    monkeypatch.setattr(tokenize_module, "move_token_id_for_ply", lambda *_args: 500)
+    _install_test_move(monkeypatch)
 
     cfg = PreprocessConfig(
         seed=1,
@@ -164,9 +182,7 @@ def test_build_game_tokens_skips_time_control_when_disabled(monkeypatch):
     assert opponent_clocks[-2] == 180
 
 
-def test_build_game_tokens_raises_on_missing_clocks(monkeypatch):
-    monkeypatch.setattr(tokenize_module, "move_token_id_for_ply", lambda *_args: 500)
-
+def test_build_game_tokens_raises_on_missing_clocks():
     cfg = PreprocessConfig(
         seed=1,
         block_size=1024,
@@ -191,9 +207,7 @@ def test_build_game_tokens_raises_on_missing_clocks(monkeypatch):
         )
 
 
-def test_build_game_tokens_raises_on_mismatched_clock_lengths(monkeypatch):
-    monkeypatch.setattr(tokenize_module, "move_token_id_for_ply", lambda *_args: 500)
-
+def test_build_game_tokens_raises_on_mismatched_clock_lengths():
     cfg = PreprocessConfig(
         seed=1,
         block_size=1024,
@@ -219,7 +233,7 @@ def test_build_game_tokens_raises_on_mismatched_clock_lengths(monkeypatch):
 
 
 def test_process_file_streaming_counts_invalid_clock_skips(tmp_path, monkeypatch):
-    monkeypatch.setattr(tokenize_module, "move_token_id_for_ply", lambda *_args: 500)
+    _install_test_move(monkeypatch)
 
     input_path = tmp_path / "games.parquet"
     output_path = tmp_path / "tokenized.parquet"
