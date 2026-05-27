@@ -1,15 +1,11 @@
 from dataclasses import dataclass
 
-import torch
-
 
 @dataclass
 class EvalContext:
     """Context for metric computation.
 
     Attributes:
-        probs: Model's probability distribution over tokens.
-        legal_ids: List of legal move token IDs in current position.
         sequence: Token sequence for inference.
         piece_type: Type of piece that was moved (1=pawn, ..., 6=king).
         actual_token: The actual token that was played (ground truth).
@@ -22,8 +18,6 @@ class EvalContext:
         opponent_clock_seconds: Opponent remaining seconds at the same ply (if known).
     """
 
-    probs: torch.Tensor | None = None
-    legal_ids: list[int] | None = None
     sequence: list[int] | None = None
     piece_type: int | None = None
     actual_token: int | None = None

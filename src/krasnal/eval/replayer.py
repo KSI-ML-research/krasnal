@@ -62,7 +62,6 @@ def replay_game_tokens(game_tokens: GameTokens) -> list[EvalContext]:
 
         contexts.append(
             EvalContext(
-                probs=None,
                 sequence=context.copy(),
                 piece_type=piece_type,
                 actual_token=move_token,
