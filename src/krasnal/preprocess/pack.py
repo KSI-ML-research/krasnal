@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections import deque
 from pathlib import Path
 
 import polars as pl
@@ -93,7 +94,7 @@ class PackedWindowBuilder:
         self.window_size = block_size + 1
         self.flush_every = max(1, flush_every)
         self.pending: _GameRow | None = None
-        self._games: list[_GameRow] = []
+        self._games: deque[_GameRow] = deque()
         self.row_buffer: list[dict[str, list[int]]] = []
         self.part_paths: list[Path] = []
 
@@ -165,7 +166,7 @@ class PackedWindowBuilder:
             self.pending = self.pending if resume < len(self.pending[0]) else None
 
         while self.pending is None and self._games and len(tokens) < self.window_size:
-            game = self._games.pop(0)
+            game = self._games.popleft()
             segment, pos_in_segment, resume = _append_game_prefix(
                 game,
                 0,

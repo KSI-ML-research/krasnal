@@ -232,7 +232,7 @@ def process_file_streaming(
     parquet_path: Path,
     output_path: Path,
     cfg: PreprocessConfig,
-) -> int:
+) -> tuple[int, int]:
     lf = pl.scan_parquet(parquet_path)
 
     if cfg.include_check_qa:
@@ -255,7 +255,10 @@ def process_file_streaming(
     else:
         p_no = 1.0
 
+    invalid_clock_skips = 0
+
     def build_tokens_batch(batch: pl.DataFrame) -> pl.DataFrame:
+        nonlocal invalid_clock_skips
         token_ids_list = []
         active_clock_ids_list = []
         opponent_clock_ids_list = []
@@ -320,8 +323,8 @@ def process_file_streaming(
                     clocks_black=clocks_black,
                     fen=fen,
                 )
-            except InvalidClockDataError as exc:
-                logger.warning("Skipping game due to invalid clock data: {}", exc)
+            except InvalidClockDataError:
+                invalid_clock_skips += 1
                 continue
 
             token_ids_list.append(token_ids)
@@ -359,7 +362,7 @@ def process_file_streaming(
             "opponent_clock_ids": pl.List(pl.UInt32),
         },
     ).sink_parquet(output_path)
-    return row_count
+    return row_count, invalid_clock_skips
 
 
 def build_move_vocab_from_corpus(
@@ -425,7 +428,7 @@ def process_one_shard(
     parquet_path: Path,
     output_path: Path,
     cfg: PreprocessConfig,
-) -> tuple[str, int, str, dict[str, int]]:
+) -> tuple[str, int, int, str, dict[str, int]]:
     """Multiprocess worker: load vocab, tokenize one parquet shard, compute stats."""
     from .stats import _token_mix_raw_sums
 
@@ -434,6 +437,6 @@ def process_one_shard(
         piece_aware_moves=cfg.piece_aware_moves,
         side_prefixed_moves=cfg.side_prefixed_moves,
     )
-    count = process_file_streaming(parquet_path, output_path, cfg)
+    count, invalid_clock_skips = process_file_streaming(parquet_path, output_path, cfg)
     raw_sums = _token_mix_raw_sums(pl.scan_parquet(output_path).select("token_ids"))
-    return parquet_path.name, count, output_path.name, raw_sums
+    return parquet_path.name, count, invalid_clock_skips, output_path.name, raw_sums

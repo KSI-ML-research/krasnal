@@ -8,6 +8,7 @@ from krasnal.preprocess import (
     InvalidClockDataError,
     PreprocessConfig,
     build_move_vocab_from_corpus,
+    process_file_streaming,
 )
 from krasnal.preprocess.stats import compute_token_mix_stats
 from krasnal.preprocess.tokenize import (
@@ -215,6 +216,46 @@ def test_build_game_tokens_raises_on_mismatched_clock_lengths(monkeypatch):
             clocks_white=[170],
             clocks_black=[165],
         )
+
+
+def test_process_file_streaming_counts_invalid_clock_skips(tmp_path, monkeypatch):
+    monkeypatch.setattr(tokenize_module, "move_token_id_for_ply", lambda *_args: 500)
+
+    input_path = tmp_path / "games.parquet"
+    output_path = tmp_path / "tokenized.parquet"
+    pl.DataFrame(
+        {
+            "uci_moves": ["e2e4", "e2e4 e7e5"],
+            "is_check": [[False], [False, False]],
+            "piece_moved": [["p"], ["p", "p"]],
+            "result": ["1-0", "0-1"],
+            "white_rating": [1500, 1500],
+            "black_rating": [1500, 1500],
+            "clocks_white": [[170], [170]],
+            "clocks_black": [[], []],
+            "time_initial": [180, 180],
+            "time_increment": [0, 0],
+        }
+    ).write_parquet(input_path)
+
+    cfg = PreprocessConfig(
+        seed=1,
+        block_size=1024,
+        time_control_enabled=True,
+        include_check_qa=False,
+        check_qa_prob=0.0,
+    )
+
+    row_count, invalid_clock_skips = process_file_streaming(input_path, output_path, cfg)
+
+    assert row_count == 2
+    assert invalid_clock_skips == 1
+    assert pl.read_parquet(output_path).columns == [
+        "token_ids",
+        "active_clock_ids",
+        "opponent_clock_ids",
+    ]
+    assert len(pl.read_parquet(output_path)) == 1
 
 
 def test_token_mix_stats_counts_time_control_buckets():
