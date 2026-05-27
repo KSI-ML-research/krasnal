@@ -326,7 +326,8 @@ def main(cfg: DictConfig) -> None:
 
     shutil.rmtree(temp_dir)
 
-    train_window_rows = pl.scan_parquet(PRETRAIN_DATASET_PATH).select(pl.len()).collect().item()
+    with (PRETRAIN_DATASET_PATH / "metadata.json").open() as f:
+        train_window_rows = int(json.load(f)["rows"])
     eval_rows = pl.scan_parquet(EVAL_DATASET_PATH).select(pl.len()).collect().item()
     if train_window_rows == 0:
         raise RuntimeError("Train dataset is empty. Increase input data or reduce block_size.")

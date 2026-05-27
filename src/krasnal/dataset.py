@@ -1,7 +1,9 @@
+import json
 import os
 from collections.abc import Callable
 from pathlib import Path
 
+import numpy as np
 import torch
 import torch.nn.functional as F
 from datasets import Dataset as HFDataset
@@ -87,46 +89,59 @@ class PretrainDataset(
 ):
     """Packed training windows (fixed length) with segment and position metadata."""
 
-    def __init__(self, parquet_path: Path | list[Path]):
-        paths = (
-            [str(path) for path in parquet_path]
-            if isinstance(parquet_path, list)
-            else str(parquet_path)
-        )
-        cache_dir = Path(resolve_hf_datasets_cache_dir())
-        cache_dir.mkdir(parents=True, exist_ok=True)
-        self.dataset = HFDataset.from_parquet(paths, cache_dir=str(cache_dir))
-        required = {
+    def __init__(self, dataset_path: Path):
+        self.dataset_path = Path(dataset_path)
+        metadata_path = self.dataset_path / "metadata.json"
+        with metadata_path.open() as f:
+            metadata = json.load(f)
+        if metadata.get("format") != "krasnal-packed-npy":
+            raise ValueError(f"Unsupported packed dataset format in {metadata_path}")
+
+        self.columns = tuple(metadata["columns"])
+        expected = (
             "token_ids",
             "active_clock_ids",
             "opponent_clock_ids",
             "segment_ids",
             "position_ids",
-        }
-        missing = required - set(self.dataset.column_names)
-        if missing:
-            raise ValueError(f"Packed dataset missing columns: {sorted(missing)}")
-        self.dataset.set_format(
-            type="torch",
-            columns=[
-                "token_ids",
-                "active_clock_ids",
-                "opponent_clock_ids",
-                "segment_ids",
-                "position_ids",
-            ],
         )
+        if self.columns != expected:
+            raise ValueError(f"Packed dataset columns must be {expected}, got {self.columns}")
+
+        self.shards = []
+        offsets = [0]
+        for shard in metadata["shards"]:
+            shard_dir = self.dataset_path / shard["path"]
+            arrays = {
+                column: np.load(shard_dir / f"{column}.npy", mmap_mode="r")
+                for column in self.columns
+            }
+            rows = int(shard["rows"])
+            if rows != arrays["token_ids"].shape[0]:
+                raise ValueError(f"Shard row count mismatch in {shard_dir}")
+            self.shards.append(arrays)
+            offsets.append(offsets[-1] + rows)
+        self.offsets = offsets
+        self.row_count = int(metadata["rows"])
+        if self.row_count != self.offsets[-1]:
+            raise ValueError(f"Packed dataset row count mismatch in {metadata_path}")
 
     def __len__(self) -> int:
-        return len(self.dataset)
+        return self.row_count
 
     def __getitem__(self, idx: int):
-        row = self.dataset[idx]
-        tokens = row["token_ids"].to(torch.long)
-        active_clocks = row["active_clock_ids"].to(torch.long)
-        opponent_clocks = row["opponent_clock_ids"].to(torch.long)
-        segment_ids = row["segment_ids"].to(torch.long)
-        position_ids = row["position_ids"].to(torch.long)
+        if idx < 0:
+            idx += self.row_count
+        if not 0 <= idx < self.row_count:
+            raise IndexError(idx)
+        shard_idx = int(np.searchsorted(self.offsets, idx, side="right") - 1)
+        row_idx = idx - self.offsets[shard_idx]
+        shard = self.shards[shard_idx]
+        tokens = torch.tensor(shard["token_ids"][row_idx], dtype=torch.long)
+        active_clocks = torch.tensor(shard["active_clock_ids"][row_idx], dtype=torch.long)
+        opponent_clocks = torch.tensor(shard["opponent_clock_ids"][row_idx], dtype=torch.long)
+        segment_ids = torch.tensor(shard["segment_ids"][row_idx], dtype=torch.long)
+        position_ids = torch.tensor(shard["position_ids"][row_idx], dtype=torch.long)
         n = tokens.size(0)
         if not (
             active_clocks.size(0)

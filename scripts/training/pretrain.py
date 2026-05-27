@@ -185,6 +185,7 @@ def _main(cfg: DictConfig, dist_info: DistributedInfo) -> None:
         num_workers=train_num_workers,
         persistent_workers=train_num_workers > 0,
         prefetch_factor=4 if train_num_workers > 0 else None,
+        in_order=False,
         collate_fn=train_collate,
     )
 
