@@ -3,7 +3,7 @@ import bulletchess
 from krasnal.config import CLOCK_IGNORE_ID
 from krasnal.eval.metrics.context import EvalContext
 from krasnal.eval.parsers import GameTokens
-from krasnal.tokens import legal_token_ids, to_uci
+from krasnal.tokens import to_uci
 
 PIECE_TYPE_TO_INT = {pt: i + 1 for i, pt in enumerate(bulletchess.PIECE_TYPES)}
 
@@ -37,10 +37,6 @@ def replay_game_tokens(game_tokens: GameTokens) -> list[EvalContext]:
     clock_opponent = [po] * len(context)
 
     for move_idx, move_token in enumerate(game_tokens.move_tokens):
-        legal_ids = legal_token_ids(board)
-        if not legal_ids:
-            break
-
         in_check = board in bulletchess.CHECK
         phase = get_game_phase(move_idx)
         player_elo_token = (
@@ -67,7 +63,6 @@ def replay_game_tokens(game_tokens: GameTokens) -> list[EvalContext]:
         contexts.append(
             EvalContext(
                 probs=None,
-                legal_ids=legal_ids,
                 sequence=context.copy(),
                 piece_type=piece_type,
                 actual_token=move_token,

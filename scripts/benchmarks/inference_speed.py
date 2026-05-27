@@ -17,6 +17,7 @@ from tqdm import tqdm
 
 from krasnal.inference.exceptions import NoLegalMovesError
 from krasnal.tokens import WHITE_WON_ID
+from krasnal.uci_engine.go_params import GoParams
 from krasnal.uci_engine.provider import ModelProvider
 
 
@@ -42,11 +43,25 @@ def _print_results(move_times: list[float], plies_completed: int) -> None:
     print(f"  Throughput: {throughput:.2f} moves/s")
 
 
+def _configure_time_conditioning(
+    provider: ModelProvider,
+    *,
+    clock_initial_seconds: int,
+    clock_increment_seconds: int,
+) -> GoParams:
+    """Mirror UCI setoption + go clocks for time-conditioned models."""
+    provider.apply_setoption("krasnalInitialSeconds", str(clock_initial_seconds))
+    provider.apply_setoption("krasnalIncrementSeconds", str(clock_increment_seconds))
+    clock_ms = clock_initial_seconds * 1000
+    return GoParams(wtime_ms=clock_ms, btime_ms=clock_ms)
+
+
 def _run_one_game(
     provider: ModelProvider,
     *,
     moves_per_game: int,
     measure: bool,
+    go_params: GoParams | None,
 ) -> tuple[list[float], int]:
     board = bulletchess.Board()
     uci_moves: list[str] = []
@@ -60,6 +75,8 @@ def _run_one_game(
             break
 
         history = " ".join(uci_moves)
+        if go_params is not None:
+            provider.set_go_params(go_params)
         _sync_device(provider.device)
         start = time.perf_counter()
         try:
@@ -99,6 +116,18 @@ def main() -> None:
         default="cpu",
         help="Device to run inference on",
     )
+    parser.add_argument(
+        "--clock-initial-seconds",
+        type=int,
+        default=180,
+        help="Initial clock (krasnalInitialSeconds) when use_time_conditioning is enabled",
+    )
+    parser.add_argument(
+        "--clock-increment-seconds",
+        type=int,
+        default=2,
+        help="Increment (krasnalIncrementSeconds) for time-control prefix token",
+    )
     args = parser.parse_args()
 
     random.seed(args.seed)
@@ -122,10 +151,26 @@ def main() -> None:
     )
     print(f"Device: {args.device}")
     print(f"Games: {args.num_games}, Moves/game: {args.moves_per_game}")
+    go_params: GoParams | None = None
+    if cfg.use_time_conditioning:
+        go_params = _configure_time_conditioning(
+            provider,
+            clock_initial_seconds=args.clock_initial_seconds,
+            clock_increment_seconds=args.clock_increment_seconds,
+        )
+        print(
+            f"Time conditioning: initial={args.clock_initial_seconds}s,"
+            f" inc={args.clock_increment_seconds}s"
+        )
     print()
 
     for _ in range(args.warmup):
-        _run_one_game(provider, moves_per_game=args.moves_per_game, measure=False)
+        _run_one_game(
+            provider,
+            moves_per_game=args.moves_per_game,
+            measure=False,
+            go_params=go_params,
+        )
 
     move_times: list[float] = []
     plies_completed = 0
@@ -134,6 +179,7 @@ def main() -> None:
             provider,
             moves_per_game=args.moves_per_game,
             measure=True,
+            go_params=go_params,
         )
         move_times.extend(game_times)
         plies_completed += game_plies

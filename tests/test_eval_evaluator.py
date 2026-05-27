@@ -1,13 +1,23 @@
 from types import SimpleNamespace
 
-from krasnal.eval.evaluator import ChessEvaluator
+import bulletchess
+import torch
+
+from krasnal.config import CLOCK_IGNORE_ID
+from krasnal.eval.evaluator import (
+    ChessEvaluator,
+    _is_legal_token_in_position,
+    _MoveMetricAccumulator,
+    _update_context_sample,
+)
 from krasnal.eval.metrics import EvalContext
 from krasnal.eval.qa_probes import build_what_is_on_heatmap, compute_binary_f1_metrics
 from krasnal.tokens import (
+    ELO_1500_1599_ID,
+    ELO_1600_1699_ID,
     GAME_END_ID,
     GAME_START_ID,
-    MOVE_TO_ID,
-    WHITE_PREFIX,
+    move_token_id_for_turn,
 )
 
 
@@ -27,35 +37,133 @@ def test_build_what_is_on_heatmap_uses_all_squares():
     assert heatmap is not None
 
 
-def test_evaluate_resets_stateful_metrics_between_runs(monkeypatch):
-    evaluator = ChessEvaluator(metrics=["acc_opening"])
-    evaluator.metrics["acc_opening"].buffer.append(1.0)
+def test_evaluate_resets_metrics_between_runs(monkeypatch):
+    evaluator = ChessEvaluator(metrics=["acc"])
 
     dataset = [SimpleNamespace(tolist=lambda: [GAME_START_ID, GAME_END_ID])]
     model = SimpleNamespace(config=SimpleNamespace(block_size=128))
 
-    def fake_parse_row_to_game_tokens(_row):
-        return SimpleNamespace(
-            move_tokens=[MOVE_TO_ID[WHITE_PREFIX + "e2e4"]],
-            initial_context=[],
-            move_active_seconds=None,
-            move_opponent_seconds=None,
-        )
+    def fake_evaluate_indices(**_kwargs):
+        return {"acc": 0.0}
 
-    def fake_replay_games(_games, _block_size):
-        return [EvalContext(sequence=[])]
-
-    def fake_infer_and_aggregate(contexts, _model, _device, _eval_seed):
-        assert contexts
-        assert evaluator.metrics["acc_opening"].buffer == []
-        return {"acc_opening": 0.0}
-
-    monkeypatch.setattr(
-        "krasnal.eval.evaluator.parse_row_to_game_tokens", fake_parse_row_to_game_tokens
-    )
-    monkeypatch.setattr("krasnal.eval.evaluator.replay_games", fake_replay_games)
-    monkeypatch.setattr(evaluator, "_infer_and_aggregate", fake_infer_and_aggregate)
+    monkeypatch.setattr(evaluator, "_evaluate_indices", fake_evaluate_indices)
 
     result = evaluator.evaluate(model=model, dataset=dataset, num_games=1, device=None)
 
-    assert result == {"acc_opening": 0.0}
+    assert result == {"acc": 0.0}
+
+
+def test_evaluate_num_games_zero_uses_all_games(monkeypatch):
+    evaluator = ChessEvaluator(metrics=["acc"])
+    dataset = [object(), object(), object()]
+    model = SimpleNamespace(config=SimpleNamespace(block_size=128))
+
+    def fake_evaluate_indices(**kwargs):
+        assert kwargs["indices"] == [0, 1, 2]
+        return {"acc": 1.0}
+
+    monkeypatch.setattr("krasnal.eval.evaluator.random.shuffle", lambda _indices: None)
+    monkeypatch.setattr(evaluator, "_evaluate_indices", fake_evaluate_indices)
+
+    result = evaluator.evaluate(model=model, dataset=dataset, num_games=0, device=None)
+
+    assert result == {"acc": 1.0}
+
+
+def test_move_metric_accumulator_computes_requested_metrics():
+    metrics = [
+        "acc",
+        "acc_opening",
+        "acc_middlegame",
+        "acc_endgame",
+        "acc_when_gives_check",
+        "acc_when_in_check",
+        "acc_elo_1500_1599",
+        "acc_elo_1600_1699",
+        "top1_legal",
+    ]
+    contexts = [
+        EvalContext(
+            probs=torch.tensor([0.05, 0.70, 0.15, 0.10]),
+            legal_ids=[1, 2],
+            actual_token=1,
+            in_check=False,
+            phase="opening",
+            player_elo_token=ELO_1500_1599_ID,
+            gives_check=True,
+            active_clock_seconds=90,
+        ),
+        EvalContext(
+            probs=torch.tensor([0.60, 0.20, 0.15, 0.05]),
+            legal_ids=[2, 3],
+            actual_token=2,
+            in_check=True,
+            phase="middlegame",
+            player_elo_token=ELO_1600_1699_ID,
+            gives_check=False,
+            active_clock_seconds=20,
+        ),
+        EvalContext(
+            probs=torch.tensor([0.05, 0.10, 0.25, 0.60]),
+            legal_ids=[2, 3],
+            actual_token=3,
+            in_check=False,
+            phase="endgame",
+            player_elo_token=ELO_1500_1599_ID,
+            gives_check=True,
+            active_clock_seconds=CLOCK_IGNORE_ID,
+        ),
+    ]
+
+    accumulator = _MoveMetricAccumulator(metrics)
+    logits = torch.stack([ctx.probs for ctx in contexts if ctx.probs is not None])
+    accumulator.update(contexts, logits)
+    result = accumulator.finalize()
+
+    assert result == {
+        "acc": 2 / 3,
+        "acc_opening": 1.0,
+        "acc_middlegame": 0.0,
+        "acc_endgame": 1.0,
+        "acc_when_gives_check": 1.0,
+        "acc_when_in_check": 0.0,
+        "acc/acc_elo_1500_1599": 1.0,
+        "acc/acc_elo_1600_1699": 0.0,
+        "top1_legal": 2 / 3,
+    }
+
+
+def test_fen_based_top1_legal_matches_board_legal_moves():
+    board = bulletchess.Board()
+    legal_move = bulletchess.Move.from_uci("e2e4")
+    legal_piece = board[legal_move.origin]
+    legal_token = move_token_id_for_turn("e2e4", board.turn, legal_piece.piece_type)
+    black_board = board.copy()
+    black_board.apply(legal_move)
+    black_move = bulletchess.Move.from_uci("e7e5")
+    black_piece = black_board[black_move.origin]
+    illegal_token = move_token_id_for_turn("e7e5", black_board.turn, black_piece.piece_type)
+    ctx = EvalContext(fen=board.fen())
+
+    assert legal_token is not None
+    assert illegal_token is not None
+    assert _is_legal_token_in_position(ctx, legal_token)
+    assert not _is_legal_token_in_position(ctx, illegal_token)
+
+
+def test_update_context_sample_caps_sample_deterministically():
+    import random
+
+    contexts = [EvalContext(actual_token=i) for i in range(20)]
+    sample: list[EvalContext] = []
+    seen = _update_context_sample(
+        sample=sample,
+        seen=0,
+        contexts=contexts,
+        limit=5,
+        rng=random.Random(0),
+    )
+
+    assert seen == 20
+    assert len(sample) == 5
+    assert [ctx.actual_token for ctx in sample] == [8, 1, 2, 5, 9]
