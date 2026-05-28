@@ -9,7 +9,6 @@ from krasnal.tokens import (
     GAME_END_ID,
     GAME_START_ID,
     OUTCOME_TOKENS,
-    PAD_ID,
     TC_TOKENS,
     get_move_clock_pairs,
     get_moves_only,
@@ -83,25 +82,6 @@ def parse_game_tokens(token_ids: list[int]) -> GameTokens | None:
         black_elo_token=black_elo_token,
         move_tokens=[],
     )
-
-
-def split_packed_window_token_ids(token_ids: list[int]) -> list[list[int]]:
-    """Split a packed training window into per-game token lists (drops PAD tail)."""
-    games: list[list[int]] = []
-    i = 0
-    n = len(token_ids)
-    while i < n:
-        if token_ids[i] == PAD_ID:
-            break
-        if token_ids[i] != GAME_START_ID:
-            i += 1
-            continue
-        j = i + 1
-        while j < n and token_ids[j] not in (GAME_START_ID, PAD_ID):
-            j += 1
-        games.append(token_ids[i:j])
-        i = j
-    return games
 
 
 def parse_row_to_game_tokens(row: tuple[torch.Tensor, ...] | torch.Tensor) -> GameTokens | None:

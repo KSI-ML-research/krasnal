@@ -67,12 +67,6 @@ class Game:
             raise ValueError(f"Token id {token_id} is not a move token")
         self.feed_uci(token)
 
-    def len_tokens(self) -> int:
-        return len(self.tokens)
-
-    def is_empty_position(self) -> bool:
-        return not self.tokens
-
     def _parse_and_validate_uci(self, uci: str) -> bulletchess.Move:
         try:
             move = bulletchess.Move.from_uci(uci)

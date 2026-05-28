@@ -9,7 +9,6 @@ from typing import Any
 
 import bulletchess
 
-from krasnal.eval.metrics.context import EvalContext
 from krasnal.tokens import COLORED_PIECE_TOKENS, EMPTY_ID
 
 _WHAT_IS_ON_LABEL_IDS: tuple[int, ...] = (EMPTY_ID, *sorted(COLORED_PIECE_TOKENS.values()))
@@ -18,11 +17,6 @@ _SQUARES: tuple[tuple[str, bulletchess.Square], ...] = tuple(
     for file in "abcdefgh"
     for rank in range(1, 9)
 )
-
-
-def _label_id_for_square(board: bulletchess.Board, sq_str: str) -> int:
-    piece = board[bulletchess.Square.from_str(sq_str)]
-    return _label_id_for_piece(piece)
 
 
 def _label_id_for_piece(piece) -> int:
@@ -78,13 +72,6 @@ class WhatIsOnBaselineCounts:
         return cls.from_json_obj(json.loads(path.read_text(encoding="utf-8")))
 
 
-def accumulate_from_eval_contexts(contexts: list[EvalContext]) -> WhatIsOnBaselineCounts:
-    """Build counts from replayed contexts (``post_move_fen``, ``what_is_on_ply``)."""
-    accumulator = WhatIsOnBaselineAccumulator()
-    accumulator.update(contexts)
-    return accumulator.to_counts()
-
-
 class WhatIsOnBaselineAccumulator:
     """Incrementally accumulates empirical ``what_is_on`` baseline counts."""
 
@@ -93,13 +80,6 @@ class WhatIsOnBaselineAccumulator:
             lambda: defaultdict(int)
         )
         self.by_sq: dict[str, defaultdict[int, int]] = defaultdict(lambda: defaultdict(int))
-
-    def update(self, contexts: list[EvalContext]) -> None:
-        for ctx in contexts:
-            if ctx.post_move_fen is None or ctx.what_is_on_ply is None:
-                continue
-            board = bulletchess.Board.from_fen(ctx.post_move_fen)
-            self.update_board(board, int(ctx.what_is_on_ply))
 
     def update_board(self, board: bulletchess.Board, ply: int) -> None:
         for sq, bullet_sq in _SQUARES:
@@ -112,29 +92,3 @@ class WhatIsOnBaselineAccumulator:
             {k: dict(v) for k, v in self.by_sq_ply.items()},
             {k: dict(v) for k, v in self.by_sq.items()},
         )
-
-
-def macro_f1_multiclass(y_true: list[int], y_pred: list[int], *, labels: tuple[int, ...]) -> float:
-    """Unweighted mean of per-class F1.
-
-    Ignores classes with no true instances and no predictions.
-    """
-    if not y_true:
-        return 0.0
-    total = 0.0
-    valid_labels = 0
-    for c in labels:
-        tp = sum(1 for t, p in zip(y_true, y_pred, strict=True) if t == c and p == c)
-        fp = sum(1 for t, p in zip(y_true, y_pred, strict=True) if t != c and p == c)
-        fn = sum(1 for t, p in zip(y_true, y_pred, strict=True) if t == c and p != c)
-
-        if tp + fp + fn == 0:
-            continue
-
-        prec = tp / (tp + fp) if (tp + fp) > 0 else 0.0
-        rec = tp / (tp + fn) if (tp + fn) > 0 else 0.0
-        f1 = 2.0 * prec * rec / (prec + rec) if (prec + rec) > 0 else 0.0
-        total += f1
-        valid_labels += 1
-
-    return total / valid_labels if valid_labels > 0 else 0.0

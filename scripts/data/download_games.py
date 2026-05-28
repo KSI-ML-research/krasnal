@@ -37,7 +37,6 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 # ─── Configuration ───────────────────────────────────────────────────────────
 
 HF_REPO = "thomasd1/aix-lichess-database"
-COMPRESSION = "high"
 
 OUTPUT_DIR = Path("data/1_filtered")
 

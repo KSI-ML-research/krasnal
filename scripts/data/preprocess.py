@@ -258,12 +258,7 @@ def main(cfg: DictConfig) -> None:
         logger.info("Packing part {}/{}: {}", part_idx, len(shuffled_parts), part_path.name)
         part_lf = pl.scan_parquet(part_path)
 
-        # Collect sequence lengths
-        len_chunks.append(
-            part_lf.select(pl.col("token_ids").list.len().alias("len"))
-            .filter(pl.col("len") <= max_tokens)
-            .collect()
-        )
+        len_chunks.append(part_lf.select(pl.col("token_ids").list.len().alias("len")).collect())
 
         filtered_lf = part_lf.filter(pl.col("token_ids").list.len() <= max_tokens)
         cols = ["token_ids", "active_clock_ids", "opponent_clock_ids"]
@@ -303,7 +298,8 @@ def main(cfg: DictConfig) -> None:
     total_count = stats["total"]
     pct_long = over_block_size_count / total_count * 100
     logger.info(
-        "Filtering games with >{} tokens done: removed {} games ({:.2f}%)",
+        "Filtering games longer than context (>{} tokens): "
+        "removed {} games ({:.2f}% of input games)",
         max_tokens,
         over_block_size_count,
         pct_long,
@@ -313,8 +309,8 @@ def main(cfg: DictConfig) -> None:
     if mix_raw is None:
         raise RuntimeError("Token mix aggregation failed")
     token_mix = token_mix_from_raw_sums(mix_raw)
-    logger.info("Token distribution:")
-    logger.info("  total: 100.00% ({})", token_mix["total_tokens"])
+    logger.info("Token distribution over original tokenized train games before packing/restarts:")
+    logger.info("  total_input_tokens: 100.00% ({})", token_mix["total_tokens"])
     for label, pct_key, count_key in [
         ("moves", "uci_move_pct", "uci_move_count"),
         ("qa_is_check", "check_qa_pct", "check_qa_count"),
@@ -325,7 +321,12 @@ def main(cfg: DictConfig) -> None:
         ("game_start", "game_start_pct", "game_start_count"),
         ("game_end", "game_end_pct", "game_end_count"),
     ]:
-        logger.info("  {}: {:.2f}% ({})", label, token_mix[pct_key], token_mix[count_key])
+        logger.info(
+            "  {}: {:.2f}% of input tokens ({})",
+            label,
+            token_mix[pct_key],
+            token_mix[count_key],
+        )
 
     logger.info("ELO Bucket Distribution:")
     total_elo = sum(token_mix[f"elo_{b}_count"] for b in ELO_TOKENS)

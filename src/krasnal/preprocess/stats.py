@@ -170,8 +170,8 @@ def log_preprocess_to_wandb(
     wandb.summary["dataset/total_games"] = total_games
     wandb.summary["dataset/train_window_rows"] = train_window_rows
     wandb.summary["dataset/eval_rows"] = eval_rows
-    wandb.summary["dataset/removed_over_block_size"] = over_block_size_count
-    wandb.summary["dataset/removed_over_block_size_pct"] = (
+    wandb.summary["dataset/removed_over_context_games"] = over_block_size_count
+    wandb.summary["dataset/removed_over_context_game_pct"] = (
         over_block_size_count / total_games * 100.0 if total_games > 0 else 0.0
     )
 
@@ -181,14 +181,14 @@ def log_preprocess_to_wandb(
     wandb.summary["dataset/seq_len_p95"] = seq_stats["p95"]
     wandb.summary["dataset/seq_len_p99"] = seq_stats["p99"]
 
-    wandb.summary["dataset/total_tokens"] = token_mix["total_tokens"]
-    wandb.summary["dataset/uci_move_pct"] = token_mix["uci_move_pct"]
-    wandb.summary["dataset/check_qa_pct"] = token_mix["check_qa_pct"]
-    wandb.summary["dataset/what_is_on_pct"] = token_mix["what_is_on_pct"]
-    wandb.summary["dataset/whats_on_answer_pct"] = token_mix["whats_on_answer_pct"]
-    wandb.summary["dataset/outcome_prefix_pct"] = token_mix["outcome_prefix_pct"]
-    wandb.summary["dataset/game_start_pct"] = token_mix["game_start_pct"]
-    wandb.summary["dataset/game_end_pct"] = token_mix["game_end_pct"]
+    wandb.summary["dataset/input_tokens"] = token_mix["total_tokens"]
+    wandb.summary["dataset/input_token_pct/move"] = token_mix["uci_move_pct"]
+    wandb.summary["dataset/input_token_pct/check_qa"] = token_mix["check_qa_pct"]
+    wandb.summary["dataset/input_token_pct/what_is_on_prompt"] = token_mix["what_is_on_pct"]
+    wandb.summary["dataset/input_token_pct/what_is_on_answer"] = token_mix["whats_on_answer_pct"]
+    wandb.summary["dataset/input_token_pct/conditioning_prefix"] = token_mix["outcome_prefix_pct"]
+    wandb.summary["dataset/input_token_pct/game_start"] = token_mix["game_start_pct"]
+    wandb.summary["dataset/input_token_pct/game_end"] = token_mix["game_end_pct"]
 
     total_elo = sum(token_mix.get(f"elo_{b}_count", 0) for b in ELO_TOKENS)
     for bucket_name in ELO_TOKENS:

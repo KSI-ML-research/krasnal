@@ -65,23 +65,6 @@ class InferenceSession:
 
         self.new_game(game)
 
-    def reset(
-        self,
-        outcome_token: int,
-        white_elo_token: int = ELO_ABOVE_2200_ID,
-        black_elo_token: int = ELO_ABOVE_2200_ID,
-        time_control_token: int = TC_UNKNOWN_ID,
-    ) -> None:
-        """Backward-compatible reset that rebuilds the underlying Game."""
-        self.new_game(
-            Game(
-                white_elo_token=white_elo_token,
-                black_elo_token=black_elo_token,
-                time_control_token=time_control_token,
-                target_outcome_token=outcome_token,
-            )
-        )
-
     def _init_clock_tracks(self) -> None:
         enabled = self.model.config.use_time_conditioning
         initial = self._clock_initial_seconds
