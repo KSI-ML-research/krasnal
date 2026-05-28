@@ -13,7 +13,7 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.optim import Muon
 from tqdm.auto import tqdm
 
-from krasnal.config import ARTIFACTS_DIR, GPTConfig, TrainConfig
+from krasnal.config import GPTConfig, TrainConfig
 from krasnal.model import GPT
 from krasnal.supervised_target_mask import LOSS_IGNORE_INDEX
 from krasnal.tokens import get_vocab_size
@@ -147,29 +147,6 @@ def build_optimizer(
     )
 
     return CombinedOptimizer(muon_opt, adam_opt)
-
-
-def resolve_pretrained_checkpoint(model_path: str | None, latest: bool) -> Path:
-    if model_path is not None:
-        path = Path(model_path)
-        if path.exists():
-            return path
-        raise FileNotFoundError(f"Checkpoint not found: {path}")
-    if not latest:
-        raise ValueError("Either --model or --latest-pretrain must be specified")
-    pretrain_dirs = sorted(
-        (ARTIFACTS_DIR / "pretrain").iterdir(),
-        key=lambda p: p.stat().st_mtime,
-        reverse=True,
-    )
-    for d in pretrain_dirs:
-        model_file = d / "model.pt"
-        if model_file.is_file() and (d / "config.json").is_file():
-            return model_file
-    raise FileNotFoundError(
-        f"No pretrained checkpoint found in {ARTIFACTS_DIR / 'pretrain'}. "
-        "Run pretrain first or specify --model."
-    )
 
 
 def setup_runtime(

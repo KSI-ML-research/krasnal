@@ -161,8 +161,6 @@ SPECIAL_TOKENS = {
 MOVE_TO_ID = dict(SPECIAL_TOKENS)
 ID_TO_MOVE = {v: k for k, v in MOVE_TO_ID.items()}
 VOCAB_SIZE = max(MOVE_TO_ID.values()) + 1
-MOVE_VOCAB_MANIFEST: dict[str, Any] | None = None
-MOVE_VOCAB_SOURCE_PATH: Path | None = None
 
 
 def _now_timestamp() -> str:
@@ -339,7 +337,6 @@ def _validate_manifest_match(
 def install_move_vocab_artifact(
     artifact: object,
     *,
-    source_path: Path | None = None,
     piece_aware_moves: bool | None = None,
     side_prefixed_moves: bool | None = None,
     require_manifest_match: bool = True,
@@ -360,8 +357,7 @@ def install_move_vocab_artifact(
             side_prefixed_moves=expected_side_prefixed,
         )
 
-    global PIECE_AWARE_MOVES, SIDE_PREFIXED_MOVES, VOCAB_SIZE, MOVE_VOCAB_MANIFEST
-    global MOVE_VOCAB_SOURCE_PATH
+    global PIECE_AWARE_MOVES, SIDE_PREFIXED_MOVES, VOCAB_SIZE
 
     PIECE_AWARE_MOVES = bool(manifest["piece_aware_moves"])
     SIDE_PREFIXED_MOVES = bool(manifest["side_prefixed_moves"])
@@ -370,8 +366,6 @@ def install_move_vocab_artifact(
     ID_TO_MOVE.clear()
     ID_TO_MOVE.update({v: k for k, v in vocab.items()})
     VOCAB_SIZE = max(MOVE_TO_ID.values()) + 1
-    MOVE_VOCAB_MANIFEST = manifest
-    MOVE_VOCAB_SOURCE_PATH = source_path
 
 
 def load_move_vocab(
@@ -388,7 +382,6 @@ def load_move_vocab(
         artifact = json.load(f)
     install_move_vocab_artifact(
         artifact,
-        source_path=path,
         piece_aware_moves=piece_aware_moves,
         side_prefixed_moves=side_prefixed_moves,
         require_manifest_match=True,
@@ -553,14 +546,6 @@ def move_key_for_turn(
         piece_aware_moves=piece_aware_moves,
         side_prefixed_moves=side_prefixed_moves,
     )
-
-
-def move_token_id_for_ply(
-    uci: str,
-    ply: int,
-    mover_piece_type: object | None = None,
-) -> int | None:
-    return MOVE_TO_ID.get(move_key_for_ply(uci, ply, mover_piece_type))
 
 
 def move_token_id_for_turn(

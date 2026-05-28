@@ -80,13 +80,3 @@ class KVCache:
                 f"Sequence length exceeded max_seq_len: {new_len} > {self.max_seq_len}"
             )
         self.cache_seqlen += t_new
-
-    def get_layer_cache(self, layer_idx):
-        """
-        Retrieve cached key/value tensors for a layer up to current sequence length.
-        """
-        seq_len = self.get_seq_len()
-        return (
-            self.key_cache[layer_idx, :, :, :seq_len, :],
-            self.value_cache[layer_idx, :, :, :seq_len, :],
-        )

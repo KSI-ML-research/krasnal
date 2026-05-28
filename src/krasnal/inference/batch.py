@@ -186,20 +186,3 @@ class StatelessBatchInferenceSession:
                 masked[idx, legal_ids] = logits[idx, legal_ids]
         masked[:, list(QA_TOKEN_IDS)] = float("-inf")
         return masked
-
-    def get_legal_probs_batch(
-        self,
-        games: list[Game],
-        active_clock_sequences: list[list[int]] | None = None,
-        opponent_clock_sequences: list[list[int]] | None = None,
-        batch_size: int = 256,
-    ) -> torch.Tensor:
-        return torch.softmax(
-            self.get_legal_logits_batch(
-                games,
-                active_clock_sequences=active_clock_sequences,
-                opponent_clock_sequences=opponent_clock_sequences,
-                batch_size=batch_size,
-            ),
-            dim=-1,
-        )
