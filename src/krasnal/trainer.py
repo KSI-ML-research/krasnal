@@ -389,8 +389,25 @@ def run_supervised_training(
                     with torch.inference_mode():
                         val_losses = []
                         for val_batch in val_loader:
-                            xv, active_xv, opponent_xv, yv = _unpack_supervised_batch(val_batch)
+                            (
+                                xv,
+                                active_xv,
+                                opponent_xv,
+                                yv,
+                                segment_xv,
+                                position_xv,
+                            ) = _unpack_supervised_batch(val_batch)
                             _require_clock_tensors_if_time_model(model, active_xv, opponent_xv)
+                            segment_xv = (
+                                segment_xv.to(device, non_blocking=True)
+                                if segment_xv is not None
+                                else None
+                            )
+                            position_xv = (
+                                position_xv.to(device, non_blocking=True)
+                                if position_xv is not None
+                                else None
+                            )
                             val_losses.append(
                                 raw_model(
                                     xv.to(device, non_blocking=True),
@@ -402,6 +419,8 @@ def run_supervised_training(
                                     opponent_clock_ids=opponent_xv.to(device, non_blocking=True)
                                     if opponent_xv is not None
                                     else None,
+                                    segment_ids=segment_xv,
+                                    position_ids=position_xv,
                                 )[1].item()
                             )
                     raw_model.train()

@@ -3,7 +3,7 @@ defaults:
 
 # Toggles for various evaluation probes
 qa:
-  max_positions: 1000
+  max_positions: 10000
   check:
     enabled: true
     confusion_matrix: false
