@@ -55,6 +55,12 @@ def teardown_distributed(dinfo: DistributedInfo) -> None:
         dist.destroy_process_group()
 
 
+def distributed_barrier(dinfo: DistributedInfo) -> None:
+    if not dinfo.enabled:
+        return
+    dist.barrier(device_ids=[dinfo.local_rank])
+
+
 def build_model(model_config: GPTConfig) -> GPT:
     if model_config.vocab_size is None:
         model_config.vocab_size = get_vocab_size()
@@ -357,9 +363,13 @@ def run_supervised_training(
                 if log_fn is not None:
                     log_fn(iter_num, last_loss_value, epoch_float)
 
-            if iter_num > 0 and iter_num % eval_interval == 0:
-                if dinfo.enabled:
-                    dist.barrier()
+            if (
+                not dinfo.enabled
+                and eval_interval > 0
+                and iter_num > 0
+                and iter_num % eval_interval == 0
+            ):
+                distributed_barrier(dinfo)
                 if master:
                     raw_model = unwrap_model(model)
                     raw_model.eval()
@@ -405,8 +415,7 @@ def run_supervised_training(
                     eval_metrics = {"val_loss": sum(val_losses) / n_val if n_val else float("nan")}
                     eval_metrics.update(eval_fn(model, iter_num))
                     eval_log_fn(iter_num, eval_metrics)
-                if dinfo.enabled:
-                    dist.barrier()
+                distributed_barrier(dinfo)
 
             pbar.update(1)
             iter_num += 1
@@ -415,10 +424,8 @@ def run_supervised_training(
         epoch += 1
 
     pbar.close()
-    if dinfo.enabled:
-        dist.barrier()
+    distributed_barrier(dinfo)
     if master:
         eval_log_fn(iter_num, eval_fn(model, iter_num))
-    if dinfo.enabled:
-        dist.barrier()
+    distributed_barrier(dinfo)
     return last_loss_value
