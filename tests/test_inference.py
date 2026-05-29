@@ -268,7 +268,7 @@ def test_kv_cache_single_token_matches_full_prefix_logits():
         assert torch.allclose(cached_logits[:, -1, :], full_logits[:, -1, :], atol=1e-5, rtol=1e-4)
 
 
-def test_kv_cache_multi_token_chunks_match_full_prefix_logits():
+def test_kv_cache_prefill_then_single_token_steps_match_full_prefix_logits():
     torch.manual_seed(7)
     device = torch.device("cpu")
     model = _build_test_model(device)
@@ -276,14 +276,15 @@ def test_kv_cache_multi_token_chunks_match_full_prefix_logits():
     sequence = torch.tensor([[0, DRAW_ID, 11, 3, 17, 23, 42, 2]], dtype=torch.long, device=device)
     kv_cache = _build_kv_cache_for_model(model, device)
 
-    chunk_sizes = [2, 3, 3]
-    start = 0
-    for chunk_size in chunk_sizes:
-        end = start + chunk_size
+    prefill = 2
+    full_logits, _ = model(sequence[:, :prefill])
+    cached_logits, _ = model(sequence[:, :prefill], past_kv=kv_cache)
+    assert torch.allclose(cached_logits[:, -1, :], full_logits[:, -1, :], atol=1e-5, rtol=1e-4)
+
+    for end in range(prefill + 1, sequence.size(1) + 1):
         full_logits, _ = model(sequence[:, :end])
-        cached_logits, _ = model(sequence[:, start:end], past_kv=kv_cache)
+        cached_logits, _ = model(sequence[:, end - 1 : end], past_kv=kv_cache)
         assert torch.allclose(cached_logits[:, -1, :], full_logits[:, -1, :], atol=1e-5, rtol=1e-4)
-        start = end
 
 
 def test_kv_cache_reset_replays_prefix_identically():
@@ -297,7 +298,7 @@ def test_kv_cache_reset_replays_prefix_identically():
         dtype=torch.long,
         device=device,
     )
-    chunk_sizes = [2, 3, 3]
+    chunk_sizes = [1] * sequence.size(1)
 
     def decode_chunks() -> list[torch.Tensor]:
         start = 0

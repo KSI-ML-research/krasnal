@@ -70,7 +70,6 @@ class RoPE(nn.Module):
         q: torch.Tensor,
         k: torch.Tensor,
         position_offset: int = 0,
-        position_ids: torch.Tensor | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         """Applies Rotary Position Embedding (RoPE) to Query and Key tensors."""
         assert q.shape == k.shape, "q and k shapes must match"
@@ -78,26 +77,12 @@ class RoPE(nn.Module):
         assert q.shape[3] == self.head_dim, f"head_dim must match {self.head_dim}"
         T = q.shape[2]
 
-        if position_ids is None:
-            assert position_offset >= 0, "position_offset must be non-negative"
-            end = position_offset + T
-            assert self.max_seq_len >= T, (
-                f"Sequence length {T} exceeds max_seq_len {self.max_seq_len}"
-            )
-            assert end <= self.max_seq_len, (
-                f"end index {end} exceeds max_seq_len {self.max_seq_len}"
-            )
-            cos = self.cos_cached[:, :, position_offset:end].to(device=q.device, dtype=q.dtype)
-            sin = self.sin_cached[:, :, position_offset:end].to(device=q.device, dtype=q.dtype)
-        else:
-            assert position_ids.shape == (q.shape[0], T), (
-                f"position_ids must be (B, T), got {tuple(position_ids.shape)}"
-            )
-            # Clamp for index safety; avoid data-dependent asserts (breaks torch.compile).
-            pos = position_ids.clamp(min=0, max=self.max_seq_len - 1)
-            cache = self.cos_cached[0, 0].to(device=q.device, dtype=q.dtype)
-            cos = cache[pos].unsqueeze(1)
-            sin = self.sin_cached[0, 0].to(device=q.device, dtype=q.dtype)[pos].unsqueeze(1)
+        assert position_offset >= 0, "position_offset must be non-negative"
+        end = position_offset + T
+        assert self.max_seq_len >= T, f"Sequence length {T} exceeds max_seq_len {self.max_seq_len}"
+        assert end <= self.max_seq_len, f"end index {end} exceeds max_seq_len {self.max_seq_len}"
+        cos = self.cos_cached[:, :, position_offset:end].to(device=q.device, dtype=q.dtype)
+        sin = self.sin_cached[:, :, position_offset:end].to(device=q.device, dtype=q.dtype)
 
         q_rope = (q * cos) + (self._neg_half(q) * sin)
         k_rope = (k * cos) + (self._neg_half(k) * sin)
@@ -137,8 +122,6 @@ class CausalSelfAttention(nn.Module):
         x: torch.Tensor,
         past_kv: KVCache | None = None,
         layer_idx: int | None = None,
-        segment_ids: torch.Tensor | None = None,
-        position_ids: torch.Tensor | None = None,
     ) -> torch.Tensor:
         assert len(x.shape) == 3
         assert x.shape[2] == self.n_embd
@@ -156,22 +139,18 @@ class CausalSelfAttention(nn.Module):
             if layer_idx is None:
                 raise ValueError("layer_idx must be provided when using past_kv cache")
             past_len = past_kv.get_seq_len()
+            if past_len > 0 and T > 1:
+                raise ValueError("KV-cache extension only supports one token at a time")
 
         assert past_len + T <= self.rope.max_seq_len, (
             f"Total sequence length (past_len={past_len} + current_T={T}) "
             f"exceeds model block_size limit ({self.rope.max_seq_len})"
         )
 
-        if past_kv is not None and position_ids is not None:
-            raise ValueError("position_ids are not supported with KV-cache inference")
-        if past_kv is not None and segment_ids is not None:
-            raise ValueError("segment_ids are not supported with KV-cache inference")
-
         q, k = self.rope(
             q,
             k,
             position_offset=past_len,
-            position_ids=position_ids,
         )
 
         # Append to KV-Cache if provided
@@ -184,31 +163,13 @@ class CausalSelfAttention(nn.Module):
             k_full = k
             v_full = v
 
-        attn_mask = None
-        is_causal = True
-        if segment_ids is not None:
-            if position_ids is None:
-                raise ValueError("position_ids are required when segment_ids are provided")
-            seg_q = segment_ids.unsqueeze(-1)
-            seg_k = segment_ids.unsqueeze(-2)
-            pos_q = position_ids.unsqueeze(-1)
-            pos_k = position_ids.unsqueeze(-2)
-            # (B, 1, T, T) for scaled_dot_product_attention with q shape (B, nh, T, hs)
-            attn_mask = ((seg_q == seg_k) & (pos_k <= pos_q)).unsqueeze(1)
-            is_causal = False
-        elif past_kv is not None:
-            is_causal = False
-            if T > 1:
-                q_pos = torch.arange(past_len, past_len + T, device=x.device).unsqueeze(-1)
-                k_pos = torch.arange(0, past_len + T, device=x.device).unsqueeze(0)
-                attn_mask = k_pos <= q_pos
+        is_causal = past_len == 0
 
         # Flash Attention forward pass
         y = torch.nn.functional.scaled_dot_product_attention(
             q,
             k_full,
             v_full,
-            attn_mask=attn_mask,
             dropout_p=self.dropout if self.training else 0.0,
             is_causal=is_causal,
         )
@@ -271,15 +232,11 @@ class Block(nn.Module):
         x: torch.Tensor,
         past_kv: KVCache | None = None,
         layer_idx: int | None = None,
-        segment_ids: torch.Tensor | None = None,
-        position_ids: torch.Tensor | None = None,
     ) -> torch.Tensor:
         x = x + self.attn(
             self.ln_1(x),
             past_kv=past_kv,
             layer_idx=layer_idx,
-            segment_ids=segment_ids,
-            position_ids=position_ids,
         )
         x = x + self.mlp(self.ln_2(x))
         return x
@@ -393,8 +350,6 @@ class GPT(nn.Module):
         past_kv: KVCache | None = None,
         active_clock_ids: torch.Tensor | None = None,
         opponent_clock_ids: torch.Tensor | None = None,
-        segment_ids: torch.Tensor | None = None,
-        position_ids: torch.Tensor | None = None,
         return_all_logits: bool = False,
     ) -> tuple[torch.Tensor, torch.Tensor | None]:
         """Transformer forward pass with optional targets and time conditioning."""
@@ -431,8 +386,6 @@ class GPT(nn.Module):
                 x,
                 past_kv=past_kv,
                 layer_idx=layer_idx,
-                segment_ids=segment_ids,
-                position_ids=position_ids,
             )
 
         if past_kv is not None:
