@@ -28,14 +28,17 @@ if [ -z "$SLURM_JOB_ID" ]; then
         TIME_LIMIT="6:00:00"
         BATCH_SIZE=192
         NUM_WORKERS=4
+        TRAIN_EXTRA_ARGS=""
     elif [ "$MODEL" = "medium" ]; then
         TIME_LIMIT="12:00:00"
         BATCH_SIZE=128
         NUM_WORKERS=4
+        TRAIN_EXTRA_ARGS=""
     else
         TIME_LIMIT="24:00:00"
         BATCH_SIZE=32
         NUM_WORKERS=4
+        TRAIN_EXTRA_ARGS="train.learning_rate=2.5e-4 train.min_lr=2.5e-5 train.warmup_iters=1000"
     fi
 
     echo "Submitting Slurm pretraining job..."
@@ -44,6 +47,7 @@ if [ -z "$SLURM_JOB_ID" ]; then
     echo "  - Batch Size: $BATCH_SIZE"
     echo "  - Num Workers: $NUM_WORKERS"
     echo "  - Time Limit: $TIME_LIMIT"
+    echo "  - Extra Args: ${TRAIN_EXTRA_ARGS:-none}"
 
     sbatch \
       --job-name="krasnal-pretrain-${MODEL}" \
@@ -53,7 +57,7 @@ if [ -z "$SLURM_JOB_ID" ]; then
       --cpus-per-task=24 \
       --partition="student-nvidia" \
       --time="${TIME_LIMIT}" \
-      --export="ALL,RUN_MODEL=${MODEL},RUN_EPOCHS=${EPOCHS},RUN_BATCH_SIZE=${BATCH_SIZE},RUN_NUM_WORKERS=${NUM_WORKERS}" \
+      --export="ALL,RUN_MODEL=${MODEL},RUN_EPOCHS=${EPOCHS},RUN_BATCH_SIZE=${BATCH_SIZE},RUN_NUM_WORKERS=${NUM_WORKERS},RUN_TRAIN_EXTRA_ARGS=${TRAIN_EXTRA_ARGS}" \
       "$0"
 
     exit 0
@@ -85,4 +89,5 @@ uv run torchrun --standalone --nproc_per_node=2 scripts/training/pretrain.py \
     train=cuda \
     train.epochs="${RUN_EPOCHS}" \
     train.batch_size="${RUN_BATCH_SIZE}" \
-    train.num_workers="${RUN_NUM_WORKERS}"
+    train.num_workers="${RUN_NUM_WORKERS}" \
+    ${RUN_TRAIN_EXTRA_ARGS}
