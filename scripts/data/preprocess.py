@@ -141,6 +141,8 @@ def main(cfg: DictConfig) -> None:
 
     time_control_cfg = cfg.get("time_control", {})
     time_control_enabled = bool(time_control_cfg.get("enabled", True))
+    outcome_conditioning_cfg = cfg.get("outcome_conditioning", {})
+    outcome_conditioning_enabled = bool(outcome_conditioning_cfg.get("enabled", False))
 
     pp_cfg = PreprocessConfig(
         seed=seed,
@@ -152,6 +154,7 @@ def main(cfg: DictConfig) -> None:
         include_what_is_on_qa=include_what_is_on_qa,
         what_is_on_prob=what_is_on_prob,
         time_control_enabled=time_control_enabled,
+        outcome_conditioning_enabled=outcome_conditioning_enabled,
         move_vocab_path=MOVE_VOCAB_PATH,
     )
 

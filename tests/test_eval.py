@@ -53,3 +53,25 @@ def test_parse_game_tokens_preserves_time_control_in_initial_context():
         ELO_1500_1599_ID,
         ELO_2000_2099_ID,
     ]
+
+
+def test_parse_game_tokens_accepts_missing_outcome_conditioning():
+    parsed = parse_game_tokens(
+        [
+            0,
+            TC_RAPID_INC_ID,
+            ELO_1500_1599_ID,
+            ELO_2000_2099_ID,
+            500,
+            1,
+        ]
+    )
+
+    assert parsed is not None
+    assert parsed.outcome_conditioning_enabled is False
+    assert parsed.initial_context == [
+        0,
+        TC_RAPID_INC_ID,
+        ELO_1500_1599_ID,
+        ELO_2000_2099_ID,
+    ]

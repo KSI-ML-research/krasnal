@@ -250,7 +250,9 @@ def _build_game_tokens(
     ]
     if cfg.time_control_enabled:
         prefix_tokens.append(get_time_control_bucket(time_initial, time_increment))
-    prefix_tokens.extend([result_to_token_id(result), white_elo, black_elo])
+    if cfg.outcome_conditioning_enabled:
+        prefix_tokens.append(result_to_token_id(result))
+    prefix_tokens.extend([white_elo, black_elo])
     prefix_active, prefix_opponent = zip(*[start_clock] * len(prefix_tokens), strict=True)
     token_ids = prefix_tokens + result_tokens + [GAME_END_ID]
     active_ids = list(prefix_active) + active_clock_ids + [end_active]

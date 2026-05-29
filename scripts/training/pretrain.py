@@ -56,6 +56,7 @@ def main(cfg: DictConfig) -> None:
 def _main(cfg: DictConfig, dist_info: DistributedInfo) -> None:
     piece_aware_moves = bool(cfg.get("piece_aware_moves", False))
     side_prefixed_moves = bool(cfg.get("side_prefixed_moves", True))
+    outcome_conditioning_enabled = bool(cfg.get("outcome_conditioning", {}).get("enabled", False))
     load_move_vocab(
         MOVE_VOCAB_PATH,
         piece_aware_moves=piece_aware_moves,
@@ -119,6 +120,7 @@ def _main(cfg: DictConfig, dist_info: DistributedInfo) -> None:
             "seed": cfg.seed,
             "piece_aware_moves": piece_aware_moves,
             "side_prefixed_moves": side_prefixed_moves,
+            "outcome_conditioning_enabled": outcome_conditioning_enabled,
             "gpt_model_name": cfg.model.get("name", "custom"),
             "move_vocab_path": str(MOVE_VOCAB_PATH),
             "dataset_mtime": dataset_mtime,

@@ -19,4 +19,5 @@ class PreprocessConfig:
     include_what_is_on_qa: bool = False
     what_is_on_prob: float = 0.0
     time_control_enabled: bool = True
+    outcome_conditioning_enabled: bool = False
     move_vocab_path: Path | None = None
