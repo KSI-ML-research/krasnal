@@ -119,6 +119,9 @@ class ModelProvider(ChessModelProvider):
         self.outcome_token: int | None = None
         self.session: InferenceSession | None = None
         self.artifact_config = artifact_config or {}
+        self.outcome_conditioning_enabled = bool(
+            self.artifact_config.get("outcome_conditioning_enabled", True)
+        )
         self._last_go: GoParams | None = None
         self._white_elo: int | None = None
         self._black_elo: int | None = None
@@ -170,6 +173,7 @@ class ModelProvider(ChessModelProvider):
             black_elo_token=self._black_elo_token(),
             time_control_token=self._time_control_token(),
             target_outcome_token=outcome_token,
+            outcome_conditioning_enabled=self.outcome_conditioning_enabled,
         )
 
     def _clock_initial_seconds_for_session(self) -> int | None:

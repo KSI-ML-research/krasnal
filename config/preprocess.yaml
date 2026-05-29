@@ -19,6 +19,9 @@ qa:
 time_control:
   enabled: true
 
+outcome_conditioning:
+  enabled: false
+
 preprocess_workers: 2
 # How many tokenized part_*.parquet shards to group per shuffle batch (pack one shard at a time).
 preprocess_concat_batch_size: 10

@@ -111,6 +111,7 @@ def test_build_game_tokens_adds_time_control_after_game_start(monkeypatch):
         seed=1,
         block_size=1024,
         time_control_enabled=True,
+        outcome_conditioning_enabled=True,
         include_check_qa=False,
         check_qa_prob=0.0,
     )
@@ -144,6 +145,44 @@ def test_build_game_tokens_adds_time_control_after_game_start(monkeypatch):
     assert opponent_clocks[-2] == 180
 
 
+def test_build_game_tokens_skips_result_token_by_default(monkeypatch):
+    _install_test_move(monkeypatch)
+
+    cfg = PreprocessConfig(
+        seed=1,
+        block_size=1024,
+        time_control_enabled=True,
+        include_check_qa=False,
+        check_qa_prob=0.0,
+    )
+    tokens, active_clocks, opponent_clocks = _build_game_tokens(
+        uci_moves="e2e4",
+        is_check=[False],
+        piece_moved=["p"],
+        result="1-0",
+        white_rating=1500,
+        black_rating=1500,
+        time_initial=180,
+        time_increment=2,
+        cfg=cfg,
+        p_no=0.0,
+        clocks_white=[170],
+        clocks_black=[],
+    )
+
+    assert tokens == [
+        GAME_START_ID,
+        TC_BLITZ_INC_ID,
+        ELO_1500_1599_ID,
+        ELO_1500_1599_ID,
+        500,
+        GAME_END_ID,
+    ]
+    assert active_clocks[0] == 180
+    assert active_clocks[-2] == 170
+    assert opponent_clocks[-2] == 180
+
+
 def test_build_game_tokens_skips_time_control_when_disabled(monkeypatch):
     _install_test_move(monkeypatch)
 
@@ -151,6 +190,7 @@ def test_build_game_tokens_skips_time_control_when_disabled(monkeypatch):
         seed=1,
         block_size=1024,
         time_control_enabled=False,
+        outcome_conditioning_enabled=True,
         include_check_qa=False,
         check_qa_prob=0.0,
     )

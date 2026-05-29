@@ -22,6 +22,7 @@ class Game:
     black_elo_token: int = ELO_ABOVE_2200_ID
     time_control_token: int = TC_UNKNOWN_ID
     target_outcome_token: int = DRAW_ID
+    outcome_conditioning_enabled: bool = True
     moves_uci: list[str] = field(default_factory=list)
     tokens: list[int] = field(default_factory=list)
     board: bulletchess.Board = field(default_factory=bulletchess.Board)
@@ -34,14 +35,11 @@ class Game:
 
     def context_tokens(self) -> list[int]:
         """Return prompt tokens plus synchronized move tokens."""
-        return [
-            GAME_START_ID,
-            self.time_control_token,
-            self.target_outcome_token,
-            self.white_elo_token,
-            self.black_elo_token,
-            *self.tokens,
-        ]
+        prefix = [GAME_START_ID, self.time_control_token]
+        if self.outcome_conditioning_enabled:
+            prefix.append(self.target_outcome_token)
+        prefix.extend([self.white_elo_token, self.black_elo_token])
+        return [*prefix, *self.tokens]
 
     def legal_moves(self) -> list[str]:
         return [move.uci() for move in self.board.legal_moves()]
