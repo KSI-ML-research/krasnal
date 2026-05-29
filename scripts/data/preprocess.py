@@ -3,6 +3,7 @@
 All logic lives in ``krasnal.preprocess``; this script is orchestration only.
 """
 
+import faulthandler
 import json
 import multiprocessing
 import random
@@ -41,6 +42,10 @@ from krasnal.tokens import ELO_TOKENS, TC_TOKENS, load_move_vocab
 EVAL_MONTH = "2019-12"
 EVAL_GAMES_PER_BIN = 10_000
 EVAL_MIN_CLOCK = 30
+
+
+def _init_preprocess_worker() -> None:
+    faulthandler.enable()
 
 
 def _pack_train_part(
@@ -194,7 +199,10 @@ def main(cfg: DictConfig) -> None:
     logger.info("Processing {} shards with {} workers", len(parquet_files), max_workers)
 
     with ProcessPoolExecutor(
-        max_workers=max_workers, mp_context=multiprocessing.get_context("spawn")
+        max_workers=max_workers,
+        mp_context=multiprocessing.get_context("spawn"),
+        max_tasks_per_child=1,
+        initializer=_init_preprocess_worker,
     ) as executor:
         futures = {}
         for idx, parquet_path in enumerate(parquet_files):
