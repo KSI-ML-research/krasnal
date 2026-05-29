@@ -161,6 +161,7 @@ def main(cfg: DictConfig) -> None:
 
     # Maia-style eval sampling: if 2019-12 is present, sample and replace
     temp_dir = PRETRAIN_DATASET_PATH.parent / "temp_preprocess"
+    shutil.rmtree(temp_dir, ignore_errors=True)
     temp_dir.mkdir(parents=True, exist_ok=True)
     eval_raw = [p for p in parquet_files if EVAL_MONTH in p.name]
     if eval_raw:
@@ -248,7 +249,13 @@ def main(cfg: DictConfig) -> None:
     packed_builder = PackedWindowBuilder(block_size, flush_every=pack_flush_windows)
 
     max_tokens = block_size
-    len_chunks: list[pl.DataFrame] = []
+    seq_len_lf = pl.concat(
+        [
+            pl.scan_parquet(part_path).select(pl.col("token_ids").list.len().alias("len"))
+            for part_path in all_parts
+        ],
+        how="vertical",
+    )
 
     shuffled_parts = list(all_parts)
     random.Random(seed).shuffle(shuffled_parts)
@@ -257,8 +264,6 @@ def main(cfg: DictConfig) -> None:
     for part_idx, part_path in enumerate(shuffled_parts, start=1):
         logger.info("Packing part {}/{}: {}", part_idx, len(shuffled_parts), part_path.name)
         part_lf = pl.scan_parquet(part_path)
-
-        len_chunks.append(part_lf.select(pl.col("token_ids").list.len().alias("len")).collect())
 
         filtered_lf = part_lf.filter(pl.col("token_ids").list.len() <= max_tokens)
         cols = ["token_ids", "active_clock_ids", "opponent_clock_ids"]
@@ -279,8 +284,7 @@ def main(cfg: DictConfig) -> None:
         )
 
     # --- Sequence length stats ---
-    seq_lens = pl.concat(len_chunks, how="vertical")
-    stats = seq_len_stats(seq_lens.lazy(), block_size)
+    stats = seq_len_stats(seq_len_lf, block_size)
     if stats["total"] == 0:
         raise RuntimeError("No games found in raw dataset.")
 

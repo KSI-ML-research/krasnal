@@ -4,7 +4,7 @@
 #SBATCH --error=output/%j_preprocess.err
 #SBATCH --cpus-per-task=12
 #SBATCH --partition=student-cpu
-#SBATCH --time=02:00:00
+#SBATCH --time=04:00:00
 
 USER=ijakus
 USER_DIRECTORY=/Ziob/$USER
@@ -26,4 +26,4 @@ mkdir -p $HF_HOME
 test -d .venv || uv venv .venv --python 3.13
 uv sync
 
-uv run scripts/data/preprocess.py preprocess_workers=8
+uv run scripts/data/preprocess.py preprocess_workers=4
