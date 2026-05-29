@@ -19,6 +19,7 @@ export XDG_RUNTIME_DIR=/tmp/$USER/runtime
 export UV_CACHE_DIR=$USER_DIRECTORY/.cache/uv
 export UV_LINK_MODE=copy
 export HF_HOME=$USER_DIRECTORY/.cache/huggingface
+export POLARS_MAX_THREADS=2
 mkdir -p $XDG_RUNTIME_DIR
 mkdir -p $UV_CACHE_DIR
 mkdir -p $HF_HOME
@@ -26,4 +27,4 @@ mkdir -p $HF_HOME
 test -d .venv || uv venv .venv --python 3.13
 uv sync
 
-uv run scripts/data/preprocess.py preprocess_workers=4
+uv run scripts/data/preprocess.py
