@@ -235,21 +235,18 @@ class PackedCollateFn:
         self,
         batch: list[tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]],
     ):
-        tokens, active, opponent, segments, positions = zip(*batch, strict=True)
+        tokens, active, opponent, segments, _positions = zip(*batch, strict=True)
         padded = torch.stack(tokens)
         active_padded = torch.stack(active)
         opponent_padded = torch.stack(opponent)
         segment_padded = torch.stack(segments)
-        position_padded = torch.stack(positions)
 
         x = padded[:, :-1]
-        segment_x = segment_padded[:, :-1]
-        position_x = position_padded[:, :-1]
         active_x, opponent_x = shift_clock_rows_for_training(active_padded, opponent_padded)
         y = apply_supervised_loss_mask(padded[:, 1:])
         y = _mask_pad_targets(y)
         y = _mask_cross_segment_targets(y, segment_padded)
-        return x, active_x, opponent_x, y, segment_x, position_x
+        return x, active_x, opponent_x, y
 
 
 def make_collate_fn(bucket_sizes: tuple[int, ...] = ()) -> Callable:

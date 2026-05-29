@@ -107,11 +107,9 @@ def test_packed_collate_masks_boundary_pad_and_metadata():
         )
     ]
     collate = make_packed_collate_fn()
-    x, _active_x, _opponent_x, y, segment_x, position_x = collate(batch)
+    x, _active_x, _opponent_x, y = collate(batch)
 
     assert x.shape == (1, block_size)
-    assert segment_x.shape == (1, block_size)
-    assert position_x.shape == (1, block_size)
     assert y[0, 2].item() == LOSS_IGNORE_INDEX
     assert y[0, -1].item() == LOSS_IGNORE_INDEX
 
@@ -135,7 +133,7 @@ def test_single_game_packed_matches_unpacked_collate_on_supervised_positions():
     row = packed.row(0, named=True)
 
     packed_collate = make_packed_collate_fn()
-    px, pa, po, py, _, _ = packed_collate(
+    px, pa, po, py = packed_collate(
         [
             (
                 torch.tensor(row["token_ids"], dtype=torch.long),
