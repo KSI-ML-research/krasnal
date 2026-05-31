@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import math
+
 import polars as pl
 from loguru import logger
 from omegaconf import DictConfig
@@ -16,7 +18,10 @@ from krasnal.tokens import (
     GAME_END_ID,
     GAME_START_ID,
     IS_CHECK_ID,
+    MAX_SIDE_MATERIAL,
     NO_CHECK_ID,
+    OPP_MATERIAL_START_ID,
+    OPP_MATERIAL_TOKEN_IDS,
     SPECIAL_TOKENS,
     TC_TOKENS,
     UNKNOWN_RESULT_ID,
@@ -37,12 +42,27 @@ _TOKEN_MIX_COUNTERS: list[tuple[str, int | frozenset[int]]] = [
     ("result_count", frozenset({WHITE_WON_ID, BLACK_WON_ID, DRAW_ID, UNKNOWN_RESULT_ID})),
     ("elo_count", frozenset(ELO_TOKENS.values())),
     ("tc_count", frozenset(TC_TOKENS.values())),
+    ("material_count", frozenset(OPP_MATERIAL_TOKEN_IDS)),
     ("special_count", frozenset(SPECIAL_TOKENS.values())),
     ("game_start_count", GAME_START_ID),
     ("game_end_count", GAME_END_ID),
     *((f"elo_{name}_count", bid) for name, bid in ELO_TOKENS.items()),
     *((f"tc_{name}_count", bid) for name, bid in TC_TOKENS.items()),
+    *(
+        (f"opp_mat_{points}_count", OPP_MATERIAL_START_ID + points)
+        for points in range(MAX_SIDE_MATERIAL + 1)
+    ),
 ]
+
+
+def token_mix_raw_from_counts(id_counts: dict[int, int]) -> dict[str, int]:
+    result = {"total_tokens": sum(id_counts.values())}
+    for name, ids in _TOKEN_MIX_COUNTERS:
+        if isinstance(ids, int):
+            result[name] = id_counts.get(ids, 0)
+        else:
+            result[name] = sum(id_counts.get(i, 0) for i in ids)
+    return result
 
 
 def _token_mix_raw_sums(tokenized_lf: pl.LazyFrame) -> dict[str, int]:
@@ -57,13 +77,9 @@ def _token_mix_raw_sums(tokenized_lf: pl.LazyFrame) -> dict[str, int]:
         zip(counts_df["tid"].to_list(), counts_df["len"].to_list(), strict=True)
     )
 
-    result: dict[str, int] = {"total_tokens": int(total)}
-    for name, ids in _TOKEN_MIX_COUNTERS:
-        if isinstance(ids, int):
-            result[name] = id_to_count.get(ids, 0)
-        else:
-            result[name] = sum(id_to_count.get(i, 0) for i in ids)
-    return result
+    raw = token_mix_raw_from_counts(id_to_count)
+    raw["total_tokens"] = int(total)
+    return raw
 
 
 def merge_token_mix_raw(
@@ -96,9 +112,11 @@ def token_mix_from_raw_sums(raw: dict[str, int]) -> dict[str, float]:
         "result_count": raw["result_count"],
         "elo_count": raw["elo_count"],
         "tc_count": raw["tc_count"],
+        "material_count": raw["material_count"],
         "uci_move_pct": pct(uci_move_count),
         "check_qa_pct": pct(check_qa_count),
         "outcome_prefix_pct": pct(outcome_prefix_count),
+        "material_pct": pct(raw["material_count"]),
         "what_is_on_count": raw["what_is_on_count"],
         "what_is_on_pct": pct(raw["what_is_on_count"]),
         "empty_count": raw["empty_count"],
@@ -117,12 +135,71 @@ def token_mix_from_raw_sums(raw: dict[str, int]) -> dict[str, float]:
         result[f"elo_{bucket_name}_count"] = float(raw[f"elo_{bucket_name}_count"])
     for bucket_name in TC_TOKENS:
         result[f"tc_{bucket_name}_count"] = float(raw[f"tc_{bucket_name}_count"])
+    for points in range(MAX_SIDE_MATERIAL + 1):
+        result[f"opp_mat_{points}_count"] = float(raw[f"opp_mat_{points}_count"])
 
     return result
 
 
 def compute_token_mix_stats(tokenized_lf: pl.LazyFrame) -> dict[str, float]:
     return token_mix_from_raw_sums(_token_mix_raw_sums(tokenized_lf))
+
+
+def merge_seq_len_raw(
+    acc: dict[int, int] | None,
+    part: dict[int, int],
+) -> dict[int, int]:
+    if acc is None:
+        return part
+    for length, count in part.items():
+        acc[length] = acc.get(length, 0) + count
+    return acc
+
+
+def seq_len_stats_from_counts(length_counts: dict[int, int], block_size: int) -> dict[str, float]:
+    total = sum(length_counts.values())
+    if total == 0:
+        return {
+            "total": 0,
+            "min": None,
+            "max": None,
+            "mean": 0.0,
+            "median": None,
+            "std": 0.0,
+            "p95": None,
+            "p99": None,
+            "p999": None,
+            "over_block_size": 0,
+        }
+
+    ordered = sorted(length_counts.items())
+    total_sum = sum(length * count for length, count in ordered)
+    mean = total_sum / total
+    variance = sum(((length - mean) ** 2) * count for length, count in ordered) / total
+
+    def quantile(q: float) -> int:
+        target = max(1, math.ceil(total * q))
+        seen = 0
+        for length, count in ordered:
+            seen += count
+            if seen >= target:
+                return length
+        return ordered[-1][0]
+
+    return {
+        "total": total,
+        "min": ordered[0][0],
+        "max": ordered[-1][0],
+        "mean": mean,
+        "median": quantile(0.5),
+        "std": math.sqrt(variance),
+        "p95": quantile(0.95),
+        "p99": quantile(0.99),
+        "p999": quantile(0.999),
+        "over_block_size": sum(
+            count for length, count in length_counts.items() if length > block_size
+        ),
+    }
 
 
 def seq_len_stats(seq_len_lf: pl.LazyFrame, block_size: int) -> dict[str, float]:
@@ -187,6 +264,7 @@ def log_preprocess_to_wandb(
     wandb.summary["dataset/input_token_pct/what_is_on_prompt"] = token_mix["what_is_on_pct"]
     wandb.summary["dataset/input_token_pct/what_is_on_answer"] = token_mix["whats_on_answer_pct"]
     wandb.summary["dataset/input_token_pct/conditioning_prefix"] = token_mix["outcome_prefix_pct"]
+    wandb.summary["dataset/input_token_pct/opponent_material"] = token_mix["material_pct"]
     wandb.summary["dataset/input_token_pct/game_start"] = token_mix["game_start_pct"]
     wandb.summary["dataset/input_token_pct/game_end"] = token_mix["game_end_pct"]
 
@@ -201,6 +279,13 @@ def log_preprocess_to_wandb(
         count = token_mix.get(f"tc_{bucket_name}_count", 0)
         pct = (count / total_tc * 100.0) if total_tc > 0 else 0.0
         wandb.summary[f"dataset/tc/{bucket_name}"] = pct
+
+    total_material = token_mix.get("material_count", 0)
+    for points in range(MAX_SIDE_MATERIAL + 1):
+        count = token_mix.get(f"opp_mat_{points}_count", 0)
+        pct = (count / total_material * 100.0) if total_material > 0 else 0.0
+        wandb.summary[f"dataset/opponent_material/{points}"] = count
+        wandb.summary[f"dataset/opponent_material_pct/{points}"] = pct
 
     if eval_elo_bins:
         for bucket_name, count in eval_elo_bins.items():

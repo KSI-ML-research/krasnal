@@ -3,7 +3,6 @@ from krasnal.sampling import sample_bool, whats_on_square_index
 
 def test_whats_on_square_index_deterministic():
     kwargs = dict(
-        post_move_fen="rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
         game_key="e2e4 e7e5",
         ply=0,
         seed=123,
@@ -13,13 +12,11 @@ def test_whats_on_square_index_deterministic():
 
 def test_whats_on_square_index_game_key_changes_square():
     a = whats_on_square_index(
-        post_move_fen="rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
         game_key="e2e4 e7e5 g1f3",
         ply=1,
         seed=99,
     )
     b = whats_on_square_index(
-        post_move_fen="rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
         game_key="d2d4 d7d5 c2c4",
         ply=1,
         seed=99,

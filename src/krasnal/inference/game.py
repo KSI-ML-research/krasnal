@@ -8,9 +8,10 @@ from krasnal.tokens import (
     DRAW_ID,
     ELO_ABOVE_2200_ID,
     GAME_START_ID,
-    OUTCOME_TOKENS,
     TC_UNKNOWN_ID,
+    is_move_token_id,
     normalize_piece_type,
+    opponent_material_token_id,
     token_to_uci,
     uci_to_token_id,
 )
@@ -56,13 +57,14 @@ class Game:
         self.board.apply(move)
         self.moves_uci.append(uci)
         self.tokens.append(token_id)
+        self.tokens.append(opponent_material_token_id(self.board))
 
     def feed_token(self, token_id: int) -> None:
+        if not is_move_token_id(token_id):
+            raise ValueError(f"Token id {token_id} is not a move token")
         token = token_to_uci(token_id)
         if token is None:
             raise ValueError(f"Unknown token id: {token_id}")
-        if token_id in OUTCOME_TOKENS.values():
-            raise ValueError(f"Token id {token_id} is not a move token")
         self.feed_uci(token)
 
     def _parse_and_validate_uci(self, uci: str) -> bulletchess.Move:

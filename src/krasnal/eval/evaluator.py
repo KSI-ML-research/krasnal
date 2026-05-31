@@ -22,7 +22,7 @@ from krasnal.eval.what_is_on_baseline import (
     WhatIsOnBaselineCounts,
 )
 from krasnal.inference import StatelessBatchInferenceSession
-from krasnal.tokens import ELO_BUCKETS, PAD_ID, move_token_id_for_turn
+from krasnal.tokens import ELO_BUCKETS, PAD_ID, is_move_token_id, move_token_id_for_turn
 from krasnal.utils import set_seed
 
 from .metrics.context import EvalContext
@@ -197,8 +197,8 @@ def _compact_clock_sequences(game_tokens: GameTokens) -> tuple[list[int], list[i
 
     active = [prefix_active] * len(game_tokens.initial_context)
     opponent = [prefix_opponent] * len(game_tokens.initial_context)
-    active.extend(game_tokens.move_active_seconds or [])
-    opponent.extend(game_tokens.move_opponent_seconds or [])
+    active.extend(game_tokens.body_active_seconds or [])
+    opponent.extend(game_tokens.body_opponent_seconds or [])
     return active, opponent
 
 
@@ -370,7 +370,7 @@ class ChessEvaluator:
             chunk = [
                 game_tokens
                 for game_tokens in game_tokens_list[start : start + self.inference_batch_size]
-                if len(game_tokens.move_tokens) + len(game_tokens.initial_context)
+                if len(game_tokens.body_tokens) + len(game_tokens.initial_context)
                 <= batch_session.model.config.block_size
             ]
             if not chunk:
@@ -378,7 +378,7 @@ class ChessEvaluator:
 
             token_rows = [
                 torch.tensor(
-                    [*game_tokens.initial_context, *game_tokens.move_tokens],
+                    [*game_tokens.initial_context, *game_tokens.body_tokens],
                     dtype=torch.long,
                 )
                 for game_tokens in chunk
@@ -418,7 +418,11 @@ class ChessEvaluator:
 
             for row_idx, game_tokens in enumerate(chunk):
                 prefix_len = len(game_tokens.initial_context)
-                positions = range(prefix_len, prefix_len + len(game_tokens.move_tokens))
+                positions = [
+                    prefix_len + body_idx
+                    for body_idx, token in enumerate(game_tokens.body_tokens)
+                    if is_move_token_id(token)
+                ]
                 logit_positions = torch.tensor(
                     [pos - 1 for pos in positions],
                     device=batch_session.device,

@@ -39,11 +39,10 @@ def test_pack_restarts_split_game_from_start_in_next_window():
     # Window 1 ends with a prefix of game B; window 2 restarts game B from <game_start>.
     assert row0["token_ids"][0] == GAME_START_ID
     assert row1["token_ids"][0] == GAME_START_ID
-    assert row1["position_ids"][0] == 0
     assert row1["token_ids"][-1] == PAD_ID
 
 
-def test_pack_games_emits_fixed_window_size_and_segment_ids():
+def test_pack_games_emits_fixed_window_size():
     block_size = 8
     games = pl.DataFrame(
         {
@@ -69,21 +68,12 @@ def test_pack_games_emits_fixed_window_size_and_segment_ids():
     row = packed.row(0, named=True)
     assert len(row["token_ids"]) == window_size
 
-    non_pad = [
-        (tok, seg, pos)
-        for tok, seg, pos in zip(
-            row["token_ids"], row["segment_ids"], row["position_ids"], strict=True
-        )
-        if tok != PAD_ID
-    ]
+    non_pad = [tok for tok in row["token_ids"] if tok != PAD_ID]
     assert len(non_pad) == 9
-    assert {seg for _, seg, _ in non_pad} == {0, 1}
-    for tok, _seg, pos in non_pad:
-        if tok == GAME_START_ID:
-            assert pos == 0
+    assert non_pad.count(GAME_START_ID) == 2
 
 
-def test_packed_collate_masks_boundary_pad_and_metadata():
+def test_packed_collate_masks_boundary_and_pad_targets():
     block_size = 4
     games = pl.DataFrame(
         {
@@ -102,8 +92,6 @@ def test_packed_collate_masks_boundary_pad_and_metadata():
             torch.tensor(row["token_ids"], dtype=torch.long),
             torch.tensor(row["active_clock_ids"], dtype=torch.long),
             torch.tensor(row["opponent_clock_ids"], dtype=torch.long),
-            torch.tensor(row["segment_ids"], dtype=torch.long),
-            torch.tensor(row["position_ids"], dtype=torch.long),
         )
     ]
     collate = make_packed_collate_fn()
@@ -139,8 +127,6 @@ def test_single_game_packed_matches_unpacked_collate_on_supervised_positions():
                 torch.tensor(row["token_ids"], dtype=torch.long),
                 torch.tensor(row["active_clock_ids"], dtype=torch.long),
                 torch.tensor(row["opponent_clock_ids"], dtype=torch.long),
-                torch.tensor(row["segment_ids"], dtype=torch.long),
-                torch.tensor(row["position_ids"], dtype=torch.long),
             )
         ]
     )
@@ -180,11 +166,9 @@ def test_packed_builder_writes_mmap_dataset(tmp_path):
 
     ds = PretrainDataset(tmp_path / "pretrain")
     assert len(ds) == 2
-    tokens, active, opponent, segments, positions = ds[0]
+    tokens, active, opponent = ds[0]
     assert tokens.dtype == torch.long
     assert active.dtype == torch.long
     assert opponent.dtype == torch.long
-    assert segments.dtype == torch.long
-    assert positions.dtype == torch.long
     assert tokens.shape == (block_size + 1,)
     assert tokens[0].item() == GAME_START_ID

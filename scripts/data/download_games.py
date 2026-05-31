@@ -105,8 +105,7 @@ SELECT
     utc_timestamp,
     opening,
     eco,
-    ply_count,
-    fen_at_position(movedata, 0) AS fen
+    ply_count
 FROM '{parquet_path}'
 WHERE white_rating >= {min_elo}
   AND black_rating >= {min_elo}

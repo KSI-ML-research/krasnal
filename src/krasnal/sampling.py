@@ -23,21 +23,18 @@ def sample_bool(
 
 def whats_on_square_index(
     *,
-    post_move_fen: str,
     game_key: str,
     ply: int,
     seed: int,
 ) -> int:
     """Pick square index 0..63 for a ``whats_on`` probe (deterministic).
 
-    Uses post-move FEN plus per-game ``game_key`` (e.g. space-separated UCIs) so eval
-    matches training.
+    Uses per-game ``game_key`` (e.g. space-separated UCIs), ply, and seed so eval matches
+    training without serializing board state during preprocessing.
     """
     h = blake2b(digest_size=16)
-    h.update(b"krasnal.whats_on.v1")
+    h.update(b"krasnal.whats_on.v2")
     h.update(str(seed).encode())
-    h.update(b"\0")
-    h.update(post_move_fen.encode())
     h.update(b"\0")
     h.update(game_key.encode())
     h.update(b"\0")
