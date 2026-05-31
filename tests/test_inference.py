@@ -19,6 +19,7 @@ from krasnal.tokens import (
     BLACK_PREFIX,
     DRAW_ID,
     MOVE_TO_ID,
+    OPP_MATERIAL_TOKENS,
     WHITE_PREFIX,
     WHITE_WON_ID,
     get_vocab_size,
@@ -90,7 +91,9 @@ def test_game_feed_uci_and_feed_token_keep_board_and_tokens_synchronized():
     assert game.moves_uci == ["e2e4", "e7e5"]
     assert game.tokens == [
         MOVE_TO_ID[WHITE_PREFIX + "e2e4"],
+        OPP_MATERIAL_TOKENS["<opp_mat_39>"],
         MOVE_TO_ID[BLACK_PREFIX + "e7e5"],
+        OPP_MATERIAL_TOKENS["<opp_mat_39>"],
     ]
     assert len(game.legal_moves()) > 0
 
@@ -360,6 +363,6 @@ def test_inference_session_reuses_kv_cache_for_incremental_moves():
 
     assert session.kv_cache is not None
     assert session.kv_cache.get_seq_len() == len(session.context)
-    assert session.kv_cache.get_seq_len() == initial_seq_len + 1
+    assert session.kv_cache.get_seq_len() == initial_seq_len + 2
     assert torch.allclose(incremented_logits, full_logits[0, -1], atol=1e-5, rtol=1e-4)
     assert not torch.allclose(initial_logits, incremented_logits)

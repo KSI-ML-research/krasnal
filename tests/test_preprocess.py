@@ -1,5 +1,6 @@
 import json
 
+import bulletchess
 import polars as pl
 import pytest
 
@@ -7,13 +8,13 @@ from krasnal.preprocess import (
     InvalidClockDataError,
     PreprocessConfig,
     build_move_vocab_from_corpus,
-    process_file_streaming,
 )
 from krasnal.preprocess.stats import compute_token_mix_stats
 from krasnal.preprocess.tokenize import (
     _build_game_tokens,
     _compute_check_qa_probs,
     _sample_bool_with_prefix,
+    _tokenize_batch,
 )
 from krasnal.sampling import sample_bool
 from krasnal.tokens import (
@@ -21,15 +22,23 @@ from krasnal.tokens import (
     GAME_END_ID,
     GAME_START_ID,
     MOVE_TO_ID,
+    OPP_MATERIAL_TOKENS,
     TC_BLITZ_INC_ID,
     TC_BLITZ_NO_INC_ID,
     TC_TOKENS,
     WHITE_WON_ID,
+    opponent_material_token_id,
 )
 
 
 def _install_test_move(monkeypatch, move_key: str = "w:e2e4", token_id: int = 500) -> None:
     monkeypatch.setitem(MOVE_TO_ID, move_key, token_id)
+
+
+def _install_test_moves(monkeypatch, moves: list[str], start_token_id: int = 500) -> None:
+    for ply, move in enumerate(moves):
+        prefix = "w:" if ply % 2 == 0 else "b:"
+        monkeypatch.setitem(MOVE_TO_ID, f"{prefix}{move}", start_token_id + ply)
 
 
 def test_compute_check_qa_probs_balances_yes_no_average():
@@ -137,48 +146,11 @@ def test_build_game_tokens_adds_time_control_after_game_start(monkeypatch):
         ELO_1500_1599_ID,
         ELO_1500_1599_ID,
         500,
+        OPP_MATERIAL_TOKENS["<opp_mat_39>"],
         GAME_END_ID,
     ]
     assert active_clocks[0] == 180
     assert opponent_clocks[0] == 180
-    assert active_clocks[-2] == 170
-    assert opponent_clocks[-2] == 180
-
-
-def test_build_game_tokens_skips_result_token_by_default(monkeypatch):
-    _install_test_move(monkeypatch)
-
-    cfg = PreprocessConfig(
-        seed=1,
-        block_size=1024,
-        time_control_enabled=True,
-        include_check_qa=False,
-        check_qa_prob=0.0,
-    )
-    tokens, active_clocks, opponent_clocks = _build_game_tokens(
-        uci_moves="e2e4",
-        is_check=[False],
-        piece_moved=["p"],
-        result="1-0",
-        white_rating=1500,
-        black_rating=1500,
-        time_initial=180,
-        time_increment=2,
-        cfg=cfg,
-        p_no=0.0,
-        clocks_white=[170],
-        clocks_black=[],
-    )
-
-    assert tokens == [
-        GAME_START_ID,
-        TC_BLITZ_INC_ID,
-        ELO_1500_1599_ID,
-        ELO_1500_1599_ID,
-        500,
-        GAME_END_ID,
-    ]
-    assert active_clocks[0] == 180
     assert active_clocks[-2] == 170
     assert opponent_clocks[-2] == 180
 
@@ -215,11 +187,54 @@ def test_build_game_tokens_skips_time_control_when_disabled(monkeypatch):
         ELO_1500_1599_ID,
         ELO_1500_1599_ID,
         500,
+        OPP_MATERIAL_TOKENS["<opp_mat_39>"],
         GAME_END_ID,
     ]
     assert active_clocks[0] == 180
     assert active_clocks[-2] == 170
     assert opponent_clocks[-2] == 180
+
+
+def test_build_game_tokens_incremental_material_matches_board_scan(monkeypatch):
+    cfg = PreprocessConfig(
+        seed=1,
+        block_size=1024,
+        time_control_enabled=True,
+        outcome_conditioning_enabled=True,
+        include_check_qa=False,
+        check_qa_prob=0.0,
+    )
+    sequences = [
+        ["e2e4", "a7a6", "e4e5", "d7d5", "e5d6"],
+        ["h2h4", "a7a5", "h4h5", "a5a4", "h5h6", "a4a3", "h6g7", "a3b2", "g7h8q"],
+    ]
+
+    for moves in sequences:
+        _install_test_moves(monkeypatch, moves)
+        tokens, _active_clocks, _opponent_clocks = _build_game_tokens(
+            uci_moves=" ".join(moves),
+            is_check=[False] * len(moves),
+            piece_moved=["p"] * len(moves),
+            result="1-0",
+            white_rating=1500,
+            black_rating=1500,
+            time_initial=180,
+            time_increment=2,
+            cfg=cfg,
+            p_no=0.0,
+            clocks_white=[170] * ((len(moves) + 1) // 2),
+            clocks_black=[165] * (len(moves) // 2),
+        )
+
+        board = bulletchess.Board()
+        expected_material_tokens = []
+        for move in moves:
+            board.apply(bulletchess.Move.from_uci(move))
+            expected_material_tokens.append(opponent_material_token_id(board))
+
+        prefix_len = 5
+        actual_material_tokens = tokens[prefix_len + 1 : -1 : 2]
+        assert actual_material_tokens == expected_material_tokens
 
 
 def test_build_game_tokens_raises_on_missing_clocks():
@@ -272,12 +287,10 @@ def test_build_game_tokens_raises_on_mismatched_clock_lengths():
         )
 
 
-def test_process_file_streaming_counts_invalid_clock_skips(tmp_path, monkeypatch):
+def test_tokenize_batch_counts_invalid_clock_skips(monkeypatch):
     _install_test_move(monkeypatch)
 
-    input_path = tmp_path / "games.parquet"
-    output_path = tmp_path / "tokenized.parquet"
-    pl.DataFrame(
+    batch = pl.DataFrame(
         {
             "uci_moves": ["e2e4", "e2e4 e7e5"],
             "is_check": [[False], [False, False]],
@@ -290,7 +303,7 @@ def test_process_file_streaming_counts_invalid_clock_skips(tmp_path, monkeypatch
             "time_initial": [180, 180],
             "time_increment": [0, 0],
         }
-    ).write_parquet(input_path)
+    )
 
     cfg = PreprocessConfig(
         seed=1,
@@ -300,16 +313,16 @@ def test_process_file_streaming_counts_invalid_clock_skips(tmp_path, monkeypatch
         check_qa_prob=0.0,
     )
 
-    row_count, invalid_clock_skips = process_file_streaming(input_path, output_path, cfg)
+    (token_rows, active_rows, opponent_rows), invalid_clock_skips = _tokenize_batch(
+        batch,
+        cfg,
+        p_no=0.0,
+    )
 
-    assert row_count == 2
     assert invalid_clock_skips == 1
-    assert pl.read_parquet(output_path).columns == [
-        "token_ids",
-        "active_clock_ids",
-        "opponent_clock_ids",
-    ]
-    assert len(pl.read_parquet(output_path)) == 1
+    assert len(token_rows) == 1
+    assert len(active_rows) == 1
+    assert len(opponent_rows) == 1
 
 
 def test_token_mix_stats_counts_time_control_buckets():
@@ -317,8 +330,22 @@ def test_token_mix_stats_counts_time_control_buckets():
         pl.DataFrame(
             {
                 "token_ids": [
-                    [GAME_START_ID, TC_BLITZ_NO_INC_ID, WHITE_WON_ID, 500, GAME_END_ID],
-                    [GAME_START_ID, TC_BLITZ_INC_ID, WHITE_WON_ID, 501, GAME_END_ID],
+                    [
+                        GAME_START_ID,
+                        TC_BLITZ_NO_INC_ID,
+                        WHITE_WON_ID,
+                        500,
+                        OPP_MATERIAL_TOKENS["<opp_mat_39>"],
+                        GAME_END_ID,
+                    ],
+                    [
+                        GAME_START_ID,
+                        TC_BLITZ_INC_ID,
+                        WHITE_WON_ID,
+                        501,
+                        OPP_MATERIAL_TOKENS["<opp_mat_38>"],
+                        GAME_END_ID,
+                    ],
                 ]
             }
         ).lazy()
@@ -330,5 +357,8 @@ def test_token_mix_stats_counts_time_control_buckets():
     assert sum(stats[f"tc_{bucket}_count"] for bucket in TC_TOKENS) == 2
     assert stats["game_start_count"] == 2
     assert stats["game_end_count"] == 2
-    assert stats["total_tokens"] == 10
+    assert stats["total_tokens"] == 12
     assert stats["uci_move_count"] == 2
+    assert stats["material_count"] == 2
+    assert stats["opp_mat_39_count"] == 1
+    assert stats["opp_mat_38_count"] == 1

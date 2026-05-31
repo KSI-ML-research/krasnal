@@ -7,8 +7,8 @@ piece_aware_moves: true
 include_elo: true
 use_time_conditioning: true
 outcome_conditioning:
-  enabled: false
-block_size: 256
+  enabled: true
+block_size: 512
 wandb_project: krasnal
 
 hydra:

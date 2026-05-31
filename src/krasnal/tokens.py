@@ -42,6 +42,7 @@ TC_RAPID_NO_INC_ID = 113
 TC_RAPID_INC_ID = 114
 TC_CLASSICAL_ID = 115
 TC_UNKNOWN_ID = 116
+OPP_MATERIAL_START_ID = 117
 
 IS_CHECK_ID = 24
 YES_CHECK_ID = 25
@@ -79,6 +80,23 @@ PIECE_TYPES: Final[tuple[str, ...]] = tuple(PIECE_TYPE_ALIASES)
 PIECE_TYPE_LOOKUP: Final[dict[str, str]] = {
     alias: canonical for canonical, aliases in PIECE_TYPE_ALIASES.items() for alias in aliases
 }
+PIECE_MATERIAL_VALUES: Final[dict[str, int]] = {
+    "pawn": 1,
+    "knight": 3,
+    "bishop": 3,
+    "rook": 5,
+    "queen": 9,
+    "king": 0,
+}
+
+MAX_SIDE_MATERIAL = (
+    PIECE_MATERIAL_VALUES["queen"]
+    + 2 * PIECE_MATERIAL_VALUES["rook"]
+    + 2 * PIECE_MATERIAL_VALUES["bishop"]
+    + 2 * PIECE_MATERIAL_VALUES["knight"]
+    + PIECE_MATERIAL_VALUES["king"]
+    + 8 * PIECE_MATERIAL_VALUES["queen"]
+)
 
 OUTCOME_TOKENS = {
     "<white_won>": WHITE_WON_ID,
@@ -112,6 +130,11 @@ TC_TOKENS = {
     "<tc_classical>": TC_CLASSICAL_ID,
     "<tc_unknown>": TC_UNKNOWN_ID,
 }
+
+OPP_MATERIAL_TOKENS = {
+    f"<opp_mat_{points}>": OPP_MATERIAL_START_ID + points for points in range(MAX_SIDE_MATERIAL + 1)
+}
+OPP_MATERIAL_TOKEN_IDS = frozenset(OPP_MATERIAL_TOKENS.values())
 
 ELO_BUCKETS = {
     ELO_BELOW_1000_ID: "below_1000",
@@ -156,6 +179,7 @@ SPECIAL_TOKENS = {
     **OUTCOME_TOKENS,
     **ELO_TOKENS,
     **TC_TOKENS,
+    **OPP_MATERIAL_TOKENS,
 }
 
 MOVE_TO_ID = dict(SPECIAL_TOKENS)
@@ -441,6 +465,29 @@ def get_time_control_bucket(
     return TC_CLASSICAL_ID
 
 
+def side_material_points(board: bulletchess.Board, color: object) -> int:
+    total = 0
+    for square in bulletchess.SQUARES:
+        piece = board[square]
+        if piece is not None and piece.color == color:
+            total += PIECE_MATERIAL_VALUES[normalize_piece_type(piece.piece_type)]
+    return total
+
+
+def opponent_material_points(board: bulletchess.Board) -> int:
+    """Material points for the side to move, i.e. the opponent after a just-applied move."""
+    points = side_material_points(board, board.turn)
+    if points > MAX_SIDE_MATERIAL:
+        raise ValueError(
+            f"Opponent material {points} exceeds max tokenized value {MAX_SIDE_MATERIAL}"
+        )
+    return points
+
+
+def opponent_material_token_id(board: bulletchess.Board) -> int:
+    return OPP_MATERIAL_TOKENS[f"<opp_mat_{opponent_material_points(board)}>"]
+
+
 def result_to_token_id(result: str | int) -> int:
     if result in (1, "1-0", "white_won", WHITE_WON_ID):
         return WHITE_WON_ID
@@ -593,14 +640,12 @@ def whats_on_answer_token_id(board: bulletchess.Board, sq_str: str) -> int:
 def whats_on_probe_labels(
     board: bulletchess.Board,
     *,
-    post_move_fen: str,
     game_key: str,
     ply: int,
     seed: int,
 ) -> tuple[str, int, int]:
     """Square name plus prompt/answer token ids for a whats_on probe."""
     sq_idx = whats_on_square_index(
-        post_move_fen=post_move_fen,
         game_key=game_key,
         ply=ply,
         seed=seed,

@@ -2,21 +2,27 @@
 
 from __future__ import annotations
 
+from collections import Counter
 from hashlib import blake2b
 from pathlib import Path
 
 import bulletchess
 import polars as pl
+import pyarrow.parquet as pq
 from loguru import logger
 
+from krasnal.preprocess.pack import PackedWindowBuilder
 from krasnal.time_conditioning import uniform_clock_pair
 from krasnal.tokens import (
     BLACK_PREFIX,
     GAME_END_ID,
     GAME_START_ID,
     IS_CHECK_ID,
+    MAX_SIDE_MATERIAL,
     MOVE_TO_ID,
     NO_CHECK_ID,
+    OPP_MATERIAL_START_ID,
+    PIECE_MATERIAL_VALUES,
     WHITE_PREFIX,
     YES_CHECK_ID,
     get_elo_bucket,
@@ -30,6 +36,35 @@ from krasnal.tokens import (
 )
 
 from .config import PreprocessConfig
+
+_TOKENIZED_SCHEMA = {
+    "token_ids": pl.List(pl.UInt16),
+    "active_clock_ids": pl.List(pl.UInt32),
+    "opponent_clock_ids": pl.List(pl.UInt32),
+}
+
+_RAW_COLUMNS = [
+    "uci_moves",
+    "is_check",
+    "piece_moved",
+    "result",
+    "white_rating",
+    "black_rating",
+    "clocks_white",
+    "clocks_black",
+    "time_initial",
+    "time_increment",
+]
+
+_TokenizedRows = tuple[list[list[int]], list[list[int]], list[list[int]]]
+_MATERIAL_VALUE_BY_PIECE_TYPE = {
+    bulletchess.PAWN: PIECE_MATERIAL_VALUES["pawn"],
+    bulletchess.KNIGHT: PIECE_MATERIAL_VALUES["knight"],
+    bulletchess.BISHOP: PIECE_MATERIAL_VALUES["bishop"],
+    bulletchess.ROOK: PIECE_MATERIAL_VALUES["rook"],
+    bulletchess.QUEEN: PIECE_MATERIAL_VALUES["queen"],
+    bulletchess.KING: PIECE_MATERIAL_VALUES["king"],
+}
 
 
 class InvalidClockDataError(ValueError):
@@ -92,6 +127,10 @@ def _move_token_id_for_ply(
     return MOVE_TO_ID.get(key)
 
 
+def _piece_material_value(piece: bulletchess.Piece) -> int:
+    return _MATERIAL_VALUE_BY_PIECE_TYPE[piece.piece_type]
+
+
 def _clock_seconds(value: object, *, context: str) -> int:
     from krasnal.config import CLOCK_IGNORE_ID
 
@@ -142,13 +181,11 @@ def _build_game_tokens(
     p_no: float,
     clocks_white: list[int] | None = None,
     clocks_black: list[int] | None = None,
-    fen: str | None = None,
 ) -> tuple[list[int], list[int], list[int]]:
     if not uci_moves:
         return [], [], []
 
-    if cfg.include_what_is_on_qa:
-        b = bulletchess.Board.from_fen(fen) if fen else bulletchess.Board()
+    b = bulletchess.Board()
 
     moves_list = uci_moves.split()
     piece_types = _validated_piece_moved(
@@ -169,6 +206,8 @@ def _build_game_tokens(
     black_remaining = time_initial_sec
     end_active = time_initial_sec
     end_opponent = time_initial_sec
+    white_material = 39
+    black_material = 39
 
     result_tokens = []
     active_clock_ids = []
@@ -212,6 +251,47 @@ def _build_game_tokens(
         end_active, end_opponent = active_clock_id, opponent_clock_id
         append_token(move_id, active_clock_id, opponent_clock_id)
 
+        parsed_move = bulletchess.Move.from_uci(move)
+        mover = b[parsed_move.origin]
+        if mover is None:
+            raise ValueError(f"game {uci_moves[:80]!r}: no piece at ply {ply}: {move}")
+        mover_is_white = mover.color == bulletchess.WHITE
+        captured = b[parsed_move.destination]
+        if (
+            captured is None
+            and mover.piece_type == bulletchess.PAWN
+            and parsed_move.origin.index() % 8 != parsed_move.destination.index() % 8
+        ):
+            capture_square = (
+                parsed_move.destination.south()
+                if mover_is_white
+                else parsed_move.destination.north()
+            )
+            captured = b[capture_square] if capture_square is not None else None
+        if captured is not None:
+            if captured.color == bulletchess.WHITE:
+                white_material -= _piece_material_value(captured)
+            else:
+                black_material -= _piece_material_value(captured)
+        if parsed_move.is_promotion():
+            promotion_delta = _MATERIAL_VALUE_BY_PIECE_TYPE[parsed_move.promotion] - 1
+            if mover_is_white:
+                white_material += promotion_delta
+            else:
+                black_material += promotion_delta
+
+        try:
+            b.apply(parsed_move)
+        except ValueError as exc:
+            raise ValueError(f"game {uci_moves[:80]!r}: illegal move at ply {ply}: {move}") from exc
+        opponent_material = black_material if mover_is_white else white_material
+        if opponent_material > MAX_SIDE_MATERIAL:
+            raise ValueError(
+                f"Opponent material {opponent_material} exceeds max tokenized value "
+                f"{MAX_SIDE_MATERIAL}"
+            )
+        append_token(OPP_MATERIAL_START_ID + opponent_material, active_clock_id, opponent_clock_id)
+
         if cfg.include_check_qa:
             gives_check = ply < len(is_check) and bool(is_check[ply])
             if gives_check:
@@ -222,25 +302,19 @@ def _build_game_tokens(
                 append_token(IS_CHECK_ID, active_clock_id, opponent_clock_id)
                 append_token(NO_CHECK_ID, active_clock_id, opponent_clock_id)
 
-        if cfg.include_what_is_on_qa:
-            parsed_move = bulletchess.Move.from_uci(move)
-            try:
-                b.apply(parsed_move)
-            except ValueError as exc:
-                raise ValueError(
-                    f"game {uci_moves[:80]!r}: illegal move at ply {ply}: {move}"
-                ) from exc
-
-            if _sample_bool_with_prefix(whats_on_sample_prefix, ply, cfg.what_is_on_prob):
-                _, whats_on_token_id, ans_id = whats_on_probe_labels(
-                    b,
-                    post_move_fen=b.fen(),
-                    game_key=uci_moves,
-                    ply=ply,
-                    seed=cfg.seed,
-                )
-                append_token(whats_on_token_id, active_clock_id, opponent_clock_id)
-                append_token(ans_id, active_clock_id, opponent_clock_id)
+        if cfg.include_what_is_on_qa and _sample_bool_with_prefix(
+            whats_on_sample_prefix,
+            ply,
+            cfg.what_is_on_prob,
+        ):
+            _, whats_on_token_id, ans_id = whats_on_probe_labels(
+                b,
+                game_key=uci_moves,
+                ply=ply,
+                seed=cfg.seed,
+            )
+            append_token(whats_on_token_id, active_clock_id, opponent_clock_id)
+            append_token(ans_id, active_clock_id, opponent_clock_id)
 
     white_elo = get_elo_bucket(white_rating)
     black_elo = get_elo_bucket(black_rating)
@@ -262,11 +336,7 @@ def _build_game_tokens(
     return token_ids, active_ids, opponent_ids
 
 
-def process_file_streaming(
-    parquet_path: Path,
-    output_path: Path,
-    cfg: PreprocessConfig,
-) -> tuple[int, int]:
+def _check_no_probability(parquet_path: Path, cfg: PreprocessConfig) -> float:
     lf = pl.scan_parquet(parquet_path)
 
     if cfg.include_check_qa:
@@ -288,115 +358,80 @@ def process_file_streaming(
         _, p_no = _compute_check_qa_probs(check_count, no_check_count, cfg.check_qa_prob)
     else:
         p_no = 1.0
+    return p_no
 
+
+def _tokenize_batch(
+    batch: pl.DataFrame,
+    cfg: PreprocessConfig,
+    p_no: float,
+) -> tuple[_TokenizedRows, int]:
+    token_ids_list = []
+    active_clock_ids_list = []
+    opponent_clock_ids_list = []
     invalid_clock_skips = 0
 
-    def build_tokens_batch(batch: pl.DataFrame) -> pl.DataFrame:
-        nonlocal invalid_clock_skips
-        token_ids_list = []
-        active_clock_ids_list = []
-        opponent_clock_ids_list = []
-
-        uci_moves_list = batch.get_column("uci_moves").to_list()
-        is_check_list = batch.get_column("is_check").to_list()
-        piece_moved_list = batch.get_column("piece_moved").to_list()
-        result_list = batch.get_column("result").to_list()
-        white_rating_list = batch.get_column("white_rating").to_list()
-        black_rating_list = batch.get_column("black_rating").to_list()
-        clocks_white_list = batch.get_column("clocks_white").to_list()
-        clocks_black_list = batch.get_column("clocks_black").to_list()
-        if cfg.time_control_enabled:
-            time_initial_list = batch.get_column("time_initial").to_list()
-            time_increment_list = batch.get_column("time_increment").to_list()
-        else:
-            time_initial_list = [None] * len(batch)
-            time_increment_list = [None] * len(batch)
-
-        has_fen = "fen" in batch.columns
-        fen_list = batch.get_column("fen").to_list() if has_fen else [None] * len(batch)
-
-        for (
-            uci_moves,
-            is_check,
-            piece_moved,
-            result,
-            white_rating,
-            black_rating,
-            clocks_white,
-            clocks_black,
-            time_initial,
-            time_increment,
-            fen,
-        ) in zip(
-            uci_moves_list,
-            is_check_list,
-            piece_moved_list,
-            result_list,
-            white_rating_list,
-            black_rating_list,
-            clocks_white_list,
-            clocks_black_list,
-            time_initial_list,
-            time_increment_list,
-            fen_list,
-            strict=True,
-        ):
-            try:
-                token_ids, active_clock_ids, opponent_clock_ids = _build_game_tokens(
-                    uci_moves=uci_moves,
-                    is_check=is_check,
-                    piece_moved=piece_moved,
-                    result=result,
-                    white_rating=white_rating,
-                    black_rating=black_rating,
-                    time_initial=time_initial,
-                    time_increment=time_increment,
-                    cfg=cfg,
-                    p_no=p_no,
-                    clocks_white=clocks_white,
-                    clocks_black=clocks_black,
-                    fen=fen,
-                )
-            except InvalidClockDataError:
-                invalid_clock_skips += 1
-                continue
-
-            token_ids_list.append(token_ids)
-            active_clock_ids_list.append(active_clock_ids)
-            opponent_clock_ids_list.append(opponent_clock_ids)
-
-        if not token_ids_list:
-            return pl.DataFrame(
-                schema={
-                    "token_ids": pl.List(pl.UInt16),
-                    "active_clock_ids": pl.List(pl.UInt32),
-                    "opponent_clock_ids": pl.List(pl.UInt32),
-                }
+    uci_moves_list = batch.get_column("uci_moves").to_list()
+    is_check_list = batch.get_column("is_check").to_list()
+    piece_moved_list = batch.get_column("piece_moved").to_list()
+    result_list = batch.get_column("result").to_list()
+    white_rating_list = batch.get_column("white_rating").to_list()
+    black_rating_list = batch.get_column("black_rating").to_list()
+    clocks_white_list = batch.get_column("clocks_white").to_list()
+    clocks_black_list = batch.get_column("clocks_black").to_list()
+    time_initial_list = batch.get_column("time_initial").to_list()
+    time_increment_list = batch.get_column("time_increment").to_list()
+    for (
+        uci_moves,
+        is_check,
+        piece_moved,
+        result,
+        white_rating,
+        black_rating,
+        clocks_white,
+        clocks_black,
+        time_initial,
+        time_increment,
+    ) in zip(
+        uci_moves_list,
+        is_check_list,
+        piece_moved_list,
+        result_list,
+        white_rating_list,
+        black_rating_list,
+        clocks_white_list,
+        clocks_black_list,
+        time_initial_list,
+        time_increment_list,
+        strict=True,
+    ):
+        try:
+            token_ids, active_clock_ids, opponent_clock_ids = _build_game_tokens(
+                uci_moves=uci_moves,
+                is_check=is_check,
+                piece_moved=piece_moved,
+                result=result,
+                white_rating=white_rating,
+                black_rating=black_rating,
+                time_initial=time_initial,
+                time_increment=time_increment,
+                cfg=cfg,
+                p_no=p_no,
+                clocks_white=clocks_white,
+                clocks_black=clocks_black,
             )
+        except InvalidClockDataError:
+            invalid_clock_skips += 1
+            continue
 
-        return pl.DataFrame(
-            {
-                "token_ids": token_ids_list,
-                "active_clock_ids": active_clock_ids_list,
-                "opponent_clock_ids": opponent_clock_ids_list,
-            },
-            schema={
-                "token_ids": pl.List(pl.UInt16),
-                "active_clock_ids": pl.List(pl.UInt32),
-                "opponent_clock_ids": pl.List(pl.UInt32),
-            },
-        )
+        token_ids_list.append(token_ids)
+        active_clock_ids_list.append(active_clock_ids)
+        opponent_clock_ids_list.append(opponent_clock_ids)
 
-    row_count = lf.select(pl.len()).collect().item()
-    lf.map_batches(
-        build_tokens_batch,
-        schema={
-            "token_ids": pl.List(pl.UInt16),
-            "active_clock_ids": pl.List(pl.UInt32),
-            "opponent_clock_ids": pl.List(pl.UInt32),
-        },
-    ).sink_parquet(output_path)
-    return row_count, invalid_clock_skips
+    return (
+        (token_ids_list, active_clock_ids_list, opponent_clock_ids_list),
+        invalid_clock_skips,
+    )
 
 
 def build_move_vocab_from_corpus(
@@ -462,9 +497,13 @@ def process_one_shard(
     parquet_path: Path,
     output_path: Path,
     cfg: PreprocessConfig,
-) -> tuple[str, int, int, str, dict[str, int]]:
-    """Multiprocess worker: load vocab, tokenize one parquet shard, compute stats."""
-    from .stats import _token_mix_raw_sums
+    *,
+    is_eval: bool,
+    pack_flush_windows: int,
+    batch_size: int,
+) -> tuple[str, int, int, str, dict[str, int], dict[int, int], int]:
+    """Multiprocess worker: tokenize one shard and write eval Parquet or packed train data."""
+    from .stats import token_mix_raw_from_counts
 
     logger.info("Started processing {} -> {}", parquet_path.name, output_path.name)
     load_move_vocab(
@@ -472,6 +511,85 @@ def process_one_shard(
         piece_aware_moves=cfg.piece_aware_moves,
         side_prefixed_moves=cfg.side_prefixed_moves,
     )
-    count, invalid_clock_skips = process_file_streaming(parquet_path, output_path, cfg)
-    raw_sums = _token_mix_raw_sums(pl.scan_parquet(output_path).select("token_ids"))
-    return parquet_path.name, count, invalid_clock_skips, output_path.name, raw_sums
+
+    row_count = pl.scan_parquet(parquet_path).select(pl.len()).collect().item()
+    p_no = _check_no_probability(parquet_path, cfg)
+    invalid_clock_skips = 0
+    id_counts: Counter[int] = Counter()
+    length_counts: Counter[int] = Counter()
+
+    eval_batches = []
+    packed_parts_dir = output_path.parent / f"{output_path.name}_parts"
+    if is_eval:
+        builder = None
+    else:
+        builder = PackedWindowBuilder(cfg.block_size, flush_every=pack_flush_windows)
+
+    for batch in pq.ParquetFile(parquet_path).iter_batches(
+        batch_size=batch_size,
+        columns=_RAW_COLUMNS,
+    ):
+        (token_rows, active_rows, opponent_rows), skipped = _tokenize_batch(
+            pl.from_arrow(batch),
+            cfg,
+            p_no,
+        )
+        invalid_clock_skips += skipped
+        if not token_rows:
+            continue
+
+        id_counts.update(tid for row in token_rows for tid in row)
+        length_counts.update(len(row) for row in token_rows)
+
+        if is_eval:
+            window_size = cfg.block_size + 1
+            eval_batches.append(
+                pl.DataFrame(
+                    {
+                        "token_ids": [row[:window_size] for row in token_rows],
+                        "active_clock_ids": [row[:window_size] for row in active_rows],
+                        "opponent_clock_ids": [row[:window_size] for row in opponent_rows],
+                    },
+                    schema=_TOKENIZED_SCHEMA,
+                )
+            )
+            continue
+
+        assert builder is not None
+        keep = [idx for idx, row in enumerate(token_rows) if len(row) <= cfg.block_size]
+        if keep:
+            builder.feed_from_columns(
+                [token_rows[idx] for idx in keep],
+                [active_rows[idx] for idx in keep],
+                [opponent_rows[idx] for idx in keep],
+            )
+            builder.drain(packed_parts_dir)
+            builder.maybe_flush(packed_parts_dir)
+
+    if is_eval:
+        if eval_batches:
+            pl.concat(eval_batches).write_parquet(output_path)
+        else:
+            pl.DataFrame(schema=_TOKENIZED_SCHEMA).write_parquet(output_path)
+        rows = len(pl.read_parquet(output_path))
+    else:
+        assert builder is not None
+        builder.finish(output_path, part_dir=packed_parts_dir)
+        with (output_path / "metadata.json").open() as f:
+            import json
+
+            rows = int(json.load(f)["rows"])
+        if packed_parts_dir.exists():
+            import shutil
+
+            shutil.rmtree(packed_parts_dir)
+
+    return (
+        parquet_path.name,
+        row_count,
+        invalid_clock_skips,
+        str(output_path),
+        token_mix_raw_from_counts(dict(id_counts)),
+        dict(length_counts),
+        rows,
+    )

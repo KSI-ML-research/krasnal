@@ -174,7 +174,6 @@ def evaluate_what_is_on_probe_stats(
         board = bulletchess.Board.from_fen(ctx.post_move_fen)
         sq_str, whats_on_token_id, ans_id = whats_on_probe_labels(
             board,
-            post_move_fen=ctx.post_move_fen,
             game_key=game_key,
             ply=ply,
             seed=eval_seed,

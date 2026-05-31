@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import contextlib
-
 import bulletchess
 import torch
 import torch.nn.functional as F
@@ -28,8 +26,8 @@ from krasnal.uci_engine.go_params import GoParams, uci_ms_to_clock_seconds
 class InferenceSession:
     """Concrete inference session that incrementally decodes with KV cache when possible.
 
-    token stream for actual model input. Non-move tokens are preserved
-    in the raw context without mutating `Game`.
+    The game owns the model context. Feeding a move appends both the move token and
+    its deterministic post-move material annotation.
 
     When ``use_time_conditioning`` is enabled, clock tensors follow the same
     shift as training collate: input token at global index ``g`` is paired with
@@ -144,6 +142,20 @@ class InferenceSession:
         self._per_token_active.append(int(clock_active))
         self._per_token_opp.append(int(clock_opponent))
 
+    def _append_context_tokens(
+        self,
+        token_ids: list[int],
+        *,
+        clock_active: int | None,
+        clock_opponent: int | None,
+    ) -> None:
+        self.context.extend(token_ids)
+        if self.model.config.use_time_conditioning:
+            if clock_active is None or clock_opponent is None:
+                raise ValueError("clock_active and clock_opponent are required")
+            for _ in token_ids:
+                self._append_clock_tracks(clock_active, clock_opponent)
+
     def feed_token(
         self,
         token_id: int,
@@ -152,13 +164,13 @@ class InferenceSession:
         clock_opponent: int | None = None,
     ) -> None:
         """Append a token to model context and update game if it is a legal move token."""
-        self.context.append(token_id)
-        if self.model.config.use_time_conditioning:
-            if clock_active is None or clock_opponent is None:
-                raise ValueError("clock_active and clock_opponent are required for feed_token")
-            self._append_clock_tracks(clock_active, clock_opponent)
-        with contextlib.suppress(ValueError):
-            self.game.feed_token(token_id)
+        before = len(self.game.tokens)
+        self.game.feed_token(token_id)
+        self._append_context_tokens(
+            self.game.tokens[before:],
+            clock_active=clock_active,
+            clock_opponent=clock_opponent,
+        )
         self._last_logits = None
 
     def feed_uci(
@@ -168,12 +180,13 @@ class InferenceSession:
         clock_opponent: int | None = None,
     ) -> None:
         """Append a UCI move, updating both game state and model context."""
+        before = len(self.game.tokens)
         self.game.feed_uci(uci)
-        self.context.append(self.game.tokens[-1])
-        if self.model.config.use_time_conditioning:
-            if clock_active is None or clock_opponent is None:
-                raise ValueError("clock_active and clock_opponent are required for feed_uci")
-            self._append_clock_tracks(clock_active, clock_opponent)
+        self._append_context_tokens(
+            self.game.tokens[before:],
+            clock_active=clock_active,
+            clock_opponent=clock_opponent,
+        )
         self._last_logits = None
 
     def get_raw_logits(self) -> torch.Tensor:
@@ -211,13 +224,27 @@ class InferenceSession:
                 raise RuntimeError("Missing cached logits for current context window")
             return self._last_logits
 
-        x = torch.tensor([tokens_to_process], dtype=torch.long, device=self.device)
-        with torch.inference_mode(), self._amp_ctx:
-            if self.model.config.use_time_conditioning:
-                first_g = len(self.context) - len(tokens_to_process)
+        first_g = len(self.context) - len(tokens_to_process)
+        extend_incrementally = self._cached_window_len > 0 and len(tokens_to_process) > 1
+        token_batches = (
+            [[token] for token in tokens_to_process]
+            if extend_incrementally
+            else [tokens_to_process]
+        )
+
+        logits = None
+        processed = 0
+        for token_batch in token_batches:
+            x = torch.tensor([token_batch], dtype=torch.long, device=self.device)
+            with torch.inference_mode(), self._amp_ctx:
+                if not self.model.config.use_time_conditioning:
+                    logits, _ = self.model(x, past_kv=self.kv_cache)
+                    processed += len(token_batch)
+                    continue
+
                 act, opp = clock_pairs_for_window(
-                    first_g,
-                    len(tokens_to_process),
+                    first_g + processed,
+                    len(token_batch),
                     context_len=len(self.context),
                     per_token_active=self._per_token_active,
                     per_token_opp=self._per_token_opp,
@@ -233,10 +260,11 @@ class InferenceSession:
                     active_clock_ids=active_t,
                     opponent_clock_ids=opp_t,
                 )
-            else:
-                logits, _ = self.model(x, past_kv=self.kv_cache)
+                processed += len(token_batch)
 
         self._cached_window_len = len(context_window)
+        if logits is None:
+            raise RuntimeError("Model returned no logits")
         self._last_logits = logits[0, -1]
         return self._last_logits
 

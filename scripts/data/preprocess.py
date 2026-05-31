@@ -6,14 +6,12 @@ All logic lives in ``krasnal.preprocess``; this script is orchestration only.
 import faulthandler
 import json
 import multiprocessing
-import random
 import shutil
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 
 import hydra
 import polars as pl
-import pyarrow.parquet as pq
 from loguru import logger
 from omegaconf import DictConfig
 
@@ -25,16 +23,15 @@ from krasnal.config import (
     WHAT_IS_ON_BASELINE_COUNTS_PATH,
 )
 from krasnal.preprocess import (
-    PackedWindowBuilder,
     PreprocessConfig,
     build_move_vocab_from_corpus,
     build_what_is_on_baseline_counts,
     log_preprocess_to_wandb,
+    merge_seq_len_raw,
     merge_token_mix_raw,
-    one_row_one_game,
     process_one_shard,
     run_clock_report,
-    seq_len_stats,
+    seq_len_stats_from_counts,
     token_mix_from_raw_sums,
 )
 from krasnal.tokens import ELO_TOKENS, TC_TOKENS, load_move_vocab
@@ -48,39 +45,58 @@ def _init_preprocess_worker() -> None:
     faulthandler.enable()
 
 
-def _pack_train_part(
-    parquet_path: Path,
-    *,
-    packed_builder: PackedWindowBuilder,
-    packed_batches_dir: Path,
-    block_size: int,
-    batch_size: int,
-) -> None:
-    columns = ["token_ids", "active_clock_ids", "opponent_clock_ids"]
-    window_size = block_size + 1
-    for batch in pq.ParquetFile(parquet_path).iter_batches(
-        batch_size=batch_size,
-        columns=columns,
-    ):
-        data = batch.to_pydict()
-        token_rows = []
-        active_rows = []
-        opponent_rows = []
-        for tokens, active, opponent in zip(
-            data["token_ids"],
-            data["active_clock_ids"],
-            data["opponent_clock_ids"],
-            strict=True,
-        ):
-            if len(tokens) > block_size:
-                continue
-            token_rows.append(tokens[:window_size])
-            active_rows.append(active[:window_size])
-            opponent_rows.append(opponent[:window_size])
-        if token_rows:
-            packed_builder.feed_from_columns(token_rows, active_rows, opponent_rows)
-            packed_builder.drain()
-            packed_builder.maybe_flush(packed_batches_dir)
+def _merge_packed_datasets(part_dirs: list[Path], output_path: Path) -> int:
+    if output_path.is_dir():
+        shutil.rmtree(output_path)
+    elif output_path.exists():
+        output_path.unlink()
+    output_path.mkdir(parents=True, exist_ok=True)
+
+    columns = None
+    window_size = None
+    merged_shards = []
+    total_rows = 0
+    shard_idx = 0
+    for part_dir in part_dirs:
+        with (part_dir / "metadata.json").open() as f:
+            metadata = json.load(f)
+        if metadata.get("format") != "krasnal-packed-npy":
+            raise ValueError(f"Unsupported packed dataset format in {part_dir}")
+        part_columns = metadata["columns"]
+        part_window_size = int(metadata["window_size"])
+        if columns is None:
+            columns = part_columns
+            window_size = part_window_size
+        elif columns != part_columns or window_size != part_window_size:
+            raise ValueError(f"Packed dataset metadata mismatch in {part_dir}")
+
+        for shard in metadata["shards"]:
+            rows = int(shard["rows"])
+            dst_path = output_path / f"part_{shard_idx:04d}"
+            (part_dir / shard["path"]).rename(dst_path)
+            merged_shards.append({"path": dst_path.name, "rows": rows})
+            total_rows += rows
+            shard_idx += 1
+
+    if columns is None or window_size is None:
+        columns = ["token_ids", "active_clock_ids", "opponent_clock_ids"]
+        window_size = 0
+
+    with (output_path / "metadata.json").open("w") as f:
+        json.dump(
+            {
+                "format": "krasnal-packed-npy",
+                "version": 1,
+                "window_size": window_size,
+                "rows": total_rows,
+                "columns": columns,
+                "shards": merged_shards,
+            },
+            f,
+            indent=2,
+        )
+        f.write("\n")
+    return total_rows
 
 
 def _sample_eval_games(raw_path: Path, output_path: Path, seed: int) -> None:
@@ -147,7 +163,7 @@ def main(cfg: DictConfig) -> None:
     time_control_cfg = cfg.get("time_control", {})
     time_control_enabled = bool(time_control_cfg.get("enabled", True))
     outcome_conditioning_cfg = cfg.get("outcome_conditioning", {})
-    outcome_conditioning_enabled = bool(outcome_conditioning_cfg.get("enabled", False))
+    outcome_conditioning_enabled = bool(outcome_conditioning_cfg.get("enabled", True))
 
     pp_cfg = PreprocessConfig(
         seed=seed,
@@ -191,11 +207,16 @@ def main(cfg: DictConfig) -> None:
         side_prefixed_moves=side_prefixed_moves,
     )
 
-    # --- Phase 1: Parallel tokenization + stats ---
+    # --- Parallel tokenization + train packing ---
     total_games = 0
     invalid_clock_skips = 0
     mix_raw: dict[str, int] | None = None
+    seq_len_raw: dict[int, int] | None = None
+    train_part_dirs: list[Path] = []
+    eval_parts: list[Path] = []
     max_workers = int(cfg.preprocess_workers)
+    pack_flush_windows = max(1, int(cfg.get("pack_flush_windows", 8_000)))
+    stream_batch_size = max(1, int(cfg.get("pack_stream_batch_size", 10_000)))
     logger.info("Processing {} shards with {} workers", len(parquet_files), max_workers)
 
     with ProcessPoolExecutor(
@@ -206,8 +227,8 @@ def main(cfg: DictConfig) -> None:
     ) as executor:
         futures = {}
         for idx, parquet_path in enumerate(parquet_files):
-            prefix = "eval" if EVAL_MONTH in parquet_path.name else "train"
-            output_path = temp_dir / f"{prefix}_{idx:04d}.parquet"
+            is_eval = EVAL_MONTH in parquet_path.name
+            output_path = temp_dir / (f"eval_{idx:04d}.parquet" if is_eval else f"train_{idx:04d}")
             logger.info(
                 "Submitting shard {}/{}: {} -> {}",
                 idx + 1,
@@ -215,22 +236,43 @@ def main(cfg: DictConfig) -> None:
                 parquet_path.name,
                 output_path.name,
             )
-            future = executor.submit(process_one_shard, parquet_path, output_path, pp_cfg)
+            future = executor.submit(
+                process_one_shard,
+                parquet_path,
+                output_path,
+                pp_cfg,
+                is_eval=is_eval,
+                pack_flush_windows=pack_flush_windows,
+                batch_size=stream_batch_size,
+            )
             futures[future] = parquet_path.name
 
         for future in as_completed(futures):
             parquet_name = futures[future]
             try:
-                done_name, count, shard_invalid_clock_skips, output_name, shard_mix = (
-                    future.result()
-                )
+                (
+                    done_name,
+                    count,
+                    shard_invalid_clock_skips,
+                    output_name,
+                    shard_mix,
+                    shard_lengths,
+                    output_rows,
+                ) = future.result()
                 total_games += count
                 invalid_clock_skips += shard_invalid_clock_skips
                 mix_raw = merge_token_mix_raw(mix_raw, shard_mix)
+                seq_len_raw = merge_seq_len_raw(seq_len_raw, shard_lengths)
+                output_path = Path(output_name)
+                if output_path.suffix == ".parquet":
+                    eval_parts.append(output_path)
+                else:
+                    train_part_dirs.append(output_path)
                 logger.info(
-                    "Processed {}: {} games -> {} (skipped invalid clock: {})",
+                    "Processed {}: {} games -> {} rows in {} (skipped invalid clock: {})",
                     done_name,
                     count,
+                    output_rows,
                     output_name,
                     shard_invalid_clock_skips,
                 )
@@ -240,62 +282,8 @@ def main(cfg: DictConfig) -> None:
 
     logger.info("Skipped {} games due to invalid clock data", invalid_clock_skips)
 
-    # --- Phase 2: Split + pack ---
-    all_parts = sorted(
-        p
-        for p in temp_dir.glob("*.parquet")
-        if p.name.startswith(("train_", "eval_")) and "sampled" not in p.name
-    )
-    if not all_parts:
-        raise RuntimeError("No data generated")
-
-    eval_batches_dir = temp_dir / "eval_batches"
-    packed_batches_dir = temp_dir / "packed_batches"
-    shutil.rmtree(eval_batches_dir, ignore_errors=True)
-    shutil.rmtree(packed_batches_dir, ignore_errors=True)
-    eval_batches_dir.mkdir(parents=True)
-
-    pack_flush_windows = max(1, int(cfg.get("pack_flush_windows", 8_000)))
-    pack_stream_batch_size = max(1, int(cfg.get("pack_stream_batch_size", 10_000)))
-    packed_builder = PackedWindowBuilder(block_size, flush_every=pack_flush_windows)
-
-    max_tokens = block_size
-    seq_len_lf = pl.concat(
-        [
-            pl.scan_parquet(part_path).select(pl.col("token_ids").list.len().alias("len"))
-            for part_path in all_parts
-        ],
-        how="vertical",
-    )
-
-    shuffled_parts = list(all_parts)
-    random.Random(seed).shuffle(shuffled_parts)
-    logger.info("Packing {} tokenized parts", len(shuffled_parts))
-
-    for part_idx, part_path in enumerate(shuffled_parts, start=1):
-        logger.info("Packing part {}/{}: {}", part_idx, len(shuffled_parts), part_path.name)
-        part_lf = pl.scan_parquet(part_path)
-
-        filtered_lf = part_lf.filter(pl.col("token_ids").list.len() <= max_tokens)
-        cols = ["token_ids", "active_clock_ids", "opponent_clock_ids"]
-        game_lf = one_row_one_game(filtered_lf.select(*cols), block_size=block_size)
-
-        if part_path.name.startswith("eval"):
-            game_lf.sink_parquet(eval_batches_dir / f"{part_path.stem}.parquet")
-        else:
-            _pack_train_part(
-                part_path,
-                packed_builder=packed_builder,
-                packed_batches_dir=packed_batches_dir,
-                block_size=block_size,
-                batch_size=pack_stream_batch_size,
-            )
-        logger.info(
-            "Finished packing part {}/{}: {}", part_idx, len(shuffled_parts), part_path.name
-        )
-
     # --- Sequence length stats ---
-    stats = seq_len_stats(seq_len_lf, block_size)
+    stats = seq_len_stats_from_counts(seq_len_raw or {}, block_size)
     if stats["total"] == 0:
         raise RuntimeError("No games found in raw dataset.")
 
@@ -315,7 +303,7 @@ def main(cfg: DictConfig) -> None:
     logger.info(
         "Filtering games longer than context (>{} tokens): "
         "removed {} games ({:.2f}% of input games)",
-        max_tokens,
+        block_size,
         over_block_size_count,
         pct_long,
     )
@@ -333,6 +321,7 @@ def main(cfg: DictConfig) -> None:
         ("qa_whats_on_answer_empty", "empty_pct", "empty_count"),
         ("qa_whats_on_answer_piece", "piece_answer_pct", "piece_answer_count"),
         ("conditioning_prefix", "outcome_prefix_pct", "outcome_prefix_count"),
+        ("opponent_material", "material_pct", "material_count"),
         ("game_start", "game_start_pct", "game_start_count"),
         ("game_end", "game_end_pct", "game_end_count"),
     ]:
@@ -365,9 +354,8 @@ def main(cfg: DictConfig) -> None:
         f.write("\n")
 
     # --- Finalize datasets ---
-    eval_parts = sorted(eval_batches_dir.glob("*.parquet"))
     if eval_parts:
-        pl.concat(pl.scan_parquet(p) for p in eval_parts).sink_parquet(EVAL_DATASET_PATH)
+        pl.concat(pl.scan_parquet(p) for p in sorted(eval_parts)).sink_parquet(EVAL_DATASET_PATH)
     else:
         logger.warning("No eval games found; writing empty eval dataset")
         pl.DataFrame(
@@ -379,12 +367,10 @@ def main(cfg: DictConfig) -> None:
         ).write_parquet(EVAL_DATASET_PATH)
 
     PRETRAIN_DATASET_PATH.parent.mkdir(parents=True, exist_ok=True)
-    packed_builder.finish(PRETRAIN_DATASET_PATH, part_dir=packed_batches_dir)
+    train_window_rows = _merge_packed_datasets(sorted(train_part_dirs), PRETRAIN_DATASET_PATH)
 
     shutil.rmtree(temp_dir)
 
-    with (PRETRAIN_DATASET_PATH / "metadata.json").open() as f:
-        train_window_rows = int(json.load(f)["rows"])
     eval_rows = pl.scan_parquet(EVAL_DATASET_PATH).select(pl.len()).collect().item()
     if train_window_rows == 0:
         raise RuntimeError("Train dataset is empty. Increase input data or reduce block_size.")

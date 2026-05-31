@@ -13,7 +13,7 @@ from torch.utils.data import Dataset
 from krasnal.config import CLOCK_IGNORE_ID
 from krasnal.supervised_target_mask import LOSS_IGNORE_INDEX, apply_supervised_loss_mask
 from krasnal.time_conditioning import shift_clock_rows_for_training
-from krasnal.tokens import ELO_TOKENS, PAD_ID
+from krasnal.tokens import ELO_TOKENS, GAME_END_ID, GAME_START_ID, PAD_ID
 
 
 def resolve_hf_datasets_cache_dir() -> str:
@@ -84,10 +84,8 @@ class ChessDataset(Dataset[tuple[torch.Tensor, torch.Tensor, torch.Tensor]]):
         return tokens, active_clocks, opponent_clocks
 
 
-class PretrainDataset(
-    Dataset[tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]]
-):
-    """Packed training windows (fixed length) with segment and position metadata."""
+class PretrainDataset(Dataset[tuple[torch.Tensor, torch.Tensor, torch.Tensor]]):
+    """Packed training windows (fixed length)."""
 
     def __init__(self, dataset_path: Path):
         self.dataset_path = Path(dataset_path)
@@ -102,8 +100,6 @@ class PretrainDataset(
             "token_ids",
             "active_clock_ids",
             "opponent_clock_ids",
-            "segment_ids",
-            "position_ids",
         )
         if self.columns != expected:
             raise ValueError(f"Packed dataset columns must be {expected}, got {self.columns}")
@@ -140,18 +136,10 @@ class PretrainDataset(
         tokens = torch.tensor(shard["token_ids"][row_idx], dtype=torch.long)
         active_clocks = torch.tensor(shard["active_clock_ids"][row_idx], dtype=torch.long)
         opponent_clocks = torch.tensor(shard["opponent_clock_ids"][row_idx], dtype=torch.long)
-        segment_ids = torch.tensor(shard["segment_ids"][row_idx], dtype=torch.long)
-        position_ids = torch.tensor(shard["position_ids"][row_idx], dtype=torch.long)
         n = tokens.size(0)
-        if not (
-            active_clocks.size(0)
-            == opponent_clocks.size(0)
-            == segment_ids.size(0)
-            == position_ids.size(0)
-            == n
-        ):
+        if not (active_clocks.size(0) == opponent_clocks.size(0) == n):
             raise ValueError(f"Packed row length mismatch at index {idx}")
-        return tokens, active_clocks, opponent_clocks, segment_ids, position_ids
+        return tokens, active_clocks, opponent_clocks
 
 
 def _mask_pad_targets(y: torch.Tensor) -> torch.Tensor:
@@ -160,10 +148,9 @@ def _mask_pad_targets(y: torch.Tensor) -> torch.Tensor:
     return out
 
 
-def _mask_cross_segment_targets(y: torch.Tensor, segment_ids: torch.Tensor) -> torch.Tensor:
+def _mask_packed_boundary_targets(y: torch.Tensor, x: torch.Tensor) -> torch.Tensor:
     out = y.clone()
-    cross = segment_ids[:, :-1] != segment_ids[:, 1:]
-    out[cross] = LOSS_IGNORE_INDEX
+    out[(x == GAME_END_ID) & (y == GAME_START_ID)] = LOSS_IGNORE_INDEX
     return out
 
 
@@ -233,19 +220,18 @@ class PackedCollateFn:
 
     def __call__(
         self,
-        batch: list[tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]],
+        batch: list[tuple[torch.Tensor, torch.Tensor, torch.Tensor]],
     ):
-        tokens, active, opponent, segments, _positions = zip(*batch, strict=True)
+        tokens, active, opponent = zip(*batch, strict=True)
         padded = torch.stack(tokens)
         active_padded = torch.stack(active)
         opponent_padded = torch.stack(opponent)
-        segment_padded = torch.stack(segments)
 
         x = padded[:, :-1]
         active_x, opponent_x = shift_clock_rows_for_training(active_padded, opponent_padded)
         y = apply_supervised_loss_mask(padded[:, 1:])
         y = _mask_pad_targets(y)
-        y = _mask_cross_segment_targets(y, segment_padded)
+        y = _mask_packed_boundary_targets(y, x)
         return x, active_x, opponent_x, y
 
 

@@ -1,5 +1,5 @@
 name: medium
-block_size: 256
+block_size: 512
 n_layer: 8
 n_head: 8
 n_embd: 512

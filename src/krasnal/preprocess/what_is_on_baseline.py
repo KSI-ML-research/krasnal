@@ -32,7 +32,7 @@ def build_what_is_on_baseline_counts(
     games_seen = 0
     positions_seen = 0
     for idx in tqdm(window_indices, desc="what_is_on baseline", unit="window"):
-        tokens, _active, _opponent, _segment, _position = ds[idx]
+        tokens, _active, _opponent = ds[idx]
         token_list = tokens.tolist()
         for start, end in _game_spans(token_list):
             if max_games > 0 and games_seen >= max_games:
@@ -67,7 +67,7 @@ def _accumulate_game(
     block_size: int,
 ) -> int:
     moves = game_tokens.move_tokens
-    if not moves or len(moves) + len(game_tokens.initial_context) > block_size:
+    if not moves or len(game_tokens.body_tokens) + len(game_tokens.initial_context) > block_size:
         return 0
 
     board = bulletchess.Board()

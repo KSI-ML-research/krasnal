@@ -19,9 +19,12 @@ from krasnal.tokens import (
     GAME_END_ID,
     GAME_START_ID,
     IS_CHECK_ID,
+    MAX_SIDE_MATERIAL,
     MOVE_TO_ID,
     NO_CHECK_ID,
+    OPP_MATERIAL_TOKENS,
     PAD_ID,
+    PIECE_MATERIAL_VALUES,
     SPECIAL_TOKENS,
     TC_BLITZ_INC_ID,
     TC_BLITZ_NO_INC_ID,
@@ -42,6 +45,7 @@ from krasnal.tokens import (
     make_move_vocab_artifact,
     move_key_for_ply,
     normalize_history_uci_moves,
+    opponent_material_points,
     square_index_to_str,
     whats_on_answer_token_id,
     whats_on_probe_labels,
@@ -89,6 +93,18 @@ def test_time_control_tokens_exist():
 
 def test_time_control_tokens_in_vocab():
     assert all(tok_str in MOVE_TO_ID for tok_str in TC_TOKENS)
+
+
+def test_opponent_material_tokens_cover_computed_maximum():
+    assert PIECE_MATERIAL_VALUES["queen"] == 9
+    assert MAX_SIDE_MATERIAL == 103
+    assert len(OPP_MATERIAL_TOKENS) == 104
+    assert OPP_MATERIAL_TOKENS["<opp_mat_0>"] in SPECIAL_TOKENS.values()
+    assert OPP_MATERIAL_TOKENS["<opp_mat_103>"] in SPECIAL_TOKENS.values()
+
+
+def test_opponent_material_points_for_starting_side_to_move():
+    assert opponent_material_points(bulletchess.Board()) == 39
 
 
 def test_elo_bucket_function():
@@ -295,11 +311,11 @@ def test_move_vocab_manifest_mismatch_fails(tmp_path):
 
 
 _WHATS_ON_PROBE_KWARGS = dict(
-    post_move_fen="rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 2",
     game_key="e2e4 e7e5",
     ply=1,
     seed=123,
 )
+_WHATS_ON_PROBE_FEN = "rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 2"
 
 
 def test_square_index_to_str_corners():
@@ -325,7 +341,7 @@ def test_whats_on_answer_token_id_occupied_square():
 
 
 def test_whats_on_probe_labels_matches_decomposed_helpers():
-    board = bulletchess.Board.from_fen(_WHATS_ON_PROBE_KWARGS["post_move_fen"])
+    board = bulletchess.Board.from_fen(_WHATS_ON_PROBE_FEN)
     sq_str, prompt_id, ans_id = whats_on_probe_labels(board, **_WHATS_ON_PROBE_KWARGS)
 
     sq_idx = whats_on_square_index(**_WHATS_ON_PROBE_KWARGS)
@@ -335,7 +351,7 @@ def test_whats_on_probe_labels_matches_decomposed_helpers():
 
 
 def test_whats_on_probe_labels_deterministic():
-    board = bulletchess.Board.from_fen(_WHATS_ON_PROBE_KWARGS["post_move_fen"])
+    board = bulletchess.Board.from_fen(_WHATS_ON_PROBE_FEN)
     first = whats_on_probe_labels(board, **_WHATS_ON_PROBE_KWARGS)
     second = whats_on_probe_labels(board, **_WHATS_ON_PROBE_KWARGS)
     assert first == second

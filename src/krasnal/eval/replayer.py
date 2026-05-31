@@ -3,18 +3,16 @@ import bulletchess
 from krasnal.config import CLOCK_IGNORE_ID
 from krasnal.eval.metrics.context import EvalContext
 from krasnal.eval.parsers import GameTokens
-from krasnal.tokens import to_uci
+from krasnal.tokens import is_move_token_id, to_uci
 
 PIECE_TYPE_TO_INT = {pt: i + 1 for i, pt in enumerate(bulletchess.PIECE_TYPES)}
 
 
-def _clock_for_metric(values: list[int] | None, move_idx: int) -> int | None:
-    if values is None or move_idx >= len(values):
-        return None
-    v = values[move_idx]
-    if v >= CLOCK_IGNORE_ID:
-        return None
-    return int(v)
+def _clock_for_body_token(values: list[int] | None, body_idx: int) -> int:
+    if values is None or body_idx >= len(values):
+        return CLOCK_IGNORE_ID
+    value = int(values[body_idx])
+    return CLOCK_IGNORE_ID if value >= CLOCK_IGNORE_ID else value
 
 
 def replay_game_tokens(game_tokens: GameTokens) -> list[EvalContext]:
@@ -36,7 +34,17 @@ def replay_game_tokens(game_tokens: GameTokens) -> list[EvalContext]:
     clock_active = [pa] * len(context)
     clock_opponent = [po] * len(context)
 
-    for move_idx, move_token in enumerate(game_tokens.move_tokens):
+    move_idx = 0
+    for body_idx, token in enumerate(game_tokens.body_tokens):
+        body_active = _clock_for_body_token(game_tokens.body_active_seconds, body_idx)
+        body_opponent = _clock_for_body_token(game_tokens.body_opponent_seconds, body_idx)
+        if not is_move_token_id(token):
+            context.append(token)
+            clock_active.append(body_active)
+            clock_opponent.append(body_opponent)
+            continue
+
+        move_token = token
         in_check = board in bulletchess.CHECK
         phase = get_game_phase(move_idx)
         player_elo_token = (
@@ -73,20 +81,17 @@ def replay_game_tokens(game_tokens: GameTokens) -> list[EvalContext]:
                 post_move_fen=post_move_fen,
                 what_is_on_game_key=what_is_on_game_key,
                 what_is_on_ply=move_idx,
-                active_clock_seconds=_clock_for_metric(game_tokens.move_active_seconds, move_idx),
-                opponent_clock_seconds=_clock_for_metric(
-                    game_tokens.move_opponent_seconds, move_idx
-                ),
+                active_clock_seconds=None if body_active >= CLOCK_IGNORE_ID else body_active,
+                opponent_clock_seconds=None if body_opponent >= CLOCK_IGNORE_ID else body_opponent,
                 active_clock_sequence=clock_active.copy(),
                 opponent_clock_sequence=clock_opponent.copy(),
             )
         )
 
         context.append(move_token)
-        a_clock = _clock_for_metric(game_tokens.move_active_seconds, move_idx)
-        o_clock = _clock_for_metric(game_tokens.move_opponent_seconds, move_idx)
-        clock_active.append(CLOCK_IGNORE_ID if a_clock is None else a_clock)
-        clock_opponent.append(CLOCK_IGNORE_ID if o_clock is None else o_clock)
+        clock_active.append(body_active)
+        clock_opponent.append(body_opponent)
+        move_idx += 1
 
     return contexts
 
@@ -110,7 +115,7 @@ def replay_games(game_tokens_list: list[GameTokens], block_size: int) -> list[Ev
         if len(moves) < 1:
             continue
 
-        if len(moves) + len(initial_context) > block_size:
+        if len(game_tokens.body_tokens) + len(initial_context) > block_size:
             continue
 
         game_contexts = replay_game_tokens(game_tokens)
