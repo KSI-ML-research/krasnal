@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-"""Compatibility wrapper for the move-time XGBoost trainer."""
 
 from krasnal.move_time.xgboost import main
 

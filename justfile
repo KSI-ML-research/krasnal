@@ -20,6 +20,16 @@ LICHESS_BOT_REF := "96a8f74d87a42db8039e847548fec0d9528bb079"
     @echo "  just download-games [args]            - download & filter games"
     @echo "  just preprocess                       - tokenize Aix-filtered games for training"
     @echo "  just pretrain model=large train=cuda  - run pretraining stage"
+    @echo "  just generate-sft-cot [args]          - generate CoT shards"
+    @echo "  just train-sft-cot [args]             - train offline SFT on CoT shards"
+    @echo "  just train-xgboost [args]             - train XGBoost move-time model"
+    @echo "  just predict-xgboost --model --input --output - run XGBoost inference"
+
+# Install dependencies and setup pre-commit hooks
+setup:
+    uv sync
+    uv run pre-commit install
+
 
 # Run linters for Python code
 lint *args:
@@ -56,6 +66,19 @@ preprocess *args:
 pretrain *args:
     uv run scripts/training/pretrain.py {{args}}
 
+
+
+# Train the XGBoost move-time predictor (thin wrapper around scripts/training/train_xgboost.py)
+train-xgboost *args:
+    uv run scripts/training/train_xgboost.py {{args}}
+
+
+# Run XGBoost inference on a parquet input and write parquet output
+predict-xgboost +model='' +input='' +output='':
+    @if [ "{{model}}" = "" ]; then echo "Provide --model path"; exit 1; fi
+    @if [ "{{input}}" = "" ]; then echo "Provide --input path"; exit 1; fi
+    @if [ "{{output}}" = "" ]; then echo "Provide --output path"; exit 1; fi
+    uv run scripts/inference/xgb_predict.py --model {{model}} --input {{input}} --output {{output}}
 
 # Download and setup lichess-bot client
 bot-setup:
