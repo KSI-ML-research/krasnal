@@ -29,9 +29,9 @@ class InferenceSession:
     The game owns the model context. Feeding a move appends both the move token and
     its deterministic post-move material annotation.
 
-    When ``use_time_conditioning`` is enabled, clock tensors follow the same
-    shift as training collate: input token at global index ``g`` is paired with
-    the clock row stored for token ``g + 1``; the leaf step uses clocks from
+    When ``use_time_conditioning`` is enabled, clock tensors follow the target
+    alignment used during training: input token at global index ``g`` is paired
+    with the clock row stored for token ``g + 1``. The leaf step uses clocks from
     ``prepare_go_clocks`` (UCI ``wtime`` / ``btime``).
     """
 
@@ -86,9 +86,8 @@ class InferenceSession:
 
     def sync_prefix_tokens_from_game(self) -> None:
         """Refresh fixed prefix tokens (Elo / TC) after ``Game`` metadata changes."""
-        prefix = self.game.context_tokens()[:5]
-        tail = self.context[5:] if len(self.context) > 5 else []
-        self.context = prefix + tail
+        prefix = self.game.prefix_tokens()
+        self.context = prefix + self.context[len(prefix) :]
         if self.model.config.use_time_conditioning:
             self._per_token_active, self._per_token_opp = sync_prefix_clock_tracks(
                 self._per_token_active,

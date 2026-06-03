@@ -11,9 +11,9 @@ from torch.nn.utils.rnn import pad_sequence
 from torch.utils.data import Dataset
 
 from krasnal.config import CLOCK_IGNORE_ID
-from krasnal.supervised_target_mask import LOSS_IGNORE_INDEX, apply_supervised_loss_mask
+from krasnal.supervised_target_mask import apply_supervised_loss_mask
 from krasnal.time_conditioning import shift_clock_rows_for_training
-from krasnal.tokens import ELO_TOKENS, GAME_END_ID, GAME_START_ID, PAD_ID
+from krasnal.tokens import ELO_TOKENS, PAD_ID
 
 
 def resolve_hf_datasets_cache_dir() -> str:
@@ -142,18 +142,6 @@ class PretrainDataset(Dataset[tuple[torch.Tensor, torch.Tensor, torch.Tensor]]):
         return tokens, active_clocks, opponent_clocks
 
 
-def _mask_pad_targets(y: torch.Tensor) -> torch.Tensor:
-    out = y.clone()
-    out[out == PAD_ID] = LOSS_IGNORE_INDEX
-    return out
-
-
-def _mask_packed_boundary_targets(y: torch.Tensor, x: torch.Tensor) -> torch.Tensor:
-    out = y.clone()
-    out[(x == GAME_END_ID) & (y == GAME_START_ID)] = LOSS_IGNORE_INDEX
-    return out
-
-
 def _get_bucket_size(seq_len: int, bucket_sizes: tuple[int, ...]) -> int:
     """Return the smallest bucket size that is >= seq_len."""
     for b in bucket_sizes:
@@ -211,7 +199,6 @@ class CollateFn:
         x = padded[:, :-1]
         active_x, opponent_x = shift_clock_rows_for_training(active_padded, opponent_padded)
         y = apply_supervised_loss_mask(padded[:, 1:])
-        y = _mask_pad_targets(y)
         return x, active_x, opponent_x, y
 
 
@@ -230,8 +217,6 @@ class PackedCollateFn:
         x = padded[:, :-1]
         active_x, opponent_x = shift_clock_rows_for_training(active_padded, opponent_padded)
         y = apply_supervised_loss_mask(padded[:, 1:])
-        y = _mask_pad_targets(y)
-        y = _mask_packed_boundary_targets(y, x)
         return x, active_x, opponent_x, y
 
 

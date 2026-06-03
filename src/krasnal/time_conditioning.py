@@ -59,7 +59,7 @@ def shift_clock_rows_for_training(
     active_padded: torch.Tensor,
     opponent_padded: torch.Tensor,
 ) -> tuple[torch.Tensor, torch.Tensor]:
-    """Return the training view where token g uses the clock row stored at g + 1."""
+    """Return the training view where input token g uses the clock row for g + 1."""
     return active_padded[:, 1:], opponent_padded[:, 1:]
 
 

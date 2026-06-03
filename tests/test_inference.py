@@ -18,6 +18,9 @@ from krasnal.time_conditioning import (
 from krasnal.tokens import (
     BLACK_PREFIX,
     DRAW_ID,
+    ELO_1500_1599_ID,
+    ELO_2000_2099_ID,
+    GAME_START_ID,
     MOVE_TO_ID,
     OPP_MATERIAL_TOKENS,
     WHITE_PREFIX,
@@ -80,6 +83,47 @@ def test_sample_token_temperature():
     probs = torch.tensor([0.1, 0.5, 0.4])
     result = sample_token(probs, temperature=1.0, top_p=1.0)
     assert result in [0, 1, 2]
+
+
+def test_game_prefix_tokens_respects_outcome_conditioning_flag():
+    with_outcome = Game(target_outcome_token=WHITE_WON_ID, outcome_conditioning_enabled=True)
+    without_outcome = Game(outcome_conditioning_enabled=False)
+
+    assert len(with_outcome.prefix_tokens()) == 5
+    assert WHITE_WON_ID in with_outcome.prefix_tokens()
+    assert len(without_outcome.prefix_tokens()) == 4
+    assert WHITE_WON_ID not in without_outcome.prefix_tokens()
+    assert with_outcome.context_tokens() == [*with_outcome.prefix_tokens(), *with_outcome.tokens]
+
+
+def test_sync_prefix_tokens_from_game_preserves_moves_without_outcome_conditioning():
+    device = torch.device("cpu")
+    config = GPTConfig(
+        block_size=128,
+        vocab_size=get_vocab_size(),
+        n_layer=2,
+        n_head=2,
+        n_embd=64,
+        use_time_conditioning=False,
+        time_conditioning_hidden=32,
+    )
+    model = GPT(config).to(device)
+    session = InferenceSession(model, device, outcome_token=DRAW_ID)
+
+    game = Game(outcome_conditioning_enabled=False)
+    session.new_game(game)
+    e2e4 = MOVE_TO_ID[WHITE_PREFIX + "e2e4"]
+    session.feed_token(e2e4)
+    tail_before = session.context[len(game.prefix_tokens()) :]
+
+    game.white_elo_token = ELO_2000_2099_ID
+    game.black_elo_token = ELO_1500_1599_ID
+    session.sync_prefix_tokens_from_game()
+
+    assert session.context[: len(game.prefix_tokens())] == game.prefix_tokens()
+    assert session.context[len(game.prefix_tokens()) :] == tail_before
+    assert session.context[0] == GAME_START_ID
+    assert len(session.context) == len(game.prefix_tokens()) + len(tail_before)
 
 
 def test_game_feed_uci_and_feed_token_keep_board_and_tokens_synchronized():
@@ -164,7 +208,22 @@ def test_time_conditioning_prefix_sync_preserves_tail():
     assert go_opponent == CLOCK_IGNORE_ID
 
 
-def test_clock_pair_for_input_index_uses_go_clock_at_leaf():
+def test_clock_pair_for_input_index_uses_next_clock_row_for_non_leaf_tokens():
+    active = [10, 20, 30]
+    opponent = [40, 50, 60]
+
+    assert clock_pair_for_input_index(
+        1,
+        context_len=3,
+        per_token_active=active,
+        per_token_opp=opponent,
+        go_active_sec=11,
+        go_opp_sec=22,
+        enabled=True,
+    ) == (30, 60)
+
+
+def test_clock_pair_for_input_index_uses_go_clock_for_final_token():
     active = [CLOCK_IGNORE_ID, CLOCK_IGNORE_ID, 30]
     opponent = [CLOCK_IGNORE_ID, CLOCK_IGNORE_ID, 40]
 

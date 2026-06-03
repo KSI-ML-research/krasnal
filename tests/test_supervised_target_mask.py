@@ -7,8 +7,10 @@ from krasnal.supervised_target_mask import (
 )
 from krasnal.tokens import (
     ELO_1500_1599_ID,
+    GAME_START_ID,
     IS_CHECK_ID,
     OPP_MATERIAL_TOKENS,
+    PAD_ID,
     TC_BLITZ_INC_ID,
 )
 
@@ -29,6 +31,8 @@ def test_apply_supervised_loss_mask_matches_collate_policy():
 
 
 def test_ignore_set_includes_qa_questions():
+    assert PAD_ID in IGNORE_IN_SUPERVISED_TARGET
+    assert GAME_START_ID in IGNORE_IN_SUPERVISED_TARGET
     assert IS_CHECK_ID in IGNORE_IN_SUPERVISED_TARGET
     assert ELO_1500_1599_ID in IGNORE_IN_SUPERVISED_TARGET
     assert TC_BLITZ_INC_ID in IGNORE_IN_SUPERVISED_TARGET
