@@ -3,12 +3,12 @@ from datetime import datetime
 
 import hydra
 import torch
-import wandb
 from omegaconf import DictConfig, OmegaConf
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data import DataLoader
 from torch.utils.data.distributed import DistributedSampler
 
+import wandb
 from krasnal.config import (
     ARTIFACTS_DIR,
     EVAL_DATASET_PATH,

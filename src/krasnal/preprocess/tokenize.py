@@ -22,7 +22,6 @@ from krasnal.tokens import (
     MOVE_TO_ID,
     NO_CHECK_ID,
     OPP_MATERIAL_START_ID,
-    PIECE_MATERIAL_VALUES,
     WHITE_PREFIX,
     YES_CHECK_ID,
     get_elo_bucket,
@@ -31,7 +30,6 @@ from krasnal.tokens import (
     move_key_for_ply,
     normalize_piece_type,
     result_to_token_id,
-    save_move_vocab,
     whats_on_probe_labels,
 )
 
@@ -43,10 +41,11 @@ _TOKENIZED_SCHEMA = {
     "opponent_clock_ids": pl.List(pl.UInt32),
 }
 
-_RAW_COLUMNS = [
+_BASE_RAW_COLUMNS = [
     "uci_moves",
     "is_check",
     "piece_moved",
+    "opponent_material",
     "result",
     "white_rating",
     "black_rating",
@@ -56,15 +55,15 @@ _RAW_COLUMNS = [
     "time_increment",
 ]
 
+
+def _raw_columns(cfg: PreprocessConfig) -> list[str]:
+    cols = list(_BASE_RAW_COLUMNS)
+    if not cfg.opponent_material_enabled:
+        cols.remove("opponent_material")
+    return cols
+
+
 _TokenizedRows = tuple[list[list[int]], list[list[int]], list[list[int]]]
-_MATERIAL_VALUE_BY_PIECE_TYPE = {
-    bulletchess.PAWN: PIECE_MATERIAL_VALUES["pawn"],
-    bulletchess.KNIGHT: PIECE_MATERIAL_VALUES["knight"],
-    bulletchess.BISHOP: PIECE_MATERIAL_VALUES["bishop"],
-    bulletchess.ROOK: PIECE_MATERIAL_VALUES["rook"],
-    bulletchess.QUEEN: PIECE_MATERIAL_VALUES["queen"],
-    bulletchess.KING: PIECE_MATERIAL_VALUES["king"],
-}
 
 
 class InvalidClockDataError(ValueError):
@@ -127,10 +126,6 @@ def _move_token_id_for_ply(
     return MOVE_TO_ID.get(key)
 
 
-def _piece_material_value(piece: bulletchess.Piece) -> int:
-    return _MATERIAL_VALUE_BY_PIECE_TYPE[piece.piece_type]
-
-
 def _clock_seconds(value: object, *, context: str) -> int:
     from krasnal.config import CLOCK_IGNORE_ID
 
@@ -168,6 +163,26 @@ def _validated_clock_initial(
     return _clock_seconds(time_initial, context=f"{context}: time_initial")
 
 
+def _resolve_opponent_material(
+    *,
+    moves_list: list[str],
+    opponent_material: list[object],
+    context: str,
+) -> list[int]:
+    if len(opponent_material) != len(moves_list):
+        raise ValueError(
+            f"{context}: opponent_material length {len(opponent_material)} "
+            f"does not match uci_moves length {len(moves_list)}"
+        )
+    material = [int(value) for value in opponent_material]
+
+    if any(points > MAX_SIDE_MATERIAL for points in material):
+        raise ValueError(
+            f"{context}: opponent material exceeds max tokenized value {MAX_SIDE_MATERIAL}"
+        )
+    return material
+
+
 def _build_game_tokens(
     uci_moves: str,
     is_check: list[bool],
@@ -181,11 +196,11 @@ def _build_game_tokens(
     p_no: float,
     clocks_white: list[int] | None = None,
     clocks_black: list[int] | None = None,
+    *,
+    opponent_material: list[object] | None = None,
 ) -> tuple[list[int], list[int], list[int]]:
     if not uci_moves:
         return [], [], []
-
-    b = bulletchess.Board()
 
     moves_list = uci_moves.split()
     piece_types = _validated_piece_moved(
@@ -194,6 +209,15 @@ def _build_game_tokens(
         context=f"game {uci_moves[:80]!r}",
     )
     context = f"game {uci_moves[:80]!r}"
+    material_after_move: list[int] | None = None
+    if cfg.opponent_material_enabled:
+        if opponent_material is None:
+            raise ValueError(f"{context}: opponent_material is required when enabled")
+        material_after_move = _resolve_opponent_material(
+            moves_list=moves_list,
+            opponent_material=opponent_material,
+            context=context,
+        )
     time_initial_sec = _validated_clock_initial(
         clocks_white,
         clocks_black,
@@ -206,9 +230,8 @@ def _build_game_tokens(
     black_remaining = time_initial_sec
     end_active = time_initial_sec
     end_opponent = time_initial_sec
-    white_material = 39
-    black_material = 39
 
+    board: bulletchess.Board | None = None
     result_tokens = []
     active_clock_ids = []
     opponent_clock_ids = []
@@ -250,49 +273,9 @@ def _build_game_tokens(
             active_clock_id, opponent_clock_id = black_remaining, white_remaining
         end_active, end_opponent = active_clock_id, opponent_clock_id
         append_token(move_id, active_clock_id, opponent_clock_id)
-
-        parsed_move = bulletchess.Move.from_uci(move)
-        mover = b[parsed_move.origin]
-        if mover is None:
-            raise ValueError(f"game {uci_moves[:80]!r}: no piece at ply {ply}: {move}")
-        mover_is_white = mover.color == bulletchess.WHITE
-        captured = b[parsed_move.destination]
-        if (
-            captured is None
-            and mover.piece_type == bulletchess.PAWN
-            and parsed_move.origin.index() % 8 != parsed_move.destination.index() % 8
-        ):
-            capture_square = (
-                parsed_move.destination.south()
-                if mover_is_white
-                else parsed_move.destination.north()
-            )
-            captured = b[capture_square] if capture_square is not None else None
-        if captured is not None:
-            if captured.color == bulletchess.WHITE:
-                white_material -= _piece_material_value(captured)
-            else:
-                black_material -= _piece_material_value(captured)
-        if parsed_move.is_promotion():
-            promotion_delta = _MATERIAL_VALUE_BY_PIECE_TYPE[parsed_move.promotion] - 1
-            if mover_is_white:
-                white_material += promotion_delta
-            else:
-                black_material += promotion_delta
-
-        try:
-            b.apply(parsed_move)
-        except ValueError as exc:
-            raise ValueError(f"game {uci_moves[:80]!r}: illegal move at ply {ply}: {move}") from exc
-        opponent_material = black_material if mover_is_white else white_material
-        if opponent_material > MAX_SIDE_MATERIAL:
-            raise ValueError(
-                f"Opponent material {opponent_material} exceeds max tokenized value "
-                f"{MAX_SIDE_MATERIAL}"
-            )
         if cfg.opponent_material_enabled:
             append_token(
-                OPP_MATERIAL_START_ID + opponent_material,
+                OPP_MATERIAL_START_ID + material_after_move[ply],
                 active_clock_id,
                 opponent_clock_id,
             )
@@ -307,19 +290,29 @@ def _build_game_tokens(
                 append_token(IS_CHECK_ID, active_clock_id, opponent_clock_id)
                 append_token(NO_CHECK_ID, active_clock_id, opponent_clock_id)
 
-        if cfg.include_what_is_on_qa and _sample_bool_with_prefix(
-            whats_on_sample_prefix,
-            ply,
-            cfg.what_is_on_prob,
-        ):
-            _, whats_on_token_id, ans_id = whats_on_probe_labels(
-                b,
-                game_key=uci_moves,
-                ply=ply,
-                seed=cfg.seed,
-            )
-            append_token(whats_on_token_id, active_clock_id, opponent_clock_id)
-            append_token(ans_id, active_clock_id, opponent_clock_id)
+        if cfg.include_what_is_on_qa:
+            if _sample_bool_with_prefix(whats_on_sample_prefix, ply, cfg.what_is_on_prob):
+                if board is None:
+                    board = bulletchess.Board()
+                    for replay_move in moves_list[:ply]:
+                        board.apply(bulletchess.Move.from_uci(replay_move))
+                parsed_move = bulletchess.Move.from_uci(move)
+                try:
+                    board.apply(parsed_move)
+                except ValueError as exc:
+                    raise ValueError(
+                        f"game {uci_moves[:80]!r}: illegal move at ply {ply}: {move}"
+                    ) from exc
+                _, whats_on_token_id, ans_id = whats_on_probe_labels(
+                    board,
+                    game_key=uci_moves,
+                    ply=ply,
+                    seed=cfg.seed,
+                )
+                append_token(whats_on_token_id, active_clock_id, opponent_clock_id)
+                append_token(ans_id, active_clock_id, opponent_clock_id)
+            elif board is not None:
+                board.apply(bulletchess.Move.from_uci(move))
 
     white_elo = get_elo_bucket(white_rating)
     black_elo = get_elo_bucket(black_rating)
@@ -342,29 +335,14 @@ def _build_game_tokens(
     return token_ids, active_ids, opponent_ids
 
 
-def _check_no_probability(parquet_path: Path, cfg: PreprocessConfig) -> float:
-    lf = pl.scan_parquet(parquet_path)
-
-    if cfg.include_check_qa:
-        count_stats = (
-            lf.select(
-                pl.col("is_check")
-                .list.eval(pl.element().cast(pl.UInt32), parallel=True)
-                .list.sum()
-                .sum()
-                .alias("check_count"),
-                pl.col("is_check").list.len().sum().alias("ply_count"),
-            )
-            .collect()
-            .row(0)
-        )
-        check_count = int(count_stats[0] or 0)
-        ply_count = int(count_stats[1] or 0)
-        no_check_count = max(0, ply_count - check_count)
-        _, p_no = _compute_check_qa_probs(check_count, no_check_count, cfg.check_qa_prob)
-    else:
-        p_no = 1.0
-    return p_no
+def _check_stats_for_shard(parquet_path: Path) -> tuple[int, int]:
+    check_count = 0
+    no_check_count = 0
+    for batch in pq.ParquetFile(parquet_path).iter_batches(batch_size=10_000, columns=["is_check"]):
+        for is_check in pl.from_arrow(batch).get_column("is_check").to_list():
+            check_count += sum(1 for flag in is_check if flag)
+            no_check_count += sum(1 for flag in is_check if not flag)
+    return check_count, no_check_count
 
 
 def _tokenize_batch(
@@ -380,6 +358,11 @@ def _tokenize_batch(
     uci_moves_list = batch.get_column("uci_moves").to_list()
     is_check_list = batch.get_column("is_check").to_list()
     piece_moved_list = batch.get_column("piece_moved").to_list()
+    opponent_material_list = (
+        batch.get_column("opponent_material").to_list()
+        if cfg.opponent_material_enabled
+        else [None] * len(uci_moves_list)
+    )
     result_list = batch.get_column("result").to_list()
     white_rating_list = batch.get_column("white_rating").to_list()
     black_rating_list = batch.get_column("black_rating").to_list()
@@ -391,6 +374,7 @@ def _tokenize_batch(
         uci_moves,
         is_check,
         piece_moved,
+        material_column,
         result,
         white_rating,
         black_rating,
@@ -402,6 +386,7 @@ def _tokenize_batch(
         uci_moves_list,
         is_check_list,
         piece_moved_list,
+        opponent_material_list,
         result_list,
         white_rating_list,
         black_rating_list,
@@ -425,6 +410,7 @@ def _tokenize_batch(
                 p_no=p_no,
                 clocks_white=clocks_white,
                 clocks_black=clocks_black,
+                opponent_material=material_column,
             )
         except InvalidClockDataError:
             invalid_clock_skips += 1
@@ -440,78 +426,32 @@ def _tokenize_batch(
     )
 
 
-def build_move_vocab_from_corpus(
-    parquet_files: list[Path],
-    *,
-    piece_aware_moves: bool,
-    side_prefixed_moves: bool,
-    output_path: Path,
-) -> dict:
-    move_keys: set[str] = set()
-    total_plies = 0
-
-    for parquet_path in parquet_files:
-        schema = pl.scan_parquet(parquet_path).collect_schema()
-        missing_columns = {"uci_moves", "piece_moved"} - set(schema.names())
-        if missing_columns:
-            raise ValueError(
-                f"{parquet_path} is missing required columns: {', '.join(sorted(missing_columns))}"
-            )
-
-        df = pl.read_parquet(parquet_path, columns=["uci_moves", "piece_moved"])
-        uci_moves_col = df.get_column("uci_moves").to_list()
-        piece_moved_col = df.get_column("piece_moved").to_list()
-
-        for row_idx, (uci_moves, piece_moved) in enumerate(
-            zip(uci_moves_col, piece_moved_col, strict=True)
-        ):
-            if not uci_moves or not piece_moved:
-                continue
-            moves_list = uci_moves.split()
-            piece_types = _validated_piece_moved(
-                piece_moved,
-                moves_list,
-                context=f"{parquet_path.name} row {row_idx}",
-            )
-
-            total_plies += len(moves_list)
-            for ply, (move, piece_type) in enumerate(zip(moves_list, piece_types, strict=True)):
-                key = move
-                if piece_aware_moves:
-                    key = f"{piece_type}:{key}"
-                if side_prefixed_moves:
-                    side = "w:" if ply % 2 == 0 else "b:"
-                    key = f"{side}{key}"
-                move_keys.add(key)
-
-    artifact = save_move_vocab(
-        output_path,
-        move_keys,
-        piece_aware_moves=piece_aware_moves,
-        side_prefixed_moves=side_prefixed_moves,
-    )
-    logger.info(
-        "Wrote {} move keys from {} plies to {}",
-        len(move_keys),
-        total_plies,
-        output_path,
-    )
-    return artifact
-
-
 def process_one_shard(
     parquet_path: Path,
-    output_path: Path,
     cfg: PreprocessConfig,
     *,
     is_eval: bool,
+    file_idx: int,
+    train_output_dir: Path,
+    eval_output_path: Path,
     pack_flush_windows: int,
     batch_size: int,
-) -> tuple[str, int, int, str, dict[str, int], dict[int, int], int]:
-    """Multiprocess worker: tokenize one shard and write eval Parquet or packed train data."""
+    collect_stats: bool,
+) -> tuple[
+    str,
+    int,
+    int,
+    list[tuple[str, int]] | None,
+    str | None,
+    dict[str, int] | None,
+    dict[int, int] | None,
+    int,
+]:
+    """Multiprocess worker: tokenize one shard and write eval Parquet or packed train shards."""
     from .stats import token_mix_raw_from_counts
 
-    logger.info("Started processing {} -> {}", parquet_path.name, output_path.name)
+    dest = eval_output_path.name if is_eval else train_output_dir.name
+    logger.info("Started processing {} -> {}", parquet_path.name, dest)
     load_move_vocab(
         cfg.move_vocab_path,
         piece_aware_moves=cfg.piece_aware_moves,
@@ -519,21 +459,28 @@ def process_one_shard(
     )
 
     row_count = pl.scan_parquet(parquet_path).select(pl.len()).collect().item()
-    p_no = _check_no_probability(parquet_path, cfg)
+    if cfg.include_check_qa:
+        check_count, no_check_count = _check_stats_for_shard(parquet_path)
+        _, p_no = _compute_check_qa_probs(check_count, no_check_count, cfg.check_qa_prob)
+    else:
+        p_no = 0.0
     invalid_clock_skips = 0
-    id_counts: Counter[int] = Counter()
-    length_counts: Counter[int] = Counter()
+    id_counts: Counter[int] | None = Counter() if collect_stats else None
+    length_counts: Counter[int] | None = Counter() if collect_stats else None
 
     eval_batches = []
-    packed_parts_dir = output_path.parent / f"{output_path.name}_parts"
     if is_eval:
         builder = None
     else:
-        builder = PackedWindowBuilder(cfg.block_size, flush_every=pack_flush_windows)
+        builder = PackedWindowBuilder(
+            cfg.block_size,
+            flush_every=pack_flush_windows,
+            shard_prefix=f"part_{file_idx:04d}",
+        )
 
     for batch in pq.ParquetFile(parquet_path).iter_batches(
         batch_size=batch_size,
-        columns=_RAW_COLUMNS,
+        columns=_raw_columns(cfg),
     ):
         (token_rows, active_rows, opponent_rows), skipped = _tokenize_batch(
             pl.from_arrow(batch),
@@ -544,8 +491,10 @@ def process_one_shard(
         if not token_rows:
             continue
 
-        id_counts.update(tid for row in token_rows for tid in row)
-        length_counts.update(len(row) for row in token_rows)
+        if id_counts is not None:
+            id_counts.update(tid for row in token_rows for tid in row)
+        if length_counts is not None:
+            length_counts.update(len(row) for row in token_rows)
 
         if is_eval:
             window_size = cfg.block_size + 1
@@ -569,33 +518,36 @@ def process_one_shard(
                 [active_rows[idx] for idx in keep],
                 [opponent_rows[idx] for idx in keep],
             )
-            builder.drain(packed_parts_dir)
-            builder.maybe_flush(packed_parts_dir)
+            builder.drain(train_output_dir)
+            builder.maybe_flush(train_output_dir)
 
     if is_eval:
         if eval_batches:
-            pl.concat(eval_batches).write_parquet(output_path)
+            pl.concat(eval_batches).write_parquet(eval_output_path)
         else:
-            pl.DataFrame(schema=_TOKENIZED_SCHEMA).write_parquet(output_path)
-        rows = len(pl.read_parquet(output_path))
-    else:
-        assert builder is not None
-        builder.finish(output_path, part_dir=packed_parts_dir)
-        with (output_path / "metadata.json").open() as f:
-            import json
+            pl.DataFrame(schema=_TOKENIZED_SCHEMA).write_parquet(eval_output_path)
+        rows = len(pl.read_parquet(eval_output_path))
+        return (
+            parquet_path.name,
+            row_count,
+            invalid_clock_skips,
+            None,
+            str(eval_output_path),
+            token_mix_raw_from_counts(dict(id_counts)) if id_counts else None,
+            dict(length_counts) if length_counts else None,
+            rows,
+        )
 
-            rows = int(json.load(f)["rows"])
-        if packed_parts_dir.exists():
-            import shutil
-
-            shutil.rmtree(packed_parts_dir)
-
+    assert builder is not None
+    train_shards = builder.finish(train_output_dir)
+    rows = sum(shard_rows for _, shard_rows in train_shards)
     return (
         parquet_path.name,
         row_count,
         invalid_clock_skips,
-        str(output_path),
-        token_mix_raw_from_counts(dict(id_counts)),
-        dict(length_counts),
+        train_shards,
+        None,
+        token_mix_raw_from_counts(dict(id_counts)) if id_counts else None,
+        dict(length_counts) if length_counts else None,
         rows,
     )

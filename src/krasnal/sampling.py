@@ -5,22 +5,6 @@ from __future__ import annotations
 from hashlib import blake2b
 
 
-def sample_bool(
-    seed: int,
-    game_key: str,
-    ply: int,
-    probability: float,
-) -> bool:
-    """Deterministically sample True/False based on seed, game key, and ply."""
-    if probability <= 0.0:
-        return False
-    if probability >= 1.0:
-        return True
-    digest = blake2b(f"{seed}|{game_key}|{ply}".encode(), digest_size=8).digest()
-    value = int.from_bytes(digest, byteorder="big") / 2**64
-    return value < probability
-
-
 def whats_on_square_index(
     *,
     game_key: str,

@@ -12,9 +12,14 @@ from pathlib import Path
 TARGET_GAMES = 5_000_000
 HALF_TARGET_GAMES = TARGET_GAMES // 2
 MODEL = "medium"
+PREPROCESS_REPORT_OVERRIDE = "report.enabled=false"
 
 TOKENIZED_BASE = "data/2_tokenized_ablations"
 OUTPUT_DIR = "output"
+
+DOWNLOAD_PARTITION = "student-cpu"
+DOWNLOAD_TIME = "04:00:00"
+DOWNLOAD_CPUS = 4
 
 PREPROCESS_PARTITION = "student-cpu"
 PREPROCESS_TIME = "08:00:00"
@@ -129,7 +134,69 @@ def run_command(command: list[str], *, submit: bool) -> str:
     return job_id
 
 
-def submit_preprocess(data: DataVariant, tokenized_dir: str, *, submit: bool) -> str:
+def download_overrides(data: DataVariant) -> tuple[str, ...]:
+    vocab_relevant_prefixes = (
+        "target_games=",
+        "piece_aware_moves=",
+        "side_prefixed_moves=",
+    )
+    return (
+        *(
+            override
+            for override in data.preprocess_overrides
+            if override.startswith(vocab_relevant_prefixes)
+        ),
+        "require_evals=false",
+    )
+
+
+def submit_download(
+    data: DataVariant,
+    tokenized_dir: str,
+    *,
+    dependency_job_id: str | None,
+    submit: bool,
+) -> str:
+    command = [
+        "sbatch",
+        "--parsable",
+        "--job-name",
+        f"krasnal-dl-{slug(data.name)}",
+        "--output",
+        f"{OUTPUT_DIR}/%j_download_{slug(data.name)}.out",
+        "--error",
+        f"{OUTPUT_DIR}/%j_download_{slug(data.name)}.err",
+        "--cpus-per-task",
+        str(DOWNLOAD_CPUS),
+        "--partition",
+        DOWNLOAD_PARTITION,
+        "--time",
+        DOWNLOAD_TIME,
+    ]
+    if dependency_job_id is not None:
+        command.extend(["--dependency", f"afterok:{dependency_job_id}"])
+    command.extend(
+        [
+            "--export",
+            export_arg(
+                {
+                    "KRASNAL_TOKENIZED_DIR": tokenized_dir,
+                    "DOWNLOAD_EXTRA_ARGS": " ".join(download_overrides(data)),
+                }
+            ),
+            "scripts/slurm/download_games.sh",
+        ]
+    )
+    return run_command(command, submit=submit)
+
+
+def submit_preprocess(
+    data: DataVariant,
+    tokenized_dir: str,
+    download_job_id: str,
+    *,
+    submit: bool,
+) -> str:
     command = [
         "sbatch",
         "--parsable",
@@ -145,11 +212,15 @@ def submit_preprocess(data: DataVariant, tokenized_dir: str, *, submit: bool) ->
         PREPROCESS_PARTITION,
         "--time",
         PREPROCESS_TIME,
+        "--dependency",
+        f"afterok:{download_job_id}",
         "--export",
         export_arg(
             {
                 "KRASNAL_TOKENIZED_DIR": tokenized_dir,
-                "PREPROCESS_EXTRA_ARGS": " ".join(data.preprocess_overrides),
+                "PREPROCESS_EXTRA_ARGS": " ".join(
+                    (*data.preprocess_overrides, PREPROCESS_REPORT_OVERRIDE)
+                ),
             }
         ),
         "scripts/slurm/preprocess.sh",
@@ -207,18 +278,35 @@ def main() -> None:
     args = parser.parse_args()
 
     mode = "SUBMIT" if args.submit else "DRY RUN"
+    download_count = len(DATA_VARIANTS)
     train_count = sum(len(data.train_variants) for data in DATA_VARIANTS)
 
-    print(f"{mode}: {len(DATA_VARIANTS)} preprocess jobs, {train_count} train jobs")
+    print(
+        f"{mode}: {download_count} download/vocab jobs, "
+        f"{len(DATA_VARIANTS)} preprocess jobs, {train_count} train jobs"
+    )
     print(f"Model: {MODEL}")
     print(f"Target games: {TARGET_GAMES}")
 
     PROJECT_ROOT.joinpath(OUTPUT_DIR).mkdir(exist_ok=True)
 
+    previous_download_job_id: str | None = None
     for data in DATA_VARIANTS:
         print(f"\nData variant: {data.name}")
         tokenized_dir = f"{TOKENIZED_BASE}/{slug(data.name)}"
-        preprocess_job_id = submit_preprocess(data, tokenized_dir, submit=args.submit)
+        download_job_id = submit_download(
+            data,
+            tokenized_dir,
+            dependency_job_id=previous_download_job_id,
+            submit=args.submit,
+        )
+        previous_download_job_id = download_job_id
+        preprocess_job_id = submit_preprocess(
+            data,
+            tokenized_dir,
+            download_job_id,
+            submit=args.submit,
+        )
         for train_name in data.train_variants:
             submit_train(data, TRAIN_VARIANTS[train_name], preprocess_job_id, submit=args.submit)
 

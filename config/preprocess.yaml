@@ -27,9 +27,11 @@ outcome_conditioning:
 target_games: null
 
 preprocess_workers: 2
-# How many tokenized part_*.parquet shards to group per shuffle batch (pack one shard at a time).
-preprocess_concat_batch_size: 10
 # Spill packed training windows to disk every N rows per worker (bounds RAM).
 pack_flush_windows: 100000
-# Read tokenized training parts in bounded batches while packing.
+# Games per PyArrow batch while streaming a filtered shard.
 pack_stream_batch_size: 10000
+
+# Token-mix, sequence stats, wandb, clock report, eval Elo bins (off by default for speed).
+report:
+  enabled: true
