@@ -6,7 +6,9 @@ import torch
 
 from krasnal.tokens import (
     CONDITIONING_METADATA_TARGET_MASK_IDS,
+    GAME_START_ID,
     IS_CHECK_ID,
+    PAD_ID,
     WHATS_ON_PROMPT_TOKEN_IDS,
 )
 
@@ -14,6 +16,8 @@ LOSS_IGNORE_INDEX = -100
 
 IGNORE_IN_SUPERVISED_TARGET: Final[frozenset[int]] = frozenset(
     {
+        GAME_START_ID,
+        PAD_ID,
         IS_CHECK_ID,
         *WHATS_ON_PROMPT_TOKEN_IDS,
         *CONDITIONING_METADATA_TARGET_MASK_IDS,

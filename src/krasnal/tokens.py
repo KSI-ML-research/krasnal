@@ -18,7 +18,6 @@ PAD_ID = 2
 WHITE_WON_ID = 3
 BLACK_WON_ID = 4
 DRAW_ID = 5
-UNKNOWN_RESULT_ID = 6
 
 ELO_BELOW_1000_ID = 9
 ELO_1000_1099_ID = 10
@@ -102,7 +101,6 @@ OUTCOME_TOKENS = {
     "<white_won>": WHITE_WON_ID,
     "<black_won>": BLACK_WON_ID,
     "<draw>": DRAW_ID,
-    "<result_unknown>": UNKNOWN_RESULT_ID,
 }
 
 ELO_TOKENS = {
@@ -495,8 +493,6 @@ def result_to_token_id(result: str | int) -> int:
         return BLACK_WON_ID
     if result in (0, "1/2-1/2", "draw", DRAW_ID):
         return DRAW_ID
-    if result in ("result_unknown", UNKNOWN_RESULT_ID):
-        return UNKNOWN_RESULT_ID
     raise ValueError(f"Unsupported game result: {result!r}")
 
 

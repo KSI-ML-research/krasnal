@@ -73,7 +73,7 @@ def test_pack_games_emits_fixed_window_size():
     assert non_pad.count(GAME_START_ID) == 2
 
 
-def test_packed_collate_masks_boundary_and_pad_targets():
+def test_packed_collate_masks_game_start_and_pad_targets():
     block_size = 4
     games = pl.DataFrame(
         {
@@ -100,6 +100,20 @@ def test_packed_collate_masks_boundary_and_pad_targets():
     assert x.shape == (1, block_size)
     assert y[0, 2].item() == LOSS_IGNORE_INDEX
     assert y[0, -1].item() == LOSS_IGNORE_INDEX
+
+
+def test_collate_aligns_clock_rows_with_target_tokens():
+    tokens = torch.tensor([GAME_START_ID, 500, 501], dtype=torch.long)
+    active = torch.tensor([180, 170, 165], dtype=torch.long)
+    opponent = torch.tensor([180, 180, 170], dtype=torch.long)
+
+    collate = make_collate_fn()
+    x, active_x, opponent_x, y = collate([(tokens, active, opponent)])
+
+    assert x.tolist() == [[GAME_START_ID, 500]]
+    assert y.tolist() == [[500, 501]]
+    assert active_x.tolist() == [[170, 165]]
+    assert opponent_x.tolist() == [[180, 170]]
 
 
 def test_single_game_packed_matches_unpacked_collate_on_supervised_positions():

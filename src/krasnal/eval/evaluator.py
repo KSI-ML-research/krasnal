@@ -392,8 +392,8 @@ class ChessEvaluator:
             ]
 
             x_rows = [tokens[:-1] for tokens in token_rows]
-            active_x_rows = [active[:-1] for active in active_rows]
-            opponent_x_rows = [opponent[:-1] for opponent in opponent_rows]
+            active_x_rows = [active[1:] for active in active_rows]
+            opponent_x_rows = [opponent[1:] for opponent in opponent_rows]
             x = pad_sequence(x_rows, batch_first=True, padding_value=PAD_ID).to(
                 batch_session.device
             )

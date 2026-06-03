@@ -34,13 +34,16 @@ class Game:
         self.tokens.clear()
         self.board = bulletchess.Board()
 
-    def context_tokens(self) -> list[int]:
-        """Return prompt tokens plus synchronized move tokens."""
+    def prefix_tokens(self) -> list[int]:
         prefix = [GAME_START_ID, self.time_control_token]
         if self.outcome_conditioning_enabled:
             prefix.append(self.target_outcome_token)
         prefix.extend([self.white_elo_token, self.black_elo_token])
-        return [*prefix, *self.tokens]
+        return prefix
+
+    def context_tokens(self) -> list[int]:
+        """Return prompt tokens plus synchronized move tokens."""
+        return [*self.prefix_tokens(), *self.tokens]
 
     def legal_moves(self) -> list[str]:
         return [move.uci() for move in self.board.legal_moves()]
