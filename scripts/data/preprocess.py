@@ -41,6 +41,49 @@ EVAL_GAMES_PER_BIN = 10_000
 EVAL_MIN_CLOCK = 30
 
 
+def _cap_train_files(
+    parquet_files: list[Path],
+    target_games: int | None,
+    temp_dir: Path,
+) -> list[Path]:
+    """Limit training input by materializing at most one partial shard."""
+    if target_games is None:
+        return parquet_files
+    if target_games <= 0:
+        raise ValueError(f"target_games must be > 0 or null, got {target_games}")
+
+    remaining = target_games
+    selected: list[Path] = []
+    for path in parquet_files:
+        is_eval = EVAL_MONTH in path.name
+        if is_eval:
+            selected.append(path)
+            continue
+        if remaining <= 0:
+            continue
+
+        row_count = int(pl.scan_parquet(path).select(pl.len()).collect().item())
+        if row_count <= remaining:
+            selected.append(path)
+            remaining -= row_count
+        else:
+            capped_path = temp_dir / f"limited_{path.name}"
+            pl.scan_parquet(path).head(remaining).sink_parquet(capped_path)
+            selected.append(capped_path)
+            remaining = 0
+
+    if not any(EVAL_MONTH not in path.name for path in selected):
+        raise RuntimeError("No training shards selected for preprocessing.")
+    if remaining > 0:
+        available = target_games - remaining
+        logger.warning(
+            "target_games={} exceeds available filtered train games {}; using all available games",
+            target_games,
+            available,
+        )
+    return selected
+
+
 def _init_preprocess_worker() -> None:
     faulthandler.enable()
 
@@ -140,6 +183,7 @@ def _sample_eval_games(raw_path: Path, output_path: Path, seed: int) -> None:
 def main(cfg: DictConfig) -> None:
     piece_aware_moves = bool(cfg.get("piece_aware_moves", False))
     side_prefixed_moves = bool(cfg.get("side_prefixed_moves", True))
+    include_elo = bool(cfg.get("include_elo", True))
     block_size = int(cfg.block_size)
     seed = int(cfg.seed)
 
@@ -162,19 +206,25 @@ def main(cfg: DictConfig) -> None:
 
     time_control_cfg = cfg.get("time_control", {})
     time_control_enabled = bool(time_control_cfg.get("enabled", True))
+    opponent_material_cfg = cfg.get("opponent_material", {})
+    opponent_material_enabled = bool(opponent_material_cfg.get("enabled", False))
     outcome_conditioning_cfg = cfg.get("outcome_conditioning", {})
     outcome_conditioning_enabled = bool(outcome_conditioning_cfg.get("enabled", True))
+    target_games_raw = cfg.get("target_games")
+    target_games = int(target_games_raw) if target_games_raw is not None else None
 
     pp_cfg = PreprocessConfig(
         seed=seed,
         block_size=block_size,
         piece_aware_moves=piece_aware_moves,
         side_prefixed_moves=side_prefixed_moves,
+        include_elo=include_elo,
         include_check_qa=include_check_qa,
         check_qa_prob=check_qa_prob,
         include_what_is_on_qa=include_what_is_on_qa,
         what_is_on_prob=what_is_on_prob,
         time_control_enabled=time_control_enabled,
+        opponent_material_enabled=opponent_material_enabled,
         outcome_conditioning_enabled=outcome_conditioning_enabled,
         move_vocab_path=MOVE_VOCAB_PATH,
     )
@@ -192,8 +242,11 @@ def main(cfg: DictConfig) -> None:
         eval_sampled_path = temp_dir / f"eval_sampled_{EVAL_MONTH}.parquet"
         _sample_eval_games(eval_raw[0], eval_sampled_path, seed=seed)
         parquet_files = [eval_sampled_path if EVAL_MONTH in p.name else p for p in parquet_files]
+    parquet_files = _cap_train_files(parquet_files, target_games, temp_dir)
+    if target_games is not None:
+        logger.info("Using target_games={} for training shards", target_games)
 
-    # --- Build move vocab (skips eval files internally) ---
+    # --- Build move vocab ---
     PRETRAIN_DATASET_PATH.parent.mkdir(parents=True, exist_ok=True)
     build_move_vocab_from_corpus(
         parquet_files,

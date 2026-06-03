@@ -24,6 +24,7 @@ class Game:
     time_control_token: int = TC_UNKNOWN_ID
     target_outcome_token: int = DRAW_ID
     outcome_conditioning_enabled: bool = True
+    opponent_material_enabled: bool = False
     moves_uci: list[str] = field(default_factory=list)
     tokens: list[int] = field(default_factory=list)
     board: bulletchess.Board = field(default_factory=bulletchess.Board)
@@ -60,7 +61,8 @@ class Game:
         self.board.apply(move)
         self.moves_uci.append(uci)
         self.tokens.append(token_id)
-        self.tokens.append(opponent_material_token_id(self.board))
+        if self.opponent_material_enabled:
+            self.tokens.append(opponent_material_token_id(self.board))
 
     def feed_token(self, token_id: int) -> None:
         if not is_move_token_id(token_id):

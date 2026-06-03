@@ -122,6 +122,9 @@ class ModelProvider(ChessModelProvider):
         self.outcome_conditioning_enabled = bool(
             self.artifact_config.get("outcome_conditioning_enabled", True)
         )
+        self.opponent_material_enabled = bool(
+            self.artifact_config.get("opponent_material_enabled", False)
+        )
         self._last_go: GoParams | None = None
         self._white_elo: int | None = None
         self._black_elo: int | None = None
@@ -174,6 +177,7 @@ class ModelProvider(ChessModelProvider):
             time_control_token=self._time_control_token(),
             target_outcome_token=outcome_token,
             outcome_conditioning_enabled=self.outcome_conditioning_enabled,
+            opponent_material_enabled=self.opponent_material_enabled,
         )
 
     def _clock_initial_seconds_for_session(self) -> int | None:

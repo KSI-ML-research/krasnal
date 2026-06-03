@@ -26,8 +26,8 @@ from krasnal.uci_engine.go_params import GoParams, uci_ms_to_clock_seconds
 class InferenceSession:
     """Concrete inference session that incrementally decodes with KV cache when possible.
 
-    The game owns the model context. Feeding a move appends both the move token and
-    its deterministic post-move material annotation.
+    The game owns the model context. Feeding a move appends the move token and,
+    when enabled, its deterministic post-move material annotation.
 
     When ``use_time_conditioning`` is enabled, clock tensors follow the target
     alignment used during training: input token at global index ``g`` is paired

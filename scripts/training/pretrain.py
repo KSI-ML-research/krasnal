@@ -3,12 +3,12 @@ from datetime import datetime
 
 import hydra
 import torch
+import wandb
 from omegaconf import DictConfig, OmegaConf
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data import DataLoader
 from torch.utils.data.distributed import DistributedSampler
 
-import wandb
 from krasnal.config import (
     ARTIFACTS_DIR,
     EVAL_DATASET_PATH,
@@ -33,6 +33,8 @@ from krasnal.trainer import (
     unwrap_model,
 )
 from krasnal.utils import (
+    ablation_metadata_from_env,
+    ablation_tags,
     init_wandb,
     log_eval_metrics_to_wandb,
     print_model_config,
@@ -56,6 +58,9 @@ def main(cfg: DictConfig) -> None:
 def _main(cfg: DictConfig, dist_info: DistributedInfo) -> None:
     piece_aware_moves = bool(cfg.get("piece_aware_moves", False))
     side_prefixed_moves = bool(cfg.get("side_prefixed_moves", True))
+    include_elo = bool(cfg.get("include_elo", True))
+    time_control_enabled = bool(cfg.get("time_control", {}).get("enabled", True))
+    opponent_material_enabled = bool(cfg.get("opponent_material", {}).get("enabled", False))
     outcome_conditioning_enabled = bool(cfg.get("outcome_conditioning", {}).get("enabled", True))
     load_move_vocab(
         MOVE_VOCAB_PATH,
@@ -99,9 +104,10 @@ def _main(cfg: DictConfig, dist_info: DistributedInfo) -> None:
     wandb_config: dict = {}
 
     if dist_info.is_master:
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
         artifact_dir = ARTIFACTS_DIR / "pretrain" / timestamp
         artifact_dir.mkdir(parents=True, exist_ok=True)
+        ablation_metadata = ablation_metadata_from_env()
         wandb_config = {
             "stage": "pretrain",
             "params_M": params_M,
@@ -120,6 +126,9 @@ def _main(cfg: DictConfig, dist_info: DistributedInfo) -> None:
             "seed": cfg.seed,
             "piece_aware_moves": piece_aware_moves,
             "side_prefixed_moves": side_prefixed_moves,
+            "include_elo": include_elo,
+            "time_control_enabled": time_control_enabled,
+            "opponent_material_enabled": opponent_material_enabled,
             "outcome_conditioning_enabled": outcome_conditioning_enabled,
             "gpt_model_name": cfg.model.get("name", "custom"),
             "move_vocab_path": str(MOVE_VOCAB_PATH),
@@ -131,12 +140,16 @@ def _main(cfg: DictConfig, dist_info: DistributedInfo) -> None:
             "model_repr": repr(model),
             "world_size": dist_info.world_size,
             "ddp": dist_info.enabled,
+            **ablation_metadata,
         }
         write_artifact_config_json(artifact_dir, wandb_config)
         run_id, entity, project = init_wandb(
             project=cfg.wandb_project,
             config=wandb_config,
             stage="pretrain",
+            name=ablation_metadata.get("wandb_name"),
+            group=ablation_metadata.get("wandb_group"),
+            tags=ablation_tags(ablation_metadata),
         )
         wandb_run_url = f"https://wandb.ai/{entity}/{project}/runs/{run_id}"
 
@@ -212,7 +225,7 @@ def _main(cfg: DictConfig, dist_info: DistributedInfo) -> None:
 
     eval_dataset = ChessDataset(
         EVAL_DATASET_PATH,
-        include_elo=cfg.get("include_elo", True),
+        include_elo=include_elo,
     )
     val_loader = DataLoader(
         eval_dataset,
