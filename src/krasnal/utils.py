@@ -1,12 +1,13 @@
 import json
+import os
 import random
 from pathlib import Path
 from typing import Any
 
 import numpy as np
 import torch
-
 import wandb
+
 from krasnal.config import GPTConfig
 
 
@@ -48,14 +49,57 @@ def print_model_config(
     )
 
 
+def ablation_metadata_from_env() -> dict[str, str]:
+    run_name = os.environ.get("RUN_NAME", "")
+    if not run_name:
+        return {}
+
+    metadata = {
+        "ablation_name": run_name,
+        "ablation_group": os.environ.get("RUN_GROUP", ""),
+        "slurm_job_id": os.environ.get("SLURM_JOB_ID", ""),
+        "slurm_job_name": os.environ.get("SLURM_JOB_NAME", ""),
+        "tokenized_dir": os.environ.get("KRASNAL_TOKENIZED_DIR", ""),
+        "wandb_name": os.environ.get("WANDB_NAME", ""),
+        "wandb_group": os.environ.get("WANDB_RUN_GROUP", ""),
+    }
+    if "-" in run_name:
+        data_variant, train_variant = run_name.rsplit("-", 1)
+        metadata["ablation_data_variant"] = data_variant
+        metadata["ablation_train_variant"] = train_variant
+    return {key: value for key, value in metadata.items() if value}
+
+
+def ablation_tags(metadata: dict[str, str]) -> tuple[str, ...]:
+    if not metadata:
+        return ()
+    tags = ["ablation"]
+    for key in ("ablation_data_variant", "ablation_train_variant"):
+        if value := metadata.get(key):
+            tags.append(value)
+    return tuple(tags)
+
+
 def init_wandb(
     *,
     project: str,
     config: dict,
     stage: str,
+    name: str | None = None,
+    group: str | None = None,
+    tags: tuple[str, ...] = (),
 ) -> tuple[str, str, str]:
     """Initialize wandb (tagged with stage) and return run URL components."""
-    wandb.init(project=project, config=config, tags=[stage])
+    init_kwargs: dict[str, Any] = {
+        "project": project,
+        "config": config,
+        "tags": list(dict.fromkeys((stage, *tags))),
+    }
+    if name:
+        init_kwargs["name"] = name
+    if group:
+        init_kwargs["group"] = group
+    wandb.init(**init_kwargs)
     run_id = wandb.run.id  # type: ignore[union-attr]
     entity = wandb.run.entity  # type: ignore[union-attr]
     proj = wandb.run.project  # type: ignore[union-attr]

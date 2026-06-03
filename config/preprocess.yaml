@@ -22,6 +22,10 @@ time_control:
 outcome_conditioning:
   enabled: true
 
+# Optional training-data cap for quick ablations. Takes the first N training games
+# from sorted filtered shards; null means all available training games.
+target_games: null
+
 preprocess_workers: 2
 # How many tokenized part_*.parquet shards to group per shuffle batch (pack one shard at a time).
 preprocess_concat_batch_size: 10

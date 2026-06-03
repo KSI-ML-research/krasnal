@@ -290,7 +290,12 @@ def _build_game_tokens(
                 f"Opponent material {opponent_material} exceeds max tokenized value "
                 f"{MAX_SIDE_MATERIAL}"
             )
-        append_token(OPP_MATERIAL_START_ID + opponent_material, active_clock_id, opponent_clock_id)
+        if cfg.opponent_material_enabled:
+            append_token(
+                OPP_MATERIAL_START_ID + opponent_material,
+                active_clock_id,
+                opponent_clock_id,
+            )
 
         if cfg.include_check_qa:
             gives_check = ply < len(is_check) and bool(is_check[ply])
@@ -326,7 +331,8 @@ def _build_game_tokens(
         prefix_tokens.append(get_time_control_bucket(time_initial, time_increment))
     if cfg.outcome_conditioning_enabled:
         prefix_tokens.append(result_to_token_id(result))
-    prefix_tokens.extend([white_elo, black_elo])
+    if cfg.include_elo:
+        prefix_tokens.extend([white_elo, black_elo])
     prefix_active, prefix_opponent = zip(*[start_clock] * len(prefix_tokens), strict=True)
     token_ids = prefix_tokens + result_tokens + [GAME_END_ID]
     active_ids = list(prefix_active) + active_clock_ids + [end_active]
