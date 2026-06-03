@@ -3,9 +3,16 @@ import torch
 
 from krasnal.config import CLOCK_IGNORE_ID
 from krasnal.dataset import PretrainDataset, make_collate_fn, make_packed_collate_fn
-from krasnal.preprocess import PackedWindowBuilder, pack_games_into_windows
+from krasnal.preprocess import PackedWindowBuilder
 from krasnal.supervised_target_mask import LOSS_IGNORE_INDEX
 from krasnal.tokens import GAME_END_ID, GAME_START_ID, PAD_ID, WHITE_WON_ID
+
+
+def _pack_games(games: pl.DataFrame, block_size: int, seed: int) -> pl.DataFrame:
+    builder = PackedWindowBuilder(block_size, flush_every=len(games) + 1)
+    builder.feed_dataframe(games, shuffle_seed=seed)
+    builder.drain()
+    return builder.to_dataframe()
 
 
 def test_pack_restarts_split_game_from_start_in_next_window():
@@ -28,7 +35,7 @@ def test_pack_restarts_split_game_from_start_in_next_window():
         }
     )
 
-    packed = pack_games_into_windows(games, block_size=block_size, seed=0)
+    packed = _pack_games(games, block_size=block_size, seed=0)
     assert len(packed) == 2
 
     row0 = packed.row(0, named=True)
@@ -61,7 +68,7 @@ def test_pack_games_emits_fixed_window_size():
         }
     )
 
-    packed = pack_games_into_windows(games, block_size=block_size, seed=0)
+    packed = _pack_games(games, block_size=block_size, seed=0)
     window_size = block_size + 1
 
     assert len(packed) == 1
@@ -85,7 +92,7 @@ def test_packed_collate_masks_game_start_and_pad_targets():
             "opponent_clock_ids": [[CLOCK_IGNORE_ID] * 3, [CLOCK_IGNORE_ID] * 3],
         }
     )
-    packed = pack_games_into_windows(games, block_size=block_size, seed=1)
+    packed = _pack_games(games, block_size=block_size, seed=1)
     row = packed.row(0, named=True)
     batch = [
         (
@@ -131,7 +138,7 @@ def test_single_game_packed_matches_unpacked_collate_on_supervised_positions():
             "opponent_clock_ids": [clocks.tolist()],
         }
     )
-    packed = pack_games_into_windows(games, block_size=block_size, seed=0)
+    packed = _pack_games(games, block_size=block_size, seed=0)
     row = packed.row(0, named=True)
 
     packed_collate = make_packed_collate_fn()
@@ -174,11 +181,15 @@ def test_packed_builder_writes_mmap_dataset(tmp_path):
         games["active_clock_ids"].to_list(),
         games["opponent_clock_ids"].to_list(),
     )
-    builder.drain()
-    builder.maybe_flush(tmp_path / "parts")
-    builder.finish(tmp_path / "pretrain", part_dir=tmp_path / "parts")
+    output_dir = tmp_path / "pretrain"
+    builder.drain(output_dir)
+    builder.maybe_flush(output_dir)
+    from krasnal.preprocess.pack import write_packed_dataset_manifest
 
-    ds = PretrainDataset(tmp_path / "pretrain")
+    shards = builder.finish(output_dir)
+    write_packed_dataset_manifest(output_dir, shards, block_size + 1)
+
+    ds = PretrainDataset(output_dir)
     assert len(ds) == 2
     tokens, active, opponent = ds[0]
     assert tokens.dtype == torch.long

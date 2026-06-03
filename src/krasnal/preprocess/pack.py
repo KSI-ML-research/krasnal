@@ -28,14 +28,6 @@ _SHARD_COLUMNS = (
 )
 
 
-def one_row_one_game(lazy_df: pl.LazyFrame, block_size: int) -> pl.LazyFrame:
-    window_size = block_size + 1
-    columns = ["token_ids", "active_clock_ids", "opponent_clock_ids"]
-    return lazy_df.select(
-        [pl.col(column).list.slice(0, window_size).alias(column) for column in columns]
-    )
-
-
 def _append_game_prefix(
     game: _GameRow,
     start: int,
@@ -59,9 +51,16 @@ def _append_game_prefix(
 class PackedWindowBuilder:
     """Memory-bounded packer: feeds games incrementally and spills fixed-array shards."""
 
-    def __init__(self, block_size: int, *, flush_every: int = 8_000) -> None:
+    def __init__(
+        self,
+        block_size: int,
+        *,
+        flush_every: int = 8_000,
+        shard_prefix: str = "part",
+    ) -> None:
         self.window_size = block_size + 1
         self.flush_every = max(1, flush_every)
+        self.shard_prefix = shard_prefix
         self.pending: _GameRow | None = None
         self._games: deque[_GameRow] = deque()
         self._buffer = self._new_buffer()
@@ -105,13 +104,13 @@ class PackedWindowBuilder:
             shuffled["opponent_clock_ids"].to_list(),
         )
 
-    def drain(self, part_dir: Path | None = None) -> None:
+    def drain(self, output_dir: Path | None = None) -> None:
         while True:
-            if part_dir is None:
+            if output_dir is None:
                 if self._buffer_rows >= self._buffer_capacity:
                     self._grow_buffer()
             elif self._buffer_rows >= self.flush_every:
-                self._flush(part_dir)
+                self._flush(output_dir)
             if not self._emit_one_window():
                 return
 
@@ -165,14 +164,14 @@ class PackedWindowBuilder:
             self._buffer["opponent_clock_ids"][row, length:] = CLOCK_IGNORE_ID
         self._buffer_rows += 1
 
-    def maybe_flush(self, part_dir: Path) -> None:
+    def maybe_flush(self, output_dir: Path) -> None:
         if self._buffer_rows < self.flush_every:
             return
-        self._flush(part_dir)
+        self._flush(output_dir)
 
-    def _flush(self, part_dir: Path) -> None:
-        part_dir.mkdir(parents=True, exist_ok=True)
-        path = part_dir / f"part_{len(self.shard_paths):04d}"
+    def _flush(self, output_dir: Path) -> None:
+        output_dir.mkdir(parents=True, exist_ok=True)
+        path = output_dir / f"{self.shard_prefix}_{len(self.shard_paths):04d}"
         rows = _write_packed_shard(path, self._buffer, self._buffer_rows, self.window_size)
         self.shard_paths.append((path, rows))
         self._buffer = self._new_buffer()
@@ -184,13 +183,12 @@ class PackedWindowBuilder:
             grown[column][: self._buffer_rows] = self._buffer[column][: self._buffer_rows]
         self._buffer = grown
 
-    def finish(self, output_path: Path, *, part_dir: Path) -> None:
-        self.drain(part_dir)
-        part_dir.mkdir(parents=True, exist_ok=True)
+    def finish(self, output_dir: Path) -> list[tuple[str, int]]:
+        self.drain(output_dir)
+        output_dir.mkdir(parents=True, exist_ok=True)
         if self._buffer_rows:
-            self._flush(part_dir)
-
-        _write_packed_dataset_manifest(output_path, self.shard_paths, self.window_size)
+            self._flush(output_dir)
+        return [(path.name, rows) for path, rows in self.shard_paths]
 
     def to_dataframe(self) -> pl.DataFrame:
         if self._buffer_rows == 0:
@@ -202,17 +200,6 @@ class PackedWindowBuilder:
             },
             schema=_PACKED_SCHEMA,
         )
-
-
-def pack_games_into_windows(games: pl.DataFrame, block_size: int, seed: int) -> pl.DataFrame:
-    """Pack games into fixed windows; split games restart from ``<game_start>`` in the next row."""
-    if games.is_empty():
-        return pl.DataFrame(schema=_PACKED_SCHEMA)
-
-    builder = PackedWindowBuilder(block_size, flush_every=len(games) + 1)
-    builder.feed_dataframe(games, shuffle_seed=seed)
-    builder.drain()
-    return builder.to_dataframe()
 
 
 def _write_packed_shard(
@@ -232,25 +219,15 @@ def _write_packed_shard(
     return rows
 
 
-def _write_packed_dataset_manifest(
+def write_packed_dataset_manifest(
     output_path: Path,
-    shard_paths: list[tuple[Path, int]],
+    shards: list[tuple[str, int]],
     window_size: int,
-) -> None:
-    if output_path.is_dir():
-        shutil.rmtree(output_path)
-    elif output_path.exists():
-        output_path.unlink()
+) -> int:
+    """Write ``metadata.json`` for shards already stored under ``output_path``."""
     output_path.mkdir(parents=True, exist_ok=True)
-
-    shards = []
-    total_rows = 0
-    for idx, (src_path, rows) in enumerate(shard_paths):
-        dst_path = output_path / f"part_{idx:04d}"
-        if src_path.resolve() != dst_path.resolve():
-            shutil.copytree(src_path, dst_path)
-        total_rows += rows
-        shards.append({"path": dst_path.name, "rows": rows})
+    total_rows = sum(rows for _, rows in shards)
+    manifest_shards = [{"path": name, "rows": rows} for name, rows in shards]
 
     with (output_path / "metadata.json").open("w") as f:
         json.dump(
@@ -260,9 +237,10 @@ def _write_packed_dataset_manifest(
                 "window_size": window_size,
                 "rows": total_rows,
                 "columns": [name for name, _dtype in _SHARD_COLUMNS],
-                "shards": shards,
+                "shards": manifest_shards,
             },
             f,
             indent=2,
         )
         f.write("\n")
+    return total_rows

@@ -6,8 +6,8 @@ from typing import Any
 
 import numpy as np
 import torch
-import wandb
 
+import wandb
 from krasnal.config import GPTConfig
 
 

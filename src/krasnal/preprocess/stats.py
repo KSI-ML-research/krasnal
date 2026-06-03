@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import math
 
-import polars as pl
 from loguru import logger
 from omegaconf import DictConfig
 
@@ -62,23 +61,6 @@ def token_mix_raw_from_counts(id_counts: dict[int, int]) -> dict[str, int]:
         else:
             result[name] = sum(id_counts.get(i, 0) for i in ids)
     return result
-
-
-def _token_mix_raw_sums(tokenized_lf: pl.LazyFrame) -> dict[str, int]:
-    total = tokenized_lf.select(pl.col("token_ids").list.len().sum()).collect().item() or 0
-    counts_df = (
-        tokenized_lf.select(pl.col("token_ids").explode().alias("tid"))
-        .group_by("tid")
-        .len()
-        .collect()
-    )
-    id_to_count: dict[int, int] = dict(
-        zip(counts_df["tid"].to_list(), counts_df["len"].to_list(), strict=True)
-    )
-
-    raw = token_mix_raw_from_counts(id_to_count)
-    raw["total_tokens"] = int(total)
-    return raw
 
 
 def merge_token_mix_raw(
@@ -140,10 +122,6 @@ def token_mix_from_raw_sums(raw: dict[str, int]) -> dict[str, float]:
     return result
 
 
-def compute_token_mix_stats(tokenized_lf: pl.LazyFrame) -> dict[str, float]:
-    return token_mix_from_raw_sums(_token_mix_raw_sums(tokenized_lf))
-
-
 def merge_seq_len_raw(
     acc: dict[int, int] | None,
     part: dict[int, int],
@@ -198,33 +176,6 @@ def seq_len_stats_from_counts(length_counts: dict[int, int], block_size: int) ->
         "over_block_size": sum(
             count for length, count in length_counts.items() if length > block_size
         ),
-    }
-
-
-def seq_len_stats(seq_len_lf: pl.LazyFrame, block_size: int) -> dict[str, float]:
-    stats = seq_len_lf.select(
-        pl.col("len").count().alias("total"),
-        pl.col("len").min().alias("min"),
-        pl.col("len").max().alias("max"),
-        pl.col("len").mean().alias("mean"),
-        pl.col("len").median().alias("median"),
-        pl.col("len").std().alias("std"),
-        pl.col("len").quantile(0.95).alias("p95"),
-        pl.col("len").quantile(0.99).alias("p99"),
-        pl.col("len").quantile(0.999).alias("p999"),
-        (pl.col("len") > block_size).sum().alias("over_block_size"),
-    ).collect()
-    return {
-        "total": stats.item(0, "total"),
-        "min": stats.item(0, "min"),
-        "max": stats.item(0, "max"),
-        "mean": stats.item(0, "mean"),
-        "median": stats.item(0, "median"),
-        "std": stats.item(0, "std"),
-        "p95": stats.item(0, "p95"),
-        "p99": stats.item(0, "p99"),
-        "p999": stats.item(0, "p999"),
-        "over_block_size": stats.item(0, "over_block_size"),
     }
 
 

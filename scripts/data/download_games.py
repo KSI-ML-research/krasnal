@@ -30,6 +30,14 @@ from loguru import logger
 from omegaconf import DictConfig
 
 from krasnal import configure_logging
+from krasnal.config import MOVE_VOCAB_PATH
+from krasnal.preprocess.eval_sampling import (
+    EVAL_GAMES_PER_BIN,
+    EVAL_MIN_CLOCK,
+    EVAL_MONTH,
+    maia_eval_sample_sql,
+)
+from krasnal.preprocess.move_vocab_duckdb import build_move_vocab_from_filtered_parquet
 
 configure_logging()
 logging.getLogger("httpx").setLevel(logging.WARNING)
@@ -43,8 +51,7 @@ OUTPUT_DIR = Path("data/1_filtered")
 # If ``end_month`` is null, months run through this (HF catalog / default cap).
 DEFAULT_END_MONTH = "2026-03"
 
-SKIP_MONTHS = {"2020-12", "2021-01", "2020-07", "2016-12", "2019-12"}
-EVAL_MONTH = "2019-12"
+SKIP_MONTHS = {"2020-12", "2021-01", "2020-07", "2016-12", EVAL_MONTH}
 
 
 def _parse_month(label: str) -> tuple[int, int]:
@@ -76,46 +83,122 @@ def _resolve_months(cfg: DictConfig) -> list[str]:
 
 
 # ─── DuckDB + Aix Query ─────────────────────────────────────────────────────
+# ``move_details`` (Aix) exposes per-move ``capture`` / ``promotion``; opponent
+# material after each ply is accumulated in SQL (see aix docs/functions.md).
 
-FILTER_QUERY = """
+_STARTING_SIDE_MATERIAL = 39
+
+_AIX_CAPTURE_MATERIAL = """CASE lower(nullif(trim(u.m.capture), ''))
+    WHEN 'pawn' THEN 1 WHEN 'p' THEN 1
+    WHEN 'knight' THEN 3 WHEN 'n' THEN 3
+    WHEN 'bishop' THEN 3 WHEN 'b' THEN 3
+    WHEN 'rook' THEN 5 WHEN 'r' THEN 5
+    WHEN 'queen' THEN 9 WHEN 'q' THEN 9
+    WHEN 'king' THEN 0 WHEN 'k' THEN 0
+    ELSE 0
+END"""
+
+_AIX_PROMOTION_MATERIAL = """CASE lower(nullif(trim(u.m.promotion), ''))
+    WHEN 'pawn' THEN 1 WHEN 'p' THEN 1
+    WHEN 'knight' THEN 3 WHEN 'n' THEN 3
+    WHEN 'bishop' THEN 3 WHEN 'b' THEN 3
+    WHEN 'rook' THEN 5 WHEN 'r' THEN 5
+    WHEN 'queen' THEN 9 WHEN 'q' THEN 9
+    WHEN 'king' THEN 0 WHEN 'k' THEN 0
+    ELSE 0
+END"""
+
+FILTER_QUERY = f"""
+WITH filtered AS (
+    SELECT *
+    FROM '{{parquet_path}}'
+    WHERE white_rating >= {{min_elo}}
+      AND black_rating >= {{min_elo}}
+      AND time_initial >= {{min_time}}
+      AND termination = 'Normal'
+      AND evals IS NOT NULL
+      AND result IN ('1-0', '0-1', '1/2-1/2')
+      AND utc_timestamp >= '{{date_start}}'
+      AND utc_timestamp < '{{date_end}}'
+    {{evals_condition}}
+),
+decoded AS (
+    SELECT filtered.*, move_details(movedata) AS md
+    FROM filtered
+),
+per_ply AS (
+    SELECT
+        decoded.lichess_id,
+        (u.ply_idx - 1)::INTEGER AS ply,
+        CASE
+            WHEN (u.ply_idx - 1) % 2 = 1 THEN -({_AIX_CAPTURE_MATERIAL})
+            WHEN nullif(trim(u.m.promotion), '') IS NOT NULL
+                THEN ({_AIX_PROMOTION_MATERIAL}) - 1
+            ELSE 0
+        END AS delta_white,
+        CASE
+            WHEN (u.ply_idx - 1) % 2 = 0 THEN -({_AIX_CAPTURE_MATERIAL})
+            WHEN nullif(trim(u.m.promotion), '') IS NOT NULL
+                THEN ({_AIX_PROMOTION_MATERIAL}) - 1
+            ELSE 0
+        END AS delta_black
+    FROM decoded,
+    UNNEST(decoded.md) WITH ORDINALITY AS u(m, ply_idx)
+),
+running AS (
+    SELECT
+        lichess_id,
+        ply,
+        {_STARTING_SIDE_MATERIAL}
+            + sum(delta_white) OVER (
+                PARTITION BY lichess_id ORDER BY ply ROWS UNBOUNDED PRECEDING
+            ) AS white_mat,
+        {_STARTING_SIDE_MATERIAL}
+            + sum(delta_black) OVER (
+                PARTITION BY lichess_id ORDER BY ply ROWS UNBOUNDED PRECEDING
+            ) AS black_mat
+    FROM per_ply
+),
+opponent_material_by_game AS (
+    SELECT
+        lichess_id,
+        list(
+            CASE
+                WHEN ply % 2 = 0 THEN black_mat::UTINYINT
+                ELSE white_mat::UTINYINT
+            END
+            ORDER BY ply
+        ) AS opponent_material
+    FROM running
+    GROUP BY lichess_id
+)
 SELECT
-    lichess_id,
-    to_uci(movedata) AS uci_moves,
-    clocks_white,
-    clocks_black,
-    list_eval_to_centipawns(evals) AS evals_cp,
-    evals AS evals_raw,
-    move_details(movedata).apply(m -> m.is_check) AS is_check,
-    move_details(movedata).apply(m -> m.capture IS NOT NULL AND m.capture != '') AS is_capture,
-    move_details(movedata).apply(m -> m.role) AS piece_moved,
-    move_details(movedata).apply(m -> m.promotion) AS promotion,
-    move_details(movedata).apply(m -> m.is_en_passant) AS is_en_passant,
-    white_rating,
-    black_rating,
-    result,
+    decoded.lichess_id,
+    to_uci(decoded.movedata) AS uci_moves,
+    decoded.clocks_white,
+    decoded.clocks_black,
+    list_eval_to_centipawns(decoded.evals) AS evals_cp,
+    decoded.md.apply(m -> m.is_check) AS is_check,
+    decoded.md.apply(m -> m.role) AS piece_moved,
+    om.opponent_material,
+    decoded.white_rating,
+    decoded.black_rating,
+    decoded.result,
     CASE
-        WHEN move_details_ext_at(movedata, -1).is_checkmate THEN 'mate'
-        WHEN move_details_ext_at(movedata, -1).is_stalemate THEN 'stalemate'
-        WHEN result = '1-0' OR result = '0-1' THEN 'resignation'
-        WHEN result = '1/2-1/2' THEN 'agreement'
+        WHEN move_details_ext_at(decoded.movedata, -1).is_checkmate THEN 'mate'
+        WHEN move_details_ext_at(decoded.movedata, -1).is_stalemate THEN 'stalemate'
+        WHEN decoded.result = '1-0' OR decoded.result = '0-1' THEN 'resignation'
+        WHEN decoded.result = '1/2-1/2' THEN 'agreement'
         ELSE 'unknown'
     END AS game_end_reason,
-    time_initial,
-    time_increment,
-    utc_timestamp,
-    opening,
-    eco,
-    ply_count
-FROM '{parquet_path}'
-WHERE white_rating >= {min_elo}
-  AND black_rating >= {min_elo}
-  AND time_initial >= {min_time}
-  AND termination = 'Normal'
-  AND evals IS NOT NULL
-  AND result IN ('1-0', '0-1', '1/2-1/2')
-  AND utc_timestamp >= '{date_start}'
-  AND utc_timestamp < '{date_end}'
-{evals_condition}
+    decoded.time_initial,
+    decoded.time_increment,
+    decoded.utc_timestamp,
+    decoded.opening,
+    decoded.eco,
+    decoded.ply_count
+FROM decoded
+INNER JOIN opponent_material_by_game om USING (lichess_id)
 """
 
 
@@ -151,6 +234,11 @@ def filter_month(
     min_elo: int,
     min_time: int,
     require_evals: bool,
+    *,
+    eval_sample: bool = False,
+    eval_seed: int = 0,
+    eval_games_per_bin: int = EVAL_GAMES_PER_BIN,
+    eval_min_clock: int = EVAL_MIN_CLOCK,
 ) -> int:
     """
     Filter one month of Aix games and save to Parquet.
@@ -178,7 +266,7 @@ def filter_month(
 
     evals_condition = "AND evals IS NOT NULL" if require_evals else ""
 
-    query = FILTER_QUERY.format(
+    base_query = FILTER_QUERY.format(
         parquet_path=parquet_path,
         date_start=date_start,
         date_end=date_end,
@@ -186,8 +274,23 @@ def filter_month(
         min_time=min_time,
         evals_condition=evals_condition,
     )
-
-    logger.info(f"Filtering {month}...")
+    if eval_sample:
+        query = maia_eval_sample_sql(
+            base_query,
+            seed=eval_seed,
+            games_per_bin=eval_games_per_bin,
+            min_clock=eval_min_clock,
+        )
+        logger.info(
+            "Filtering {} with Maia eval sampling (seed={}, up to {} games/bin, min_clock={})",
+            month,
+            eval_seed,
+            eval_games_per_bin,
+            eval_min_clock,
+        )
+    else:
+        query = base_query
+        logger.info(f"Filtering {month}...")
     start = time.time()
 
     con.execute(f"""
@@ -200,8 +303,25 @@ def filter_month(
     result = con.execute(f"SELECT COUNT(*) FROM '{output_path}'").fetchone()
     count = result[0]
 
-    logger.info(f"  {count:,} games in {elapsed:.0f}s -> {output_path.name}")
+    if eval_sample:
+        logger.info(
+            "  {:,} games after eval sampling in {:.0f}s -> {}",
+            count,
+            elapsed,
+            output_path.name,
+        )
+    else:
+        logger.info(f"  {count:,} games in {elapsed:.0f}s -> {output_path.name}")
     return count
+
+
+def _eval_sampling_params(cfg: DictConfig) -> tuple[str, int, int, int]:
+    eval_cfg = cfg.get("eval", {})
+    month = str(eval_cfg.get("month", EVAL_MONTH))
+    games_per_bin = int(eval_cfg.get("games_per_bin", EVAL_GAMES_PER_BIN))
+    min_clock = int(eval_cfg.get("min_clock", EVAL_MIN_CLOCK))
+    seed = int(cfg.get("seed", 0))
+    return month, seed, games_per_bin, min_clock
 
 
 @hydra.main(version_base=None, config_path="../../config", config_name="download")
@@ -227,6 +347,14 @@ def main(cfg: DictConfig) -> None:
     logger.info(f"Min Elo: {min_elo}")
     logger.info(f"Min time control: {min_time}s")
     logger.info(f"Require evals: {require_evals}")
+    eval_month, eval_seed, eval_games_per_bin, eval_min_clock = _eval_sampling_params(cfg)
+    logger.info(
+        "Eval holdout: month={}, up to {} games/bin, min_clock={}, seed={}",
+        eval_month,
+        eval_games_per_bin,
+        eval_min_clock,
+        eval_seed,
+    )
 
     hf_transfer_status = (
         "enabled" if os.environ.get("HF_HUB_ENABLE_HF_TRANSFER") == "1" else "disabled"
@@ -259,7 +387,17 @@ def main(cfg: DictConfig) -> None:
 
         try:
             count = filter_month(
-                parquet_path, month, OUTPUT_DIR, con, min_elo, min_time, require_evals
+                parquet_path,
+                month,
+                OUTPUT_DIR,
+                con,
+                min_elo,
+                min_time,
+                require_evals,
+                eval_sample=month == eval_month,
+                eval_seed=eval_seed,
+                eval_games_per_bin=eval_games_per_bin,
+                eval_min_clock=eval_min_clock,
             )
             total_games += count
         except Exception as e:
@@ -279,29 +417,68 @@ def main(cfg: DictConfig) -> None:
 
     con.close()
 
-    # Always ensure eval month is available
-    eval_output = OUTPUT_DIR / f"filtered_{EVAL_MONTH}.parquet"
+    # Always ensure eval holdout month is available (Maia-style subsample at filter time).
+    eval_output = OUTPUT_DIR / f"filtered_{eval_month}.parquet"
     if not eval_output.exists():
-        logger.info("Downloading eval month {}...", EVAL_MONTH)
+        logger.info("Downloading eval month {}...", eval_month)
         con2 = duckdb.connect()
         con2.execute("INSTALL aixchess FROM community")
         con2.execute("LOAD aixchess")
         try:
-            eval_parquet = download_aix_file(EVAL_MONTH, compression)
+            eval_parquet = download_aix_file(eval_month, compression)
             filter_month(
                 eval_parquet,
-                EVAL_MONTH,
+                eval_month,
                 OUTPUT_DIR,
                 con2,
                 min_elo,
                 min_time,
                 require_evals,
+                eval_sample=True,
+                eval_seed=eval_seed,
+                eval_games_per_bin=eval_games_per_bin,
+                eval_min_clock=eval_min_clock,
             )
         except Exception as e:
-            logger.error("Failed to download/filter eval month {}: {}", EVAL_MONTH, e)
+            logger.error("Failed to download/filter eval month {}: {}", eval_month, e)
         con2.close()
     else:
-        logger.info("Eval month {} already present: {}", EVAL_MONTH, eval_output)
+        logger.info("Eval month {} already present: {}", eval_month, eval_output)
+
+    _build_move_vocab_from_filtered(cfg)
+
+
+def _build_move_vocab_from_filtered(cfg: DictConfig) -> None:
+    piece_aware_moves = bool(cfg.get("piece_aware_moves", False))
+    side_prefixed_moves = bool(cfg.get("side_prefixed_moves", True))
+    filtered_files = sorted(OUTPUT_DIR.glob("filtered_*.parquet"))
+    if not filtered_files:
+        logger.warning("No filtered parquet files found; skipping move vocabulary build")
+        return
+
+    filtered_glob = str(OUTPUT_DIR / "filtered_*.parquet")
+    logger.info(
+        "Building move vocabulary from {} filtered shards (piece_aware={}, side_prefixed={})",
+        len(filtered_files),
+        piece_aware_moves,
+        side_prefixed_moves,
+    )
+    con = duckdb.connect()
+    try:
+        artifact = build_move_vocab_from_filtered_parquet(
+            con,
+            filtered_glob,
+            MOVE_VOCAB_PATH,
+            piece_aware_moves=piece_aware_moves,
+            side_prefixed_moves=side_prefixed_moves,
+        )
+    finally:
+        con.close()
+    logger.info(
+        "Wrote {} move keys to {}",
+        artifact["manifest"]["vocab_size"],
+        MOVE_VOCAB_PATH,
+    )
 
 
 if __name__ == "__main__":

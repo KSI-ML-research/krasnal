@@ -19,3 +19,9 @@ require_evals: false
 # Inclusive month range (YYYY-MM)
 start_month: "2017-04"
 end_month: null
+
+# Maia-style eval holdout (same 100-pt Elo bin, time-pressure); applied at filter time.
+eval:
+  month: "2019-12"
+  games_per_bin: 10000
+  min_clock: 30
