@@ -12,6 +12,7 @@ from pathlib import Path
 TARGET_GAMES = 5_000_000
 HALF_TARGET_GAMES = TARGET_GAMES // 2
 MODEL = "medium"
+TRAIN_BATCH_SIZE = 64
 PREPROCESS_REPORT_OVERRIDE = "report.enabled=false"
 
 TOKENIZED_BASE = "data/2_tokenized_ablations"
@@ -46,7 +47,12 @@ class DataVariant:
     train_overrides: tuple[str, ...] = ()
 
 
-BASE_TRAIN = ("model=medium", "train.epochs=1.0", "train.batch_size=128", "seed=42")
+BASE_TRAIN = (
+    f"model={MODEL}",
+    "train.epochs=1.0",
+    f"train.batch_size={TRAIN_BATCH_SIZE}",
+    "seed=42",
+)
 
 TRAIN_VARIANTS = {
     "baseline": TrainVariant("baseline", BASE_TRAIN),
@@ -287,6 +293,7 @@ def main() -> None:
     )
     print(f"Model: {MODEL}")
     print(f"Target games: {TARGET_GAMES}")
+    print(f"Train batch size: {TRAIN_BATCH_SIZE}")
 
     PROJECT_ROOT.joinpath(OUTPUT_DIR).mkdir(exist_ok=True)
 
