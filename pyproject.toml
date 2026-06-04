@@ -47,6 +47,7 @@ line-length = 100
 cache-dir = ".ruff_cache"
 extend-include = ["*.ipynb"]
 exclude = ["lichess-bot"]
+src = ["src", "scripts"]
 
 [tool.ruff.lint]
 # E, F: default errors/flakes

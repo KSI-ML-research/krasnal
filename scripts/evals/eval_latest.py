@@ -1,9 +1,9 @@
 from pathlib import Path
 
 import torch
+import wandb
 from omegaconf import OmegaConf
 
-import wandb
 from krasnal.config import EVAL_DATASET_PATH, MOVE_VOCAB_PATH
 from krasnal.dataset import ChessDataset
 from krasnal.eval.evaluator import chess_evaluator_from_config
