@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import math
 
+import wandb
 from loguru import logger
 from omegaconf import DictConfig
 
-import wandb
 from krasnal.tokens import (
     BLACK_WON_ID,
     COLORED_PIECE_TOKENS,

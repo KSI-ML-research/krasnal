@@ -31,9 +31,9 @@ from typing import Any
 import bulletchess
 import torch
 import torch.nn.functional as F
+import wandb
 from torch.nn.utils.rnn import pad_sequence
 
-import wandb
 from krasnal.config import CLOCK_IGNORE_ID, EVAL_DATASET_PATH, GPTConfig
 from krasnal.dataset import ChessDataset
 from krasnal.eval.parsers import parse_row_to_game_tokens

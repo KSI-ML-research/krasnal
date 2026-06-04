@@ -7,8 +7,8 @@ from typing import Any
 import bulletchess
 import plotly.graph_objects as go
 import torch
-
 import wandb
+
 from krasnal.config import CLOCK_IGNORE_ID
 from krasnal.eval.what_is_on_baseline import WhatIsOnBaselineCounts
 from krasnal.inference import StatelessBatchInferenceSession
