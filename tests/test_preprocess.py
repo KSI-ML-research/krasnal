@@ -68,7 +68,7 @@ def test_build_game_tokens_adds_time_control_after_game_start(monkeypatch):
     cfg = PreprocessConfig(
         seed=1,
         block_size=1024,
-        time_control_enabled=True,
+        time_control_token_enabled=True,
         opponent_material_enabled=True,
         outcome_conditioning_enabled=True,
         include_check_qa=False,
@@ -112,7 +112,7 @@ def test_build_game_tokens_skips_time_control_when_disabled(monkeypatch):
     cfg = PreprocessConfig(
         seed=1,
         block_size=1024,
-        time_control_enabled=False,
+        time_control_token_enabled=False,
         opponent_material_enabled=True,
         outcome_conditioning_enabled=True,
         include_check_qa=False,
@@ -155,7 +155,7 @@ def test_build_game_tokens_skips_elo_when_disabled(monkeypatch):
         seed=1,
         block_size=1024,
         include_elo=False,
-        time_control_enabled=True,
+        time_control_token_enabled=True,
         opponent_material_enabled=True,
         outcome_conditioning_enabled=True,
         include_check_qa=False,
@@ -196,7 +196,7 @@ def test_build_game_tokens_skips_opponent_material_when_disabled(monkeypatch):
         seed=1,
         block_size=1024,
         opponent_material_enabled=False,
-        time_control_enabled=True,
+        time_control_token_enabled=True,
         outcome_conditioning_enabled=True,
         include_check_qa=False,
         check_qa_prob=0.0,
@@ -233,7 +233,7 @@ def test_build_game_tokens_raises_on_missing_clocks():
     cfg = PreprocessConfig(
         seed=1,
         block_size=1024,
-        time_control_enabled=True,
+        time_control_token_enabled=True,
         opponent_material_enabled=False,
         include_check_qa=False,
         check_qa_prob=0.0,
@@ -259,7 +259,7 @@ def test_build_game_tokens_raises_on_mismatched_clock_lengths():
     cfg = PreprocessConfig(
         seed=1,
         block_size=1024,
-        time_control_enabled=True,
+        time_control_token_enabled=True,
         opponent_material_enabled=False,
         include_check_qa=False,
         check_qa_prob=0.0,
@@ -303,7 +303,7 @@ def test_tokenize_batch_counts_invalid_clock_skips(monkeypatch):
     cfg = PreprocessConfig(
         seed=1,
         block_size=1024,
-        time_control_enabled=True,
+        time_control_token_enabled=True,
         opponent_material_enabled=True,
         include_check_qa=False,
         check_qa_prob=0.0,

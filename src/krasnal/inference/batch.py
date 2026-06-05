@@ -54,7 +54,7 @@ class StatelessBatchInferenceSession:
             sequences: List of token sequences. Each sequence is a list of token IDs.
                        The first token is assumed to be the game start token.
             active_clock_sequences: Per-token active clock IDs (same length as each
-                       sequence), or None when the model does not use time conditioning.
+                       sequence), or None when the model does not use clock conditioning.
             opponent_clock_sequences: Per-token opponent clock IDs, or None.
             batch_size: Number of sequences to process at once. Default 256.
 
@@ -65,11 +65,11 @@ class StatelessBatchInferenceSession:
         if not sequences:
             raise ValueError("sequences cannot be empty")
 
-        use_time = self.model.config.use_time_conditioning
-        if use_time and (active_clock_sequences is None or opponent_clock_sequences is None):
+        use_clock = self.model.config.use_clock_encodings
+        if use_clock and (active_clock_sequences is None or opponent_clock_sequences is None):
             raise ValueError(
                 "active_clock_sequences and opponent_clock_sequences are required "
-                "when use_time_conditioning=True"
+                "when use_clock_encodings=True"
             )
 
         block_size = self.model.config.block_size
@@ -107,7 +107,7 @@ class StatelessBatchInferenceSession:
                 padded[j, : len(seq)] = seq_tensor
                 lengths[j] = len(seq)
 
-            if use_time:
+            if use_clock:
                 active_padded = torch.full(
                     (len(chunk), max_len),
                     fill_value=CLOCK_IGNORE_ID,
@@ -131,7 +131,7 @@ class StatelessBatchInferenceSession:
                     )
 
             with torch.inference_mode(), self._amp_ctx:
-                if use_time:
+                if use_clock:
                     logits, _ = self.model(
                         padded,
                         padded,

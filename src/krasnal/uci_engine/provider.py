@@ -181,7 +181,7 @@ class ModelProvider(ChessModelProvider):
         )
 
     def _clock_initial_seconds_for_session(self) -> int | None:
-        if not self.model.config.use_time_conditioning:
+        if not self.model.config.use_clock_encodings:
             return None
         if self._tc_initial_sec is not None:
             return self._tc_initial_sec
@@ -190,7 +190,7 @@ class ModelProvider(ChessModelProvider):
             return int(raw)
         raise ModelProviderError(
             "krasnalInitialSeconds setoption (or time_initial in model config) is required "
-            "when use_time_conditioning is enabled"
+            "when use_clock_encodings is enabled"
         )
 
     def reset_session(self, outcome_token: int) -> None:

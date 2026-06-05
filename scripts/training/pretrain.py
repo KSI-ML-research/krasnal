@@ -61,7 +61,7 @@ def _main(cfg: DictConfig, dist_info: DistributedInfo) -> None:
     piece_aware_moves = bool(cfg.get("piece_aware_moves", False))
     side_prefixed_moves = bool(cfg.get("side_prefixed_moves", True))
     include_elo = bool(cfg.get("include_elo", True))
-    time_control_enabled = bool(cfg.get("time_control", {}).get("enabled", True))
+    time_control_token_enabled = bool(cfg.get("time_control_token", {}).get("enabled", True))
     opponent_material_enabled = bool(cfg.get("opponent_material", {}).get("enabled", False))
     outcome_conditioning_enabled = bool(cfg.get("outcome_conditioning", {}).get("enabled", True))
     load_move_vocab(
@@ -123,8 +123,8 @@ def _main(cfg: DictConfig, dist_info: DistributedInfo) -> None:
             "n_head": mconf.n_head,
             "n_embd": mconf.n_embd,
             "dropout": mconf.dropout,
-            "use_time_conditioning": mconf.use_time_conditioning,
-            "time_conditioning_hidden": mconf.time_conditioning_hidden,
+            "use_clock_encodings": mconf.use_clock_encodings,
+            "clock_encoding_hidden": mconf.clock_encoding_hidden,
             "mlp_activation": mconf.mlp_activation,
             "epochs": tconf.epochs,
             "batch_size": tconf.batch_size,
@@ -133,7 +133,7 @@ def _main(cfg: DictConfig, dist_info: DistributedInfo) -> None:
             "piece_aware_moves": piece_aware_moves,
             "side_prefixed_moves": side_prefixed_moves,
             "include_elo": include_elo,
-            "time_control_enabled": time_control_enabled,
+            "time_control_token_enabled": time_control_token_enabled,
             "opponent_material_enabled": opponent_material_enabled,
             "outcome_conditioning_enabled": outcome_conditioning_enabled,
             "gpt_model_name": cfg.model.get("name", "custom"),

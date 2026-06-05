@@ -11,8 +11,8 @@ def _tiny_config(*, mlp_activation: str = "swiglu") -> GPTConfig:
         n_layer=1,
         n_head=2,
         n_embd=64,
-        use_time_conditioning=False,
-        time_conditioning_hidden=32,
+        use_clock_encodings=False,
+        clock_encoding_hidden=32,
         vocab_size=128,
         mlp_activation=mlp_activation,  # type: ignore[arg-type]
     )

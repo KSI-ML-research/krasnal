@@ -29,7 +29,7 @@ class InferenceSession:
     The game owns the model context. Feeding a move appends the move token and,
     when enabled, its deterministic post-move material annotation.
 
-    When ``use_time_conditioning`` is enabled, clock tensors follow the target
+    When ``use_clock_encodings`` is enabled, clock tensors follow the target
     alignment used during training: input token at global index ``g`` is paired
     with the clock row stored for token ``g + 1``. The leaf step uses clocks from
     ``prepare_go_clocks`` (UCI ``wtime`` / ``btime``).
@@ -64,11 +64,11 @@ class InferenceSession:
         self.new_game(game)
 
     def _init_clock_tracks(self) -> None:
-        enabled = self.model.config.use_time_conditioning
+        enabled = self.model.config.use_clock_encodings
         initial = self._clock_initial_seconds
         if enabled and initial is None:
             raise ValueError(
-                "clock_initial_seconds is required when use_time_conditioning is enabled"
+                "clock_initial_seconds is required when use_clock_encodings is enabled"
             )
         (
             self._per_token_active,
@@ -88,7 +88,7 @@ class InferenceSession:
         """Refresh fixed prefix tokens (Elo / TC) after ``Game`` metadata changes."""
         prefix = self.game.prefix_tokens()
         self.context = prefix + self.context[len(prefix) :]
-        if self.model.config.use_time_conditioning:
+        if self.model.config.use_clock_encodings:
             self._per_token_active, self._per_token_opp = sync_prefix_clock_tracks(
                 self._per_token_active,
                 self._per_token_opp,
@@ -123,12 +123,10 @@ class InferenceSession:
 
     def prepare_go_clocks(self, go: GoParams | None) -> None:
         """Set leaf clock pair from UCI ``go`` (milliseconds) for side to move."""
-        if not self.model.config.use_time_conditioning:
+        if not self.model.config.use_clock_encodings:
             return
         if go is None or go.wtime_ms is None or go.btime_ms is None:
-            raise ValueError(
-                "go must include wtime and btime when use_time_conditioning is enabled"
-            )
+            raise ValueError("go must include wtime and btime when use_clock_encodings is enabled")
         w_s = uci_ms_to_clock_seconds(go.wtime_ms)
         b_s = uci_ms_to_clock_seconds(go.btime_ms)
         if self.game.board.turn == bulletchess.WHITE:
@@ -149,7 +147,7 @@ class InferenceSession:
         clock_opponent: int | None,
     ) -> None:
         self.context.extend(token_ids)
-        if self.model.config.use_time_conditioning:
+        if self.model.config.use_clock_encodings:
             if clock_active is None or clock_opponent is None:
                 raise ValueError("clock_active and clock_opponent are required")
             for _ in token_ids:
@@ -236,7 +234,7 @@ class InferenceSession:
         for token_batch in token_batches:
             x = torch.tensor([token_batch], dtype=torch.long, device=self.device)
             with torch.inference_mode(), self._amp_ctx:
-                if not self.model.config.use_time_conditioning:
+                if not self.model.config.use_clock_encodings:
                     logits, _ = self.model(x, past_kv=self.kv_cache)
                     processed += len(token_batch)
                     continue

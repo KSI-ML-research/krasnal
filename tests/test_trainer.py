@@ -95,8 +95,8 @@ def test_muon_lr_schedule_uses_separate_base_lr():
         n_layer=2,
         n_head=4,
         n_embd=64,
-        use_time_conditioning=False,
-        time_conditioning_hidden=32,
+        use_clock_encodings=False,
+        clock_encoding_hidden=32,
         vocab_size=100,
     )
     model = GPT(cfg)

@@ -120,8 +120,8 @@ def _load_model_and_config(
             n_layer=4,
             n_head=4,
             n_embd=256,
-            use_time_conditioning=True,
-            time_conditioning_hidden=64,
+            use_clock_encodings=True,
+            clock_encoding_hidden=64,
         )
         model = GPT(cfg).to(device).eval()
         return model, cfg
@@ -131,10 +131,9 @@ def _load_model_and_config(
     raw = read_model_config_json(artifact_dir / "config.json")
     _install_move_vocab(artifact_dir=artifact_dir, raw_config=raw)
     cfg = gpt_config_from_artifact_dict(raw)
-    if not cfg.use_time_conditioning:
+    if not cfg.use_clock_encodings:
         print(
-            "This checkpoint has use_time_conditioning=False; "
-            "the I/O clock probe is not applicable.",
+            "This checkpoint has use_clock_encodings=False; the I/O clock probe is not applicable.",
             file=sys.stderr,
         )
         sys.exit(2)
@@ -279,7 +278,7 @@ def _run_eval_parquet_probe(
     n_grid = len(_CLOCK_GRID) ** 2
     print(
         f"eval rows={len(df)} from {path} (seed={seed}, ply_frac={ply_frac}) "
-        f"device={device} use_time_conditioning={model.config.use_time_conditioning} "
+        f"device={device} use_clock_encodings={model.config.use_clock_encodings} "
         f"clock_grid={list(_CLOCK_GRID)} ({n_grid} pairs vs 600s baseline; baseline not on grid)",
     )
 
@@ -351,7 +350,7 @@ def main() -> None:
     p.add_argument(
         "--mock",
         action="store_true",
-        help="Random-init small GPT with time conditioning (no checkpoint).",
+        help="Random-init small GPT with clock conditioning (no checkpoint).",
     )
     p.add_argument(
         "--eval-parquet",

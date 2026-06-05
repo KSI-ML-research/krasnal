@@ -237,7 +237,7 @@ def _extract_hidden_states(
     handles.append(model.transformer.ln_f.register_forward_hook(capture("final")))
 
     amp_ctx = create_amp_context(device)
-    use_time = model.config.use_time_conditioning
+    use_clock = model.config.use_clock_encodings
     try:
         for start in range(0, len(examples), batch_size):
             batch = examples[start : start + batch_size]
@@ -249,7 +249,7 @@ def _extract_hidden_states(
             last = lengths - 1
 
             kwargs = {}
-            if use_time:
+            if use_clock:
                 active_rows = [torch.tensor(ex.active_clock_ids, dtype=torch.long) for ex in batch]
                 opponent_rows = [
                     torch.tensor(ex.opponent_clock_ids, dtype=torch.long) for ex in batch

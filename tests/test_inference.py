@@ -38,8 +38,8 @@ def test_inference_session_feed_and_get_probs():
         n_layer=2,
         n_head=2,
         n_embd=64,
-        use_time_conditioning=False,
-        time_conditioning_hidden=32,
+        use_clock_encodings=False,
+        clock_encoding_hidden=32,
     )
     model = GPT(config).to(device)
     session = InferenceSession(model, device, outcome_token=WHITE_WON_ID)
@@ -65,8 +65,8 @@ def test_inference_session_single_step():
         n_layer=2,
         n_head=2,
         n_embd=64,
-        use_time_conditioning=False,
-        time_conditioning_hidden=32,
+        use_clock_encodings=False,
+        clock_encoding_hidden=32,
     )
     model = GPT(config).to(device)
     session = InferenceSession(model, device, outcome_token=WHITE_WON_ID)
@@ -104,8 +104,8 @@ def test_sync_prefix_tokens_from_game_preserves_moves_without_outcome_conditioni
         n_layer=2,
         n_head=2,
         n_embd=64,
-        use_time_conditioning=False,
-        time_conditioning_hidden=32,
+        use_clock_encodings=False,
+        clock_encoding_hidden=32,
     )
     model = GPT(config).to(device)
     session = InferenceSession(model, device, outcome_token=DRAW_ID)
@@ -162,8 +162,8 @@ def test_stateless_batch_inference_session_returns_probs():
         n_layer=2,
         n_head=2,
         n_embd=64,
-        use_time_conditioning=False,
-        time_conditioning_hidden=32,
+        use_clock_encodings=False,
+        clock_encoding_hidden=32,
     )
     model = GPT(config).to(device)
     batch = StatelessBatchInferenceSession(model, device)
@@ -186,8 +186,8 @@ def test_model_time_conditioning_forward_accepts_clock_tensors():
         n_layer=2,
         n_head=2,
         n_embd=64,
-        use_time_conditioning=True,
-        time_conditioning_hidden=32,
+        use_clock_encodings=True,
+        clock_encoding_hidden=32,
     )
     model = GPT(config).to(device)
     idx = torch.tensor([[0, WHITE_WON_ID, MOVE_TO_ID[WHITE_PREFIX + "e2e4"]]], dtype=torch.long)
@@ -258,8 +258,8 @@ def test_prepare_go_clocks_clears_kv_cache():
         n_layer=2,
         n_head=2,
         n_embd=64,
-        use_time_conditioning=True,
-        time_conditioning_hidden=32,
+        use_clock_encodings=True,
+        clock_encoding_hidden=32,
     )
     model = GPT(config).to(device).eval()
     session = InferenceSession(
@@ -283,8 +283,8 @@ def test_prepare_go_clocks_requires_wtime_and_btime():
         n_layer=2,
         n_head=2,
         n_embd=64,
-        use_time_conditioning=True,
-        time_conditioning_hidden=32,
+        use_clock_encodings=True,
+        clock_encoding_hidden=32,
     )
     model = GPT(config).to(device).eval()
     session = InferenceSession(
@@ -304,8 +304,8 @@ def _build_test_model(device: torch.device) -> GPT:
         n_layer=2,
         n_head=2,
         n_embd=64,
-        use_time_conditioning=False,
-        time_conditioning_hidden=32,
+        use_clock_encodings=False,
+        clock_encoding_hidden=32,
     )
     model = GPT(config).to(device)
     model.eval()
