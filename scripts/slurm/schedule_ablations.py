@@ -64,8 +64,8 @@ BASE_TRAIN = (
 
 TRAIN_VARIANTS = {
     "baseline": TrainVariant("baseline", BASE_TRAIN),
-    "no_time_model": TrainVariant(
-        "no_time_model",
+    "no_clock_conditioning": TrainVariant(
+        "no_clock_conditioning",
         (*BASE_TRAIN, "model.use_time_conditioning=false"),
     ),
     "gelu": TrainVariant("gelu", (*BASE_TRAIN, "model.mlp_activation=gelu")),
@@ -77,10 +77,10 @@ DATA_VARIANTS = (
     DataVariant(
         name=f"baseline_{TARGET_GAMES}",
         preprocess_overrides=(f"target_games={TARGET_GAMES}",),
-        train_variants=("baseline", "no_time_model", "gelu", "relu2"),
+        train_variants=("baseline", "no_clock_conditioning", "gelu", "relu2"),
     ),
     DataVariant(
-        name=f"no_tc_token_{TARGET_GAMES}",
+        name=f"no_time_control_token_{TARGET_GAMES}",
         preprocess_overrides=(f"target_games={TARGET_GAMES}", "time_control.enabled=false"),
         train_variants=("baseline",),
         train_overrides=("time_control.enabled=false",),
