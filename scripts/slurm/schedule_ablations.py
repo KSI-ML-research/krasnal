@@ -7,6 +7,7 @@ import shlex
 import subprocess
 from argparse import ArgumentParser
 from dataclasses import dataclass
+from itertools import count
 from pathlib import Path
 
 TARGET_GAMES = 10_000_000
@@ -19,6 +20,7 @@ TOKENIZED_BASE = "data/2_tokenized_ablations"
 ARTIFACT_BASE = "artifacts/pretrain"
 DIAGNOSTIC_OUTPUT_DIR = "artifacts/diagnostics"
 OUTPUT_DIR = "output"
+DRY_RUN_JOB_IDS = count(10_000)
 
 DOWNLOAD_PARTITION = "student-cpu"
 DOWNLOAD_TIME = "04:00:00"
@@ -64,9 +66,9 @@ BASE_TRAIN = (
 
 TRAIN_VARIANTS = {
     "baseline": TrainVariant("baseline", BASE_TRAIN),
-    "no_clock_conditioning": TrainVariant(
-        "no_clock_conditioning",
-        (*BASE_TRAIN, "model.use_time_conditioning=false"),
+    "no_clock_encodings": TrainVariant(
+        "no_clock_encodings",
+        (*BASE_TRAIN, "model.use_clock_encodings=false"),
     ),
     "gelu": TrainVariant("gelu", (*BASE_TRAIN, "model.mlp_activation=gelu")),
     "relu2": TrainVariant("relu2", (*BASE_TRAIN, "model.mlp_activation=relu2")),
@@ -77,13 +79,13 @@ DATA_VARIANTS = (
     DataVariant(
         name=f"baseline_{TARGET_GAMES}",
         preprocess_overrides=(f"target_games={TARGET_GAMES}",),
-        train_variants=("baseline", "no_clock_conditioning", "gelu", "relu2"),
+        train_variants=("baseline", "no_clock_encodings", "gelu", "relu2"),
     ),
     DataVariant(
         name=f"no_time_control_token_{TARGET_GAMES}",
-        preprocess_overrides=(f"target_games={TARGET_GAMES}", "time_control.enabled=false"),
+        preprocess_overrides=(f"target_games={TARGET_GAMES}", "time_control_token.enabled=false"),
         train_variants=("baseline",),
-        train_overrides=("time_control.enabled=false",),
+        train_overrides=("time_control_token.enabled=false",),
     ),
     DataVariant(
         name=f"no_outcome_{TARGET_GAMES}",
@@ -151,7 +153,7 @@ def export_arg(env: dict[str, str]) -> str:
 def run_command(command: list[str], *, submit: bool) -> str:
     print(shlex.join(command))
     if not submit:
-        return "DRY_RUN_JOB"
+        return str(next(DRY_RUN_JOB_IDS))
     result = subprocess.run(command, check=True, text=True, capture_output=True)
     job_id = result.stdout.strip().splitlines()[-1]
     print(f"  -> {job_id}")

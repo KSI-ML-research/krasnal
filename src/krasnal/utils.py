@@ -155,8 +155,8 @@ REQUIRED_CONFIG_KEYS = {
     "n_embd",
     "vocab_size",
     "dropout",
-    "use_time_conditioning",
-    "time_conditioning_hidden",
+    "use_clock_encodings",
+    "clock_encoding_hidden",
     "mlp_activation",
 }
 
@@ -202,7 +202,7 @@ def gpt_config_from_artifact_dict(config: dict[str, Any]) -> GPTConfig:
         n_embd=int(config["n_embd"]),
         vocab_size=int(config["vocab_size"]),
         dropout=float(config["dropout"]),
-        use_time_conditioning=bool(config["use_time_conditioning"]),
-        time_conditioning_hidden=int(config["time_conditioning_hidden"]),
+        use_clock_encodings=bool(config["use_clock_encodings"]),
+        clock_encoding_hidden=int(config["clock_encoding_hidden"]),
         mlp_activation=str(config["mlp_activation"]),
     )

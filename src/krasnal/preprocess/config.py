@@ -19,7 +19,7 @@ class PreprocessConfig:
     check_qa_prob: float = 0.5
     include_what_is_on_qa: bool = False
     what_is_on_prob: float = 0.0
-    time_control_enabled: bool = True
+    time_control_token_enabled: bool = True
     opponent_material_enabled: bool = False
     outcome_conditioning_enabled: bool = True
     move_vocab_path: Path | None = None

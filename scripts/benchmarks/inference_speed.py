@@ -43,13 +43,13 @@ def _print_results(move_times: list[float], plies_completed: int) -> None:
     print(f"  Throughput: {throughput:.2f} moves/s")
 
 
-def _configure_time_conditioning(
+def _configure_clock_encodings(
     provider: ModelProvider,
     *,
     clock_initial_seconds: int,
     clock_increment_seconds: int,
 ) -> GoParams:
-    """Mirror UCI setoption + go clocks for time-conditioned models."""
+    """Mirror UCI setoption + go clocks for models with clock encodings."""
     provider.apply_setoption("krasnalInitialSeconds", str(clock_initial_seconds))
     provider.apply_setoption("krasnalIncrementSeconds", str(clock_increment_seconds))
     clock_ms = clock_initial_seconds * 1000
@@ -120,7 +120,7 @@ def main() -> None:
         "--clock-initial-seconds",
         type=int,
         default=180,
-        help="Initial clock (krasnalInitialSeconds) when use_time_conditioning is enabled",
+        help="Initial clock (krasnalInitialSeconds) when use_clock_encodings is enabled",
     )
     parser.add_argument(
         "--clock-increment-seconds",
@@ -152,8 +152,8 @@ def main() -> None:
     print(f"Device: {args.device}")
     print(f"Games: {args.num_games}, Moves/game: {args.moves_per_game}")
     go_params: GoParams | None = None
-    if cfg.use_time_conditioning:
-        go_params = _configure_time_conditioning(
+    if cfg.use_clock_encodings:
+        go_params = _configure_clock_encodings(
             provider,
             clock_initial_seconds=args.clock_initial_seconds,
             clock_increment_seconds=args.clock_increment_seconds,

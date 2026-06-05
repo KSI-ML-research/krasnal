@@ -110,8 +110,8 @@ def main(cfg: DictConfig) -> None:
     build_what_is_on_baseline = bool(baseline_cfg.get("enabled", True))
     what_is_on_baseline_max_games = int(baseline_cfg.get("max_games", 100_000))
 
-    time_control_cfg = cfg.get("time_control", {})
-    time_control_enabled = bool(time_control_cfg.get("enabled", True))
+    time_control_token_cfg = cfg.get("time_control_token", {})
+    time_control_token_enabled = bool(time_control_token_cfg.get("enabled", True))
     opponent_material_cfg = cfg.get("opponent_material", {})
     opponent_material_enabled = bool(opponent_material_cfg.get("enabled", False))
     outcome_conditioning_cfg = cfg.get("outcome_conditioning", {})
@@ -131,7 +131,7 @@ def main(cfg: DictConfig) -> None:
         check_qa_prob=check_qa_prob,
         include_what_is_on_qa=include_what_is_on_qa,
         what_is_on_prob=what_is_on_prob,
-        time_control_enabled=time_control_enabled,
+        time_control_token_enabled=time_control_token_enabled,
         opponent_material_enabled=opponent_material_enabled,
         outcome_conditioning_enabled=outcome_conditioning_enabled,
         move_vocab_path=MOVE_VOCAB_PATH,

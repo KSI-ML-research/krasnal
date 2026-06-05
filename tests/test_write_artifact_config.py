@@ -20,8 +20,8 @@ def test_write_artifact_config_json_roundtrip(tmp_path):
         "n_embd": 64,
         "vocab_size": 9000,
         "dropout": 0.0,
-        "use_time_conditioning": False,
-        "time_conditioning_hidden": 1,
+        "use_clock_encodings": False,
+        "clock_encoding_hidden": 1,
         "mlp_activation": "swiglu",
         "extra_metadata": True,
     }

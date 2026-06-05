@@ -262,9 +262,9 @@ def _require_clock_tensors_if_time_model(
     opponent: torch.Tensor | None,
 ) -> None:
     cfg = getattr(unwrap_model(model), "config", None)
-    if cfg is not None and cfg.use_time_conditioning and (active is None or opponent is None):
+    if cfg is not None and cfg.use_clock_encodings and (active is None or opponent is None):
         raise ValueError(
-            "use_time_conditioning is True but this batch has no clock tensors. "
+            "use_clock_encodings is True but this batch has no clock tensors. "
             "Use a dataset with active_clock_ids/opponent_clock_ids columns "
             "and the standard collate."
         )

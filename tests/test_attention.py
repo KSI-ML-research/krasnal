@@ -10,8 +10,8 @@ def _tiny_config() -> GPTConfig:
         n_layer=1,
         n_head=2,
         n_embd=32,
-        use_time_conditioning=False,
-        time_conditioning_hidden=8,
+        use_clock_encodings=False,
+        clock_encoding_hidden=8,
         vocab_size=64,
         dropout=0.0,
     )

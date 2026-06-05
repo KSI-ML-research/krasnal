@@ -7,7 +7,7 @@ Differences from the original NanoGPT implementation:
 - Replaced absolute positional embeddings with RoPE, which is better at extrapolation.
 - Replaced ReLU activation with GeLU which is smoother and performs better in practice.
 - Added KV Cache (Kyryllo Goroshenko) to speed up long context inference.
-- Conditional log-clock TimeConditioning (optional)
+- Conditional log-clock encoder (optional)
 """
 
 from __future__ import annotations
@@ -242,14 +242,14 @@ class Block(nn.Module):
         return x
 
 
-class TimeConditioning(nn.Module):
+class ClockEncoder(nn.Module):
     """Encodes active and opponent clocks into continuous embeddings."""
 
     def __init__(self, config: GPTConfig) -> None:
         super().__init__()
-        h = int(config.time_conditioning_hidden)
+        h = int(config.clock_encoding_hidden)
         assert 1 <= h <= config.n_embd, (
-            f"time_conditioning_hidden must satisfy 1 <= h <= n_embd ({config.n_embd}), got {h}"
+            f"clock_encoding_hidden must satisfy 1 <= h <= n_embd ({config.n_embd}), got {h}"
         )
         self.mlp = nn.Sequential(
             nn.Linear(2, h),
@@ -314,9 +314,9 @@ class GPT(nn.Module):
         )
         self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
 
-        # Optional clock conditioning projection
-        if config.use_time_conditioning:
-            self.time_conditioning = TimeConditioning(config)
+        # Optional clock encoding projection
+        if config.use_clock_encodings:
+            self.clock_encoder = ClockEncoder(config)
 
         # Weight tying (https://paperswithcode.com/method/weight-tying)
         self.transformer.wte.weight = self.lm_head.weight
@@ -352,7 +352,7 @@ class GPT(nn.Module):
         opponent_clock_ids: torch.Tensor | None = None,
         return_all_logits: bool = False,
     ) -> tuple[torch.Tensor, torch.Tensor | None]:
-        """Transformer forward pass with optional targets and time conditioning."""
+        """Transformer forward pass with optional targets and clock encodings."""
         assert len(idx.shape) == 2, "idx must be a 2D tensor of shape (B, T)"
         _b, t = idx.size()
         assert t <= self.config.block_size, (
@@ -369,14 +369,14 @@ class GPT(nn.Module):
         # Base token embeddings
         x = self.transformer.wte(idx)  # (b, t, n_embd)
 
-        if self.config.use_time_conditioning:
+        if self.config.use_clock_encodings:
             if active_clock_ids is None or opponent_clock_ids is None:
                 raise ValueError(
                     "active_clock_ids and opponent_clock_ids are required when "
-                    "use_time_conditioning is True "
+                    "use_clock_encodings is True "
                     "(pass CLOCK_IGNORE_ID values for unknown tokens)."
                 )
-            x = x + self.time_conditioning(active_clock_ids, opponent_clock_ids, idx)
+            x = x + self.clock_encoder(active_clock_ids, opponent_clock_ids, idx)
 
         x = self.transformer.drop(x)
 

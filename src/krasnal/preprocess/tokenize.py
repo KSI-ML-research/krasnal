@@ -320,7 +320,7 @@ def _build_game_tokens(
     prefix_tokens = [
         GAME_START_ID,
     ]
-    if cfg.time_control_enabled:
+    if cfg.time_control_token_enabled:
         prefix_tokens.append(get_time_control_bucket(time_initial, time_increment))
     if cfg.outcome_conditioning_enabled:
         prefix_tokens.append(result_to_token_id(result))

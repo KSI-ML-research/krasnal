@@ -14,9 +14,7 @@ qa:
       enabled: true
       max_games: 100000
 
-
-
-time_control:
+time_control_token:
   enabled: true
 
 outcome_conditioning:

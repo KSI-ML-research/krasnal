@@ -109,12 +109,12 @@ def _legal_info(board: bulletchess.Board) -> list[dict]:
 def _infer_variants(
     *,
     session: StatelessBatchInferenceSession,
-    use_time: bool,
+    use_clock: bool,
     games: list[Game],
     variant_info: list[dict],
     legal_info: list[dict],
 ) -> list[dict]:
-    if use_time:
+    if use_clock:
         logits = session.get_legal_logits_batch(
             games,
             active_clock_sequences=_clock_sequences(games),
@@ -145,7 +145,7 @@ def _position_payload(position: dict, legal_info: list[dict], variants: list[dic
     }
 
 
-def _elo_payload(session: StatelessBatchInferenceSession, use_time: bool) -> dict:
+def _elo_payload(session: StatelessBatchInferenceSession, use_clock: bool) -> dict:
     board = _board_from_moves(ELO_POSITION["moves"])
     legal_info = _legal_info(board)
     games: list[Game] = []
@@ -165,7 +165,7 @@ def _elo_payload(session: StatelessBatchInferenceSession, use_time: bool) -> dic
         )
     variants = _infer_variants(
         session=session,
-        use_time=use_time,
+        use_clock=use_clock,
         games=games,
         variant_info=variant_info,
         legal_info=legal_info,
@@ -173,7 +173,7 @@ def _elo_payload(session: StatelessBatchInferenceSession, use_time: bool) -> dic
     return _position_payload(ELO_POSITION, legal_info, variants)
 
 
-def _result_payload(session: StatelessBatchInferenceSession, use_time: bool) -> dict:
+def _result_payload(session: StatelessBatchInferenceSession, use_clock: bool) -> dict:
     board = _board_from_moves(RESULT_POSITION["moves"])
     legal_info = _legal_info(board)
     games: list[Game] = []
@@ -200,7 +200,7 @@ def _result_payload(session: StatelessBatchInferenceSession, use_time: bool) -> 
         )
     variants = _infer_variants(
         session=session,
-        use_time=use_time,
+        use_clock=use_clock,
         games=games,
         variant_info=variant_info,
         legal_info=legal_info,
@@ -208,7 +208,7 @@ def _result_payload(session: StatelessBatchInferenceSession, use_time: bool) -> 
     return _position_payload(RESULT_POSITION, legal_info, variants)
 
 
-def _time_payloads(session: StatelessBatchInferenceSession, use_time: bool) -> list[dict]:
+def _time_payloads(session: StatelessBatchInferenceSession, use_clock: bool) -> list[dict]:
     payloads = []
     for position in TIME_POSITIONS:
         board = _board_from_moves(position["moves"])
@@ -236,7 +236,7 @@ def _time_payloads(session: StatelessBatchInferenceSession, use_time: bool) -> l
             )
         variants = _infer_variants(
             session=session,
-            use_time=use_time,
+            use_clock=use_clock,
             games=games,
             variant_info=variant_info,
             legal_info=legal_info,
@@ -354,10 +354,10 @@ def main() -> None:
     device = resolve_runtime_device() if args.device == "auto" else torch.device(args.device)
     model = load_model(str(artifact_dir / "model.pt"), device, gpt_config)
     session = StatelessBatchInferenceSession(model, device)
-    use_time = gpt_config.use_time_conditioning
+    use_clock = gpt_config.use_clock_encodings
 
-    positions = [_elo_payload(session, use_time), _result_payload(session, use_time)]
-    time_positions = _time_payloads(session, use_time)
+    positions = [_elo_payload(session, use_clock), _result_payload(session, use_clock)]
+    time_positions = _time_payloads(session, use_clock)
     output = {"positions": [*positions, *time_positions], "time_control_candidates": time_positions}
 
     print(f"Artifact: {artifact_dir}")

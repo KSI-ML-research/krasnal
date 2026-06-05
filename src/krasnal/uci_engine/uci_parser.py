@@ -118,7 +118,7 @@ class UCIParser:
     ``uciok``, so the subprocess stays alive for python-chess during long imports.
 
     Clocks: lichess-bot sends ``go wtime … btime …`` in milliseconds; these are
-    forwarded to the model when ``use_time_conditioning`` is enabled.
+    forwarded to the model when ``use_clock_encodings`` is enabled.
 
     Optional ``setoption`` names (declare them in the ``uci`` handshake):
 

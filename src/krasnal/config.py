@@ -23,10 +23,10 @@ class GPTConfig:
     n_head: int
     n_embd: int
     # When True, ``GPT.forward`` requires ``active_clock_ids`` / ``opponent_clock_ids``
-    # shaped like ``idx``; clock residual uses ``time_mlp`` only (no linear-only path).
-    use_time_conditioning: bool
+    # shaped like ``idx``; clock residual uses the clock MLP only.
+    use_clock_encodings: bool
     # Hidden width of the 2 -> h -> n_embd GELU MLP; must satisfy 1 <= h <= n_embd when enabled.
-    time_conditioning_hidden: int
+    clock_encoding_hidden: int
     vocab_size: int | None = None
     dropout: float = 0.0
     # Transformer block FFN: ``gelu`` / ``relu2`` (4*d MLP) or ``swiglu`` (gated, ~matched params).
