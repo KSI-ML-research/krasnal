@@ -1,5 +1,7 @@
 import math
+import os
 from datetime import datetime
+from pathlib import Path
 
 import hydra
 import torch
@@ -104,8 +106,12 @@ def _main(cfg: DictConfig, dist_info: DistributedInfo) -> None:
     wandb_config: dict = {}
 
     if dist_info.is_master:
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-        artifact_dir = ARTIFACTS_DIR / "pretrain" / timestamp
+        artifact_dir_override = os.environ.get("KRASNAL_ARTIFACT_DIR")
+        if artifact_dir_override:
+            artifact_dir = Path(artifact_dir_override)
+        else:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+            artifact_dir = ARTIFACTS_DIR / "pretrain" / timestamp
         artifact_dir.mkdir(parents=True, exist_ok=True)
         ablation_metadata = ablation_metadata_from_env()
         wandb_config = {

@@ -16,6 +16,8 @@ TRAIN_BATCH_SIZE = 64
 PREPROCESS_REPORT_OVERRIDE = "report.enabled=false"
 
 TOKENIZED_BASE = "data/2_tokenized_ablations"
+ARTIFACT_BASE = "artifacts/pretrain"
+DIAGNOSTIC_OUTPUT_DIR = "artifacts/diagnostics"
 OUTPUT_DIR = "output"
 
 DOWNLOAD_PARTITION = "student-cpu"
@@ -31,6 +33,12 @@ TRAIN_TIME = "08:00:00"
 TRAIN_CPUS = 24
 TRAIN_GPUS = 1
 TRAIN_WORKERS = 4
+
+DIAGNOSTIC_PARTITION = "student-nvidia"
+DIAGNOSTIC_TIME = "04:00:00"
+DIAGNOSTIC_CPUS = 12
+DIAGNOSTIC_GPUS = 1
+DIAGNOSTIC_WANDB = True
 
 
 @dataclass(frozen=True)
@@ -250,7 +258,7 @@ def submit_train(
     preprocess_job_id: str,
     *,
     submit: bool,
-) -> None:
+) -> str:
     run_name = f"{data.name}-{train.name}"
     tokenized_dir = f"{TOKENIZED_BASE}/{slug(data.name)}"
     command = [
@@ -281,9 +289,57 @@ def submit_train(
                 "RUN_OVERRIDES": " ".join((*train.overrides, *data.train_overrides)),
                 "RUN_NPROC": str(TRAIN_GPUS),
                 "RUN_NUM_WORKERS": str(TRAIN_WORKERS),
+                "KRASNAL_ARTIFACT_DIR": f"{ARTIFACT_BASE}/{slug(run_name)}",
             }
         ),
         "scripts/slurm/train_ablation.sh",
+    ]
+    return run_command(command, submit=submit)
+
+
+def submit_diagnostic(
+    *,
+    name: str,
+    script: str,
+    artifact_run_names: tuple[str, ...],
+    eval_data_variant: str,
+    dependency_job_ids: tuple[str, ...],
+    submit: bool,
+) -> None:
+    command = [
+        "sbatch",
+        "--parsable",
+        "--job-name",
+        f"krasnal-probe-{slug(name)}",
+        "--output",
+        f"{OUTPUT_DIR}/%j_probe_{slug(name)}.out",
+        "--error",
+        f"{OUTPUT_DIR}/%j_probe_{slug(name)}.err",
+        "--gres",
+        f"gpu:{DIAGNOSTIC_GPUS}",
+        "--cpus-per-task",
+        str(DIAGNOSTIC_CPUS),
+        "--partition",
+        DIAGNOSTIC_PARTITION,
+        "--time",
+        DIAGNOSTIC_TIME,
+        "--dependency",
+        "afterok:" + ":".join(dependency_job_ids),
+        "--export",
+        export_arg(
+            {
+                "PROBE_SCRIPT": script,
+                "PROBE_ARTIFACT_DIRS": " ".join(
+                    f"{ARTIFACT_BASE}/{slug(run_name)}" for run_name in artifact_run_names
+                ),
+                "PROBE_EVAL_PARQUET": f"{TOKENIZED_BASE}/{slug(eval_data_variant)}/eval.parquet",
+                "PROBE_JSON_OUT": f"{DIAGNOSTIC_OUTPUT_DIR}/{slug(name)}.json",
+                "PROBE_WANDB": str(DIAGNOSTIC_WANDB).lower(),
+                "PROBE_WANDB_NAME": name,
+                "PROBE_WANDB_GROUP": f"krasnal-{MODEL}-diagnostics",
+            }
+        ),
+        "scripts/slurm/diagnostic_probe.sh",
     ]
     run_command(command, submit=submit)
 
@@ -296,10 +352,12 @@ def main() -> None:
     mode = "SUBMIT" if args.submit else "DRY RUN"
     download_count = len(DATA_VARIANTS)
     train_count = sum(len(data.train_variants) for data in DATA_VARIANTS)
+    diagnostic_count = 2
 
     print(
         f"{mode}: {download_count} download/vocab jobs, "
-        f"{len(DATA_VARIANTS)} preprocess jobs, {train_count} train jobs"
+        f"{len(DATA_VARIANTS)} preprocess jobs, {train_count} train jobs, "
+        f"{diagnostic_count} diagnostic jobs"
     )
     print(f"Model: {MODEL}")
     print(f"Target games: {TARGET_GAMES}")
@@ -308,6 +366,7 @@ def main() -> None:
     PROJECT_ROOT.joinpath(OUTPUT_DIR).mkdir(exist_ok=True)
 
     previous_download_job_id: str | None = None
+    train_job_ids: dict[str, str] = {}
     for data in DATA_VARIANTS:
         print(f"\nData variant: {data.name}")
         tokenized_dir = f"{TOKENIZED_BASE}/{slug(data.name)}"
@@ -325,7 +384,35 @@ def main() -> None:
             submit=args.submit,
         )
         for train_name in data.train_variants:
-            submit_train(data, TRAIN_VARIANTS[train_name], preprocess_job_id, submit=args.submit)
+            run_name = f"{data.name}-{train_name}"
+            train_job_ids[run_name] = submit_train(
+                data,
+                TRAIN_VARIANTS[train_name],
+                preprocess_job_id,
+                submit=args.submit,
+            )
+
+    baseline_run = f"baseline_{TARGET_GAMES}-baseline"
+    no_is_check_run = f"no_is_check_{TARGET_GAMES}-baseline"
+    no_what_is_on_run = f"no_what_is_on_{TARGET_GAMES}-baseline"
+
+    print("\nDiagnostic probes")
+    submit_diagnostic(
+        name=f"check_state_no_is_check_vs_baseline_{TARGET_GAMES}",
+        script="scripts/diagnostics/check_state_probe.py",
+        artifact_run_names=(no_is_check_run, baseline_run),
+        eval_data_variant=f"no_is_check_{TARGET_GAMES}",
+        dependency_job_ids=(train_job_ids[no_is_check_run], train_job_ids[baseline_run]),
+        submit=args.submit,
+    )
+    submit_diagnostic(
+        name=f"board_state_no_what_is_on_vs_baseline_{TARGET_GAMES}",
+        script="scripts/diagnostics/board_state_probe.py",
+        artifact_run_names=(no_what_is_on_run, baseline_run),
+        eval_data_variant=f"no_what_is_on_{TARGET_GAMES}",
+        dependency_job_ids=(train_job_ids[no_what_is_on_run], train_job_ids[baseline_run]),
+        submit=args.submit,
+    )
 
     if not args.submit:
         print("\nDry run only. Pass --submit to call sbatch.")
