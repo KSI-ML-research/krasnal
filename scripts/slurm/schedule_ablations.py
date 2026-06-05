@@ -102,6 +102,16 @@ DATA_VARIANTS = (
         train_overrides=("side_prefixed_moves=false",),
     ),
     DataVariant(
+        name=f"no_is_check_{TARGET_GAMES}",
+        preprocess_overrides=(f"target_games={TARGET_GAMES}", "qa.check.enabled=false"),
+        train_variants=("baseline",),
+    ),
+    DataVariant(
+        name=f"no_what_is_on_{TARGET_GAMES}",
+        preprocess_overrides=(f"target_games={TARGET_GAMES}", "qa.what_is_on.enabled=false"),
+        train_variants=("baseline",),
+    ),
+    DataVariant(
         name=f"no_opp_material_{TARGET_GAMES}",
         preprocess_overrides=(f"target_games={TARGET_GAMES}", "opponent_material.enabled=false"),
         train_variants=("baseline",),
