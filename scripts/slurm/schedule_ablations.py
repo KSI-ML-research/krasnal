@@ -9,8 +9,8 @@ from argparse import ArgumentParser
 from dataclasses import dataclass
 from pathlib import Path
 
-TARGET_GAMES = 5_000_000
-HALF_TARGET_GAMES = TARGET_GAMES // 2
+TARGET_GAMES = 10_000_000
+DOUBLE_TARGET_GAMES = TARGET_GAMES * 2
 MODEL = "medium"
 TRAIN_BATCH_SIZE = 64
 PREPROCESS_REPORT_OVERRIDE = "report.enabled=false"
@@ -62,14 +62,14 @@ TRAIN_VARIANTS = {
     ),
     "gelu": TrainVariant("gelu", (*BASE_TRAIN, "model.mlp_activation=gelu")),
     "relu2": TrainVariant("relu2", (*BASE_TRAIN, "model.mlp_activation=relu2")),
-    "muon": TrainVariant("muon", (*BASE_TRAIN, "train.optimizer=muon")),
+    # "muon": TrainVariant("muon", (*BASE_TRAIN, "train.optimizer=muon")),
 }
 
 DATA_VARIANTS = (
     DataVariant(
         name=f"baseline_{TARGET_GAMES}",
         preprocess_overrides=(f"target_games={TARGET_GAMES}",),
-        train_variants=("baseline", "no_time_model", "gelu", "relu2", "muon"),
+        train_variants=("baseline", "no_time_model", "gelu", "relu2"),
     ),
     DataVariant(
         name=f"no_tc_token_{TARGET_GAMES}",
@@ -102,19 +102,19 @@ DATA_VARIANTS = (
         train_overrides=("side_prefixed_moves=false",),
     ),
     DataVariant(
-        name=f"opp_material_{TARGET_GAMES}",
-        preprocess_overrides=(f"target_games={TARGET_GAMES}", "opponent_material.enabled=true"),
+        name=f"no_opp_material_{TARGET_GAMES}",
+        preprocess_overrides=(f"target_games={TARGET_GAMES}", "opponent_material.enabled=false"),
         train_variants=("baseline",),
-        train_overrides=("opponent_material.enabled=true",),
+        train_overrides=("opponent_material.enabled=false",),
     ),
     DataVariant(
-        name=f"opp_material_{HALF_TARGET_GAMES}",
+        name=f"no_opp_material_{DOUBLE_TARGET_GAMES}",
         preprocess_overrides=(
-            f"target_games={HALF_TARGET_GAMES}",
-            "opponent_material.enabled=true",
+            f"target_games={DOUBLE_TARGET_GAMES}",
+            "opponent_material.enabled=false",
         ),
         train_variants=("baseline",),
-        train_overrides=("opponent_material.enabled=true",),
+        train_overrides=("opponent_material.enabled=false",),
     ),
 )
 
