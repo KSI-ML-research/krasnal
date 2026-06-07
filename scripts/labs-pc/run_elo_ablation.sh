@@ -86,9 +86,12 @@ worker() {
     export HF_HUB_ENABLE_HF_TRANSFER=1
     export XDG_RUNTIME_DIR="$runtime_dir"
     export TMPDIR="$tmp_dir"
-    export POLARS_MAX_THREADS=2
-    export OMP_NUM_THREADS=2
-    export MKL_NUM_THREADS=2
+    export POLARS_MAX_THREADS=1
+    export OMP_NUM_THREADS=1
+    export MKL_NUM_THREADS=1
+    export OPENBLAS_NUM_THREADS=1
+    export NUMEXPR_NUM_THREADS=1
+    export DUCKDB_THREADS=1
     export KRASNAL_TOKENIZED_DIR="$tokenized_dir"
     export KRASNAL_ARTIFACT_DIR="$artifact_dir"
     export WANDB_RUN_GROUP="labs-elo-token-ablation-${TARGET_GAMES}"
@@ -111,7 +114,7 @@ worker() {
         target_games="$TARGET_GAMES" \
         include_elo="$include_elo" \
         preprocess_workers=1 \
-        pack_stream_batch_size=5000 \
+        pack_stream_batch_size=1000 \
         report.enabled=false
 
     uv run torchrun --standalone --nproc_per_node=1 scripts/training/pretrain.py \
