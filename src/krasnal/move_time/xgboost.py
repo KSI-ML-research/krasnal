@@ -4,6 +4,9 @@ import argparse
 import json
 import os
 from pathlib import Path
+from datetime import datetime
+import subprocess
+import shutil
 
 import numpy as np
 import polars as pl
@@ -417,7 +420,14 @@ def main() -> None:
     if getattr(args, "canonical", False):
         print("Applying canonical model overrides:", CANONICAL_SETTINGS)
         _apply_canonical_overrides(args)
-    args.output_dir.mkdir(parents=True, exist_ok=True)
+    # Ensure base output dir exists, then create a timestamped run directory
+    base_output_dir = args.output_dir
+    base_output_dir.mkdir(parents=True, exist_ok=True)
+    run_ts = datetime.utcnow().strftime("%Y%m%dT%H%M%SZ")
+    run_dir = base_output_dir / run_ts
+    run_dir.mkdir(parents=True, exist_ok=True)
+    # Use the run-specific dir for all saved artifacts for this invocation
+    args.output_dir = run_dir
 
     canonical_feature_columns = BASE_FEATURE_COLUMNS + ENTROPY_FEATURE_COLUMNS
     canonical_model_path = args.output_dir / f"xgboost_baseline_with_entropy_{args.target_mode}.json"
@@ -450,8 +460,27 @@ def main() -> None:
     }
 
     metrics_path = args.output_dir / "metrics.json"
+    # Add run metadata (timestamp, git sha, cli args) to top-level of metrics
+    git_sha = None
+    try:
+        git_sha = (
+            subprocess.check_output(["git", "rev-parse", "--short", "HEAD"], stderr=subprocess.DEVNULL)
+            .decode()
+            .strip()
+        )
+    except Exception:
+        git_sha = None
+
+    cli_args = {k: (str(v) if isinstance(v, Path) else v) for k, v in vars(args).items()}
+    results_with_meta = {
+        "run_timestamp": run_ts,
+        "git_sha": git_sha,
+        "cli_args": cli_args,
+        **results,
+    }
+
     with metrics_path.open("w", encoding="utf-8") as handle:
-        json.dump(results, handle, indent=2, sort_keys=True)
+        json.dump(results_with_meta, handle, indent=2, sort_keys=True)
         handle.write("\n")
 
     print(json.dumps(results, indent=2, sort_keys=True))
@@ -459,6 +488,23 @@ def main() -> None:
     if "no_entropy" in variants:
         print(f"Saved model to {args.output_dir / f'xgboost_baseline_no_entropy_{args.target_mode}.json'}")
     print(f"Saved metrics to {metrics_path}")
+
+    # Update (or create) a stable `latest` symlink in the base output dir
+    latest_link = base_output_dir / "latest"
+    try:
+        if latest_link.exists() or latest_link.is_symlink():
+            if latest_link.is_symlink() or latest_link.is_file():
+                latest_link.unlink()
+            else:
+                shutil.rmtree(latest_link)
+        # Create symlink pointing to the run directory (absolute path)
+        os.symlink(str(run_dir.resolve()), str(latest_link))
+    except Exception:
+        # If symlink fails (e.g., on filesystems that disallow), fall back to copying metrics.json
+        try:
+            shutil.copy2(metrics_path, base_output_dir / "latest_metrics.json")
+        except Exception:
+            pass
 
 
 if __name__ == "__main__":
