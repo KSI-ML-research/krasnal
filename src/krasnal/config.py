@@ -6,7 +6,7 @@ from typing import Literal
 MlpActivation = Literal["gelu", "swiglu", "relu2"]
 
 DATA_DIR = Path("data")
-RAW_UCI_DIR = DATA_DIR / "1_filtered"
+RAW_UCI_DIR = Path(os.environ.get("KRASNAL_FILTERED_DIR", DATA_DIR / "1_filtered"))
 TOKENIZED_DIR = Path(os.environ.get("KRASNAL_TOKENIZED_DIR", DATA_DIR / "2_tokenized"))
 ARTIFACTS_DIR = Path(os.environ.get("KRASNAL_ARTIFACTS_DIR", "artifacts"))
 PRETRAIN_DATASET_PATH = TOKENIZED_DIR / "pretrain"
