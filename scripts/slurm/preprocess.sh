@@ -27,6 +27,7 @@ mkdir -p $HF_HOME
 test -d .venv || uv venv .venv --python 3.13
 uv sync
 
+echo "Filtered dir: ${KRASNAL_FILTERED_DIR:-data/1_filtered}"
 echo "Tokenized dir: ${KRASNAL_TOKENIZED_DIR:-data/2_tokenized}"
 echo "Preprocess overrides: ${PREPROCESS_EXTRA_ARGS:-none}"
 uv run scripts/data/preprocess.py ${PREPROCESS_EXTRA_ARGS:-}
