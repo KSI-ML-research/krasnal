@@ -214,6 +214,8 @@ class ChessEvaluator:
         seed: int | None = None,
         qa_config: dict[str, Any] | None = None,
         inference_batch_size: int = 64,
+        min_ply: int = 0,
+        min_active_clock: int | None = None,
     ):
         if metrics is None:
             raise ValueError("ChessEvaluator requires an explicit metrics list")
@@ -221,6 +223,8 @@ class ChessEvaluator:
         self.requested_metrics = metrics
         self.seed = seed
         self.inference_batch_size = int(inference_batch_size)
+        self.min_ply = int(min_ply)
+        self.min_active_clock = min_active_clock
 
         qa_cfg = qa_config or {}
         self.qa_max_positions = int(qa_cfg.get("max_positions", 0))
@@ -306,6 +310,11 @@ class ChessEvaluator:
             if not contexts:
                 continue
 
+            keep_indices = [idx for idx, ctx in enumerate(contexts) if self._include_context(ctx)]
+            if not keep_indices:
+                continue
+            contexts = [contexts[idx] for idx in keep_indices]
+
             total_contexts += len(contexts)
             if sample_qa:
                 qa_contexts_seen = _update_context_sample(
@@ -316,6 +325,7 @@ class ChessEvaluator:
                     rng=qa_rng,
                 )
             logits = self._infer_game_move_logits(game_tokens_list, batch_session)
+            logits = logits[torch.tensor(keep_indices, device=logits.device)]
             if logits.size(0) != len(contexts):
                 raise RuntimeError(
                     f"full-game logits/context mismatch: {logits.size(0)} != {len(contexts)}"
@@ -362,6 +372,15 @@ class ChessEvaluator:
                 )
             )
         return final
+
+    def _include_context(self, ctx: EvalContext) -> bool:
+        if ctx.what_is_on_ply is not None and ctx.what_is_on_ply < self.min_ply:
+            return False
+        return not (
+            self.min_active_clock is not None
+            and ctx.active_clock_seconds is not None
+            and ctx.active_clock_seconds < self.min_active_clock
+        )
 
     def _infer_game_move_logits(
         self,
@@ -447,4 +466,6 @@ def chess_evaluator_from_config(cfg: Any, *, metrics: list[str]) -> ChessEvaluat
         seed=cfg.seed,
         qa_config=OmegaConf.to_container(cfg.eval.qa, resolve=True),
         inference_batch_size=int(eval_batch_size),
+        min_ply=int(cfg.eval.get("min_ply", 0)),
+        min_active_clock=cfg.eval.get("min_active_clock"),
     )

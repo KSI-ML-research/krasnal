@@ -21,5 +21,5 @@ class PreprocessConfig:
     what_is_on_prob: float = 0.0
     time_control_token_enabled: bool = True
     opponent_material_enabled: bool = False
-    outcome_conditioning_enabled: bool = True
+    outcome_conditioning_enabled: bool = False
     move_vocab_path: Path | None = None

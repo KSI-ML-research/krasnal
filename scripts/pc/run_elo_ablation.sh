@@ -22,8 +22,7 @@ run_variant() {
     echo "artifact_dir=$KRASNAL_ARTIFACT_DIR"
 
     uv run scripts/data/download_games.py \
-        target_games="$TARGET_GAMES" \
-        require_evals=false
+        target_games="$TARGET_GAMES"
 
     uv run scripts/data/preprocess.py \
         target_games="$TARGET_GAMES" \

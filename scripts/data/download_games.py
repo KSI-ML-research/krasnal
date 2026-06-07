@@ -3,9 +3,8 @@
 Download Aix-compatible Lichess database files and filter them with DuckDB + Aix.
 
 Filters:
-    - Both players >= min_elo (configured in download.yaml)
-    - Time control >= min_time seconds base (5+0 and above)
-    - Require evals only when require_evals is enabled
+    - Both players within min_elo/max_elo (configured in download.yaml)
+    - Lichess estimated duration >= min_estimated_duration seconds
     - Normal termination only
     - Month range: ``start_month`` / ``end_month`` in ``download.yaml`` (``%clk`` clocks)
 
@@ -15,6 +14,7 @@ Usage:
     just download-games
     just download-games target_games=10000000
     just download-games min_elo=1800
+    just download-games min_estimated_duration=480
 """
 
 import logging
@@ -33,7 +33,6 @@ from krasnal import configure_logging
 from krasnal.config import MOVE_VOCAB_PATH, RAW_UCI_DIR
 from krasnal.preprocess.eval_sampling import (
     EVAL_GAMES_PER_BIN,
-    EVAL_MIN_CLOCK,
     EVAL_MONTH,
     maia_eval_sample_sql,
 )
@@ -107,18 +106,20 @@ _AIX_PROMOTION_MATERIAL = """CASE lower(nullif(trim(u.m.promotion), ''))
 END"""
 
 FILTER_QUERY = f"""
-WITH filtered AS (
+WITH eligible AS (
     SELECT *
     FROM '{{parquet_path}}'
     WHERE white_rating >= {{min_elo}}
       AND black_rating >= {{min_elo}}
-      AND time_initial >= {{min_time}}
+      {{max_elo_condition}}
+      AND time_initial::INTEGER + 40 * time_increment::INTEGER >= {{min_estimated_duration}}
       AND termination = 'Normal'
-      AND evals IS NOT NULL
       AND result IN ('1-0', '0-1', '1/2-1/2')
       AND utc_timestamp >= '{{date_start}}'
       AND utc_timestamp < '{{date_end}}'
-    {{evals_condition}}
+),
+filtered AS (
+{{filtered_query}}
 ),
 decoded AS (
     SELECT filtered.*, move_details(movedata) AS md
@@ -175,7 +176,6 @@ SELECT
     to_uci(decoded.movedata) AS uci_moves,
     decoded.clocks_white,
     decoded.clocks_black,
-    list_eval_to_centipawns(decoded.evals) AS evals_cp,
     decoded.md.apply(m -> m.is_check) AS is_check,
     decoded.md.apply(m -> m.role) AS piece_moved,
     om.opponent_material,
@@ -224,19 +224,68 @@ def download_aix_file(month: str, compression: str) -> Path:
     return Path(downloaded_path)
 
 
+def configure_duckdb_connection(con: duckdb.DuckDBPyConnection) -> None:
+    memory_limit = os.environ.get("DUCKDB_MEMORY_LIMIT", "16GB")
+    con.execute(f"SET memory_limit = '{memory_limit}'")
+    con.execute("SET preserve_insertion_order = false")
+    logger.info("DuckDB memory_limit={}, preserve_insertion_order=false", memory_limit)
+
+
+def copy_query_to_parquet(con: duckdb.DuckDBPyConnection, query: str, output_path: Path) -> int:
+    tmp_path = output_path.with_name(f"{output_path.name}.tmp")
+    tmp_path.unlink(missing_ok=True)
+    con.execute(f"""
+        COPY (
+            {query}
+        ) TO '{tmp_path}' (FORMAT PARQUET)
+    """)
+    count = con.execute(f"SELECT COUNT(*) FROM read_parquet('{tmp_path}')").fetchone()[0]
+    if count == 0:
+        tmp_path.unlink(missing_ok=True)
+        return 0
+    tmp_path.replace(output_path)
+    return count
+
+
+def filtered_month_query(
+    parquet_path: Path,
+    date_start: str,
+    date_end: str,
+    min_elo: int,
+    max_elo: int | None,
+    min_estimated_duration: int,
+    filtered_query: str,
+) -> str:
+    max_elo_condition = (
+        f"AND white_rating <= {max_elo}\n      AND black_rating <= {max_elo}"
+        if max_elo is not None
+        else ""
+    )
+    return FILTER_QUERY.format(
+        parquet_path=parquet_path,
+        date_start=date_start,
+        date_end=date_end,
+        min_elo=min_elo,
+        max_elo_condition=max_elo_condition,
+        min_estimated_duration=min_estimated_duration,
+        filtered_query=filtered_query,
+    )
+
+
 def filter_month(
     parquet_path: Path,
     month: str,
     output_dir: Path,
     con: duckdb.DuckDBPyConnection,
     min_elo: int,
-    min_time: int,
-    require_evals: bool,
+    max_elo: int | None,
+    min_estimated_duration: int,
     *,
+    max_games: int,
+    chunk_games: int,
     eval_sample: bool = False,
     eval_seed: int = 0,
     eval_games_per_bin: int = EVAL_GAMES_PER_BIN,
-    eval_min_clock: int = EVAL_MIN_CLOCK,
 ) -> int:
     """
     Filter one month of Aix games and save to Parquet.
@@ -244,12 +293,6 @@ def filter_month(
     Returns the number of games that passed filters.
     """
     output_dir.mkdir(parents=True, exist_ok=True)
-    output_path = output_dir / f"filtered_{month}.parquet"
-
-    if output_path.exists():
-        logger.info(f"Output already exists: {output_path}, skipping")
-        result = con.execute(f"SELECT COUNT(*) FROM '{output_path}'").fetchone()
-        return result[0]
 
     year, mon = month.split("-")
     date_start = f"{year}-{mon}-01"
@@ -262,64 +305,93 @@ def filter_month(
         next_mon = f"{next_mon_int:02d}"
     date_end = f"{next_year}-{next_mon}-01"
 
-    evals_condition = "AND evals IS NOT NULL" if require_evals else ""
-
-    base_query = FILTER_QUERY.format(
-        parquet_path=parquet_path,
-        date_start=date_start,
-        date_end=date_end,
-        min_elo=min_elo,
-        min_time=min_time,
-        evals_condition=evals_condition,
-    )
     if eval_sample:
-        query = maia_eval_sample_sql(
-            base_query,
-            seed=eval_seed,
-            games_per_bin=eval_games_per_bin,
-            min_clock=eval_min_clock,
+        output_path = output_dir / f"filtered_{month}.parquet"
+        if output_path.exists():
+            logger.info(f"Output already exists: {output_path}, skipping")
+            return con.execute(f"SELECT COUNT(*) FROM '{output_path}'").fetchone()[0]
+        query = filtered_month_query(
+            parquet_path,
+            date_start,
+            date_end,
+            min_elo,
+            max_elo,
+            min_estimated_duration,
+            maia_eval_sample_sql(
+                "SELECT * FROM eligible",
+                seed=eval_seed,
+                games_per_bin=eval_games_per_bin,
+                min_elo=min_elo,
+                max_elo=max_elo,
+            ),
         )
         logger.info(
-            "Filtering {} with Maia eval sampling (seed={}, up to {} games/bin, min_clock={})",
+            "Filtering {} with Maia eval sampling (seed={}, up to {} games/bin)",
             month,
             eval_seed,
             eval_games_per_bin,
-            eval_min_clock,
         )
-    else:
-        query = base_query
-        logger.info(f"Filtering {month}...")
-    start = time.time()
-
-    con.execute(f"""
-        COPY (
-            {query}
-        ) TO '{output_path}' (FORMAT PARQUET)
-    """)
-
-    elapsed = time.time() - start
-    result = con.execute(f"SELECT COUNT(*) FROM '{output_path}'").fetchone()
-    count = result[0]
-
-    if eval_sample:
+        start = time.time()
+        count = copy_query_to_parquet(con, query, output_path)
         logger.info(
             "  {:,} games after eval sampling in {:.0f}s -> {}",
             count,
-            elapsed,
+            time.time() - start,
             output_path.name,
         )
-    else:
-        logger.info(f"  {count:,} games in {elapsed:.0f}s -> {output_path.name}")
-    return count
+        return count
+
+    total = 0
+    chunk_idx = 0
+    logger.info(f"Filtering {month}...")
+    while total < max_games:
+        chunk_start = chunk_idx * chunk_games
+        chunk_end = min(chunk_start + chunk_games, max_games)
+        output_path = output_dir / f"filtered_{month}_{chunk_idx:04d}.parquet"
+        if output_path.exists():
+            count = con.execute(f"SELECT COUNT(*) FROM '{output_path}'").fetchone()[0]
+            logger.info("  {} exists, skipping ({:,} games)", output_path.name, count)
+        else:
+            filtered_query = f"""
+    SELECT * EXCLUDE (_rn)
+    FROM (
+        SELECT *, row_number() OVER (ORDER BY hash(lichess_id, {eval_seed})) AS _rn
+        FROM eligible
+    )
+    WHERE _rn > {chunk_start} AND _rn <= {chunk_end}
+"""
+            query = filtered_month_query(
+                parquet_path,
+                date_start,
+                date_end,
+                min_elo,
+                max_elo,
+                min_estimated_duration,
+                filtered_query,
+            )
+            start = time.time()
+            count = copy_query_to_parquet(con, query, output_path)
+            logger.info(
+                "  {:,} games in {:.0f}s -> {}",
+                count,
+                time.time() - start,
+                output_path.name,
+            )
+        total += count
+        if count == 0:
+            break
+        chunk_idx += 1
+    return total
 
 
-def _eval_sampling_params(cfg: DictConfig) -> tuple[str, int, int, int]:
+def _eval_sampling_params(cfg: DictConfig) -> tuple[str, int, int, int, int]:
     eval_cfg = cfg.get("eval", {})
     month = str(eval_cfg.get("month", EVAL_MONTH))
     games_per_bin = int(eval_cfg.get("games_per_bin", EVAL_GAMES_PER_BIN))
-    min_clock = int(eval_cfg.get("min_clock", EVAL_MIN_CLOCK))
+    min_elo = int(eval_cfg.get("min_elo", 1100))
+    max_elo = int(eval_cfg.get("max_elo", 1999))
     seed = int(cfg.get("seed", 0))
-    return month, seed, games_per_bin, min_clock
+    return month, seed, games_per_bin, min_elo, max_elo
 
 
 @hydra.main(version_base=None, config_path="../../config", config_name="download")
@@ -329,10 +401,11 @@ def main(cfg: DictConfig) -> None:
     logger.info("=" * 60)
 
     min_elo = cfg.min_elo
-    min_time = cfg.min_time
+    max_elo = cfg.get("max_elo")
+    min_estimated_duration = cfg.min_estimated_duration
     target_games = cfg.target_games
+    chunk_games = cfg.filter_chunk_games
     compression = cfg.compression
-    require_evals = cfg.get("require_evals", False)
 
     months = _resolve_months(cfg)
     if not months:
@@ -342,16 +415,20 @@ def main(cfg: DictConfig) -> None:
     logger.info(f"Target games: {target_games:,}")
     logger.info(f"Months to process: {len(months)} (first={months[0]}, last={months[-1]})")
     logger.info(f"Compression: {compression}")
-    logger.info(f"Min Elo: {min_elo}")
-    logger.info(f"Min time control: {min_time}s")
-    logger.info(f"Require evals: {require_evals}")
-    eval_month, eval_seed, eval_games_per_bin, eval_min_clock = _eval_sampling_params(cfg)
+    elo_range = f"{min_elo}+" if max_elo is None else f"{min_elo}-{max_elo}"
+    logger.info(f"Training Elo range: {elo_range}")
+    logger.info(f"Min estimated duration: {min_estimated_duration}s")
+    logger.info(f"Filter chunk games: {chunk_games:,}")
+    eval_month, eval_seed, eval_games_per_bin, eval_min_elo, eval_max_elo = _eval_sampling_params(
+        cfg
+    )
     logger.info(
-        "Eval holdout: month={}, up to {} games/bin, min_clock={}, seed={}",
+        "Eval holdout: month={}, up to {} games/bin, seed={}, Elo={}-{}",
         eval_month,
         eval_games_per_bin,
-        eval_min_clock,
         eval_seed,
+        eval_min_elo,
+        eval_max_elo,
     )
 
     hf_transfer_status = (
@@ -361,6 +438,7 @@ def main(cfg: DictConfig) -> None:
     logger.info("")
 
     con = duckdb.connect()
+    configure_duckdb_connection(con)
     logger.info("Installing Aix DuckDB extension...")
     con.execute("INSTALL aixchess FROM community")
     con.execute("LOAD aixchess")
@@ -384,18 +462,21 @@ def main(cfg: DictConfig) -> None:
             continue
 
         try:
+            month_min_elo = eval_min_elo if month == eval_month else min_elo
+            month_max_elo = eval_max_elo if month == eval_month else max_elo
             count = filter_month(
                 parquet_path,
                 month,
                 RAW_UCI_DIR,
                 con,
-                min_elo,
-                min_time,
-                require_evals,
+                month_min_elo,
+                month_max_elo,
+                min_estimated_duration,
+                max_games=target_games - total_games,
+                chunk_games=chunk_games,
                 eval_sample=month == eval_month,
                 eval_seed=eval_seed,
                 eval_games_per_bin=eval_games_per_bin,
-                eval_min_clock=eval_min_clock,
             )
             total_games += count
         except Exception as e:
@@ -420,6 +501,7 @@ def main(cfg: DictConfig) -> None:
     if not eval_output.exists():
         logger.info("Downloading eval month {}...", eval_month)
         con2 = duckdb.connect()
+        configure_duckdb_connection(con2)
         con2.execute("INSTALL aixchess FROM community")
         con2.execute("LOAD aixchess")
         try:
@@ -429,13 +511,14 @@ def main(cfg: DictConfig) -> None:
                 eval_month,
                 RAW_UCI_DIR,
                 con2,
-                min_elo,
-                min_time,
-                require_evals,
+                eval_min_elo,
+                eval_max_elo,
+                min_estimated_duration,
+                max_games=eval_games_per_bin,
+                chunk_games=chunk_games,
                 eval_sample=True,
                 eval_seed=eval_seed,
                 eval_games_per_bin=eval_games_per_bin,
-                eval_min_clock=eval_min_clock,
             )
         except Exception as e:
             logger.error("Failed to download/filter eval month {}: {}", eval_month, e)

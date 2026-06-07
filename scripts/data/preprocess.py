@@ -115,7 +115,7 @@ def main(cfg: DictConfig) -> None:
     opponent_material_cfg = cfg.get("opponent_material", {})
     opponent_material_enabled = bool(opponent_material_cfg.get("enabled", False))
     outcome_conditioning_cfg = cfg.get("outcome_conditioning", {})
-    outcome_conditioning_enabled = bool(outcome_conditioning_cfg.get("enabled", True))
+    outcome_conditioning_enabled = bool(outcome_conditioning_cfg.get("enabled", False))
     target_games_raw = cfg.get("target_games")
     target_games = int(target_games_raw) if target_games_raw is not None else None
     report_cfg = cfg.get("report", {})

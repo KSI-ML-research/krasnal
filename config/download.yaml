@@ -5,16 +5,19 @@ defaults:
 # Target number of games to collect
 target_games: 1_000_000
 
-# Minimum Elo for both players
-min_elo: 1500
+# Training Elo range for both players.
+min_elo: 1100
+max_elo: null
 
-# Minimum base time in seconds (5+0 = 300)
-min_time: 300
+# Minimum Lichess estimated duration in seconds:
+# initial time + 40 * increment. 180 excludes bullet and keeps blitz+.
+min_estimated_duration: 180
+
+# Number of games decoded per DuckDB query before move_details/UNNEST.
+filter_chunk_games: 250_000
 
 # Compression level: low, medium, or high
 compression: high
-
-require_evals: false
 
 # Inclusive month range (YYYY-MM)
 start_month: "2017-04"
@@ -24,4 +27,5 @@ end_month: null
 eval:
   month: "2019-12"
   games_per_bin: 10000
-  min_clock: 30
+  min_elo: 1100
+  max_elo: 1999
