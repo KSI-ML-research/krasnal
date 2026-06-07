@@ -44,19 +44,62 @@ start_variant() {
     local worktree="$WORKTREE_BASE/$worktree_name"
     local remote_worktree="$REMOTE_WORKTREE_BASE/$worktree_name"
     ensure_worktree "$worktree" "$branch"
+    kill_remote_stale "$host" "$remote_worktree" "$variant"
 
     local log="output/labs-pc/${variant}_$(date +%Y%m%d_%H%M%S).log"
     local remote_log="$remote_worktree/$log"
     local cmd
     printf -v cmd \
-        'cd %q && mkdir -p output/labs-pc && nohup env TARGET_GAMES=%q MODEL=%q BATCH_SIZE=%q NUM_WORKERS=%q EPOCHS=%q UV_CACHE_DIR=%q HF_HOME=%q TOKENIZED_BASE=%q ARTIFACT_BASE=%q RUN_TMP_DIR=%q bash %q worker %q %q > %q 2>&1 < /dev/null & echo $!' \
+        'cd %q && mkdir -p output/labs-pc && { nohup env TARGET_GAMES=%q MODEL=%q BATCH_SIZE=%q NUM_WORKERS=%q EPOCHS=%q UV_CACHE_DIR=%q HF_HOME=%q TOKENIZED_BASE=%q ARTIFACT_BASE=%q RUN_TMP_DIR=%q bash %q worker %q %q > %q 2>&1 < /dev/null & echo $!; }' \
         "$remote_worktree" "$TARGET_GAMES" "$MODEL" "$BATCH_SIZE" "$NUM_WORKERS" \
         "$EPOCHS" "$UV_CACHE_DIR" "$HF_HOME" "$TOKENIZED_BASE" "$ARTIFACT_BASE" \
         "$RUN_TMP_DIR" "$REMOTE_SOURCE_REPO/scripts/labs-pc/run_elo_ablation.sh" \
         "$variant" "$include_elo" "$remote_log"
     echo "Starting $variant on $host in $remote_worktree"
-    ssh "$host" "$cmd"
+    run_remote "$host" "$cmd"
     echo "  log: $host:$remote_log"
+}
+
+run_remote() {
+    local host=$1 cmd=$2 encoded_cmd
+    encoded_cmd=$(printf "%s" "$cmd" | base64 | tr -d "\n")
+    ssh "$host" "printf %s $encoded_cmd | base64 -d | bash"
+}
+
+kill_remote_stale() {
+    local host=$1 remote_worktree=$2 variant=$3
+    local cmd
+    printf -v cmd '
+set -euo pipefail
+worktree=%q
+variant=%q
+uid=$(id -u)
+pids=""
+for pid in $(pgrep -u "$uid" || true); do
+    cwd=$(readlink "/proc/$pid/cwd" 2>/dev/null || true)
+    cmdline=$(tr "\0" " " < "/proc/$pid/cmdline" 2>/dev/null || true)
+    case "$cwd" in
+        "$worktree"|"$worktree"/*) pids="$pids $pid" ;;
+    esac
+    case "$cmdline" in
+        *"run_elo_ablation.sh worker $variant"*) pids="$pids $pid" ;;
+    esac
+done
+if [ -n "${pids// }" ]; then
+    echo "Stopping stale pids:$pids"
+    kill $pids 2>/dev/null || true
+    sleep 3
+    for pid in $pids; do
+        if kill -0 "$pid" 2>/dev/null; then
+            kill -KILL "$pid" 2>/dev/null || true
+        fi
+    done
+else
+    echo "No stale processes for $variant"
+fi
+' "$remote_worktree" "$variant"
+    echo "Checking stale $variant processes on $host"
+    run_remote "$host" "$cmd"
 }
 
 ensure_worktree() {
