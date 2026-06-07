@@ -14,6 +14,7 @@ UV_CACHE_DIR=${UV_CACHE_DIR:-/ziob/ijakus/.cache/uv}
 HF_HOME=${HF_HOME:-/ziob/ijakus/.cache/huggingface}
 TOKENIZED_BASE=${TOKENIZED_BASE:-data/2_tokenized_labs}
 ARTIFACT_BASE=${ARTIFACT_BASE:-artifacts/pretrain/labs}
+RUN_TMP_DIR=${RUN_TMP_DIR:-/ziob/ijakus/tmp/krasnal-labs-pc}
 
 LAB01=192.168.4.102
 LAB02=192.168.4.103
@@ -48,10 +49,11 @@ start_variant() {
     local remote_log="$remote_worktree/$log"
     local cmd
     printf -v cmd \
-        'cd %q && mkdir -p output/labs-pc && nohup env TARGET_GAMES=%q MODEL=%q BATCH_SIZE=%q NUM_WORKERS=%q EPOCHS=%q UV_CACHE_DIR=%q HF_HOME=%q TOKENIZED_BASE=%q ARTIFACT_BASE=%q bash %q worker %q %q > %q 2>&1 < /dev/null & echo $!' \
+        'cd %q && mkdir -p output/labs-pc && nohup env TARGET_GAMES=%q MODEL=%q BATCH_SIZE=%q NUM_WORKERS=%q EPOCHS=%q UV_CACHE_DIR=%q HF_HOME=%q TOKENIZED_BASE=%q ARTIFACT_BASE=%q RUN_TMP_DIR=%q bash %q worker %q %q > %q 2>&1 < /dev/null & echo $!' \
         "$remote_worktree" "$TARGET_GAMES" "$MODEL" "$BATCH_SIZE" "$NUM_WORKERS" \
         "$EPOCHS" "$UV_CACHE_DIR" "$HF_HOME" "$TOKENIZED_BASE" "$ARTIFACT_BASE" \
-        "$REMOTE_SOURCE_REPO/scripts/labs-pc/run_elo_ablation.sh" "$variant" "$include_elo" "$remote_log"
+        "$RUN_TMP_DIR" "$REMOTE_SOURCE_REPO/scripts/labs-pc/run_elo_ablation.sh" \
+        "$variant" "$include_elo" "$remote_log"
     echo "Starting $variant on $host in $remote_worktree"
     ssh "$host" "$cmd"
     echo "  log: $host:$remote_log"
@@ -75,12 +77,15 @@ worker() {
     local artifact_dir="$ARTIFACT_BASE/$variant"
 
     source ~/.bashrc
-    mkdir -p "$UV_CACHE_DIR" "$HF_HOME" output
+    local runtime_dir="$RUN_TMP_DIR/$variant/runtime"
+    local tmp_dir="$RUN_TMP_DIR/$variant/tmp"
+    mkdir -p "$UV_CACHE_DIR" "$HF_HOME" output "$runtime_dir" "$tmp_dir"
 
     export UV_CACHE_DIR HF_HOME
     export UV_LINK_MODE=copy
     export HF_HUB_ENABLE_HF_TRANSFER=1
-    export XDG_RUNTIME_DIR=/tmp/ijakus/runtime
+    export XDG_RUNTIME_DIR="$runtime_dir"
+    export TMPDIR="$tmp_dir"
     export POLARS_MAX_THREADS=2
     export OMP_NUM_THREADS=2
     export MKL_NUM_THREADS=2
@@ -88,7 +93,6 @@ worker() {
     export KRASNAL_ARTIFACT_DIR="$artifact_dir"
     export WANDB_RUN_GROUP="labs-elo-token-ablation-${TARGET_GAMES}"
     export WANDB_NAME="labs-${variant}"
-    mkdir -p "$XDG_RUNTIME_DIR"
 
     echo "host=$(hostname)"
     echo "variant=$variant include_elo=$include_elo target_games=$TARGET_GAMES"
