@@ -10,7 +10,7 @@ qa:
   what_is_on:
     enabled: true
     accuracy_per_square: true
-    baseline_counts_path: data/2_tokenized/what_is_on_baseline_counts.json
+    baseline_counts_path: ${oc.env:KRASNAL_TOKENIZED_DIR,data/2_tokenized}/what_is_on_baseline_counts.json
 
 # null means use train.batch_size
 inference_batch_size: null

@@ -30,7 +30,7 @@ from loguru import logger
 from omegaconf import DictConfig
 
 from krasnal import configure_logging
-from krasnal.config import MOVE_VOCAB_PATH
+from krasnal.config import MOVE_VOCAB_PATH, RAW_UCI_DIR
 from krasnal.preprocess.eval_sampling import (
     EVAL_GAMES_PER_BIN,
     EVAL_MIN_CLOCK,
@@ -45,8 +45,6 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 # ─── Configuration ───────────────────────────────────────────────────────────
 
 HF_REPO = "thomasd1/aix-lichess-database"
-
-OUTPUT_DIR = Path("data/1_filtered")
 
 # If ``end_month`` is null, months run through this (HF catalog / default cap).
 DEFAULT_END_MONTH = "2026-03"
@@ -389,7 +387,7 @@ def main(cfg: DictConfig) -> None:
             count = filter_month(
                 parquet_path,
                 month,
-                OUTPUT_DIR,
+                RAW_UCI_DIR,
                 con,
                 min_elo,
                 min_time,
@@ -407,9 +405,9 @@ def main(cfg: DictConfig) -> None:
     logger.info("")
     logger.info("=" * 60)
     logger.info(f"FINAL: {total_games:,} games collected")
-    logger.info(f"Output directory: {OUTPUT_DIR}")
-    if OUTPUT_DIR.exists():
-        total_size = sum(f.stat().st_size for f in OUTPUT_DIR.glob("*.parquet")) / (
+    logger.info(f"Output directory: {RAW_UCI_DIR}")
+    if RAW_UCI_DIR.exists():
+        total_size = sum(f.stat().st_size for f in RAW_UCI_DIR.glob("*.parquet")) / (
             1024 * 1024 * 1024
         )
         logger.info(f"Total output size: {total_size:.2f} GB")
@@ -418,7 +416,7 @@ def main(cfg: DictConfig) -> None:
     con.close()
 
     # Always ensure eval holdout month is available (Maia-style subsample at filter time).
-    eval_output = OUTPUT_DIR / f"filtered_{eval_month}.parquet"
+    eval_output = RAW_UCI_DIR / f"filtered_{eval_month}.parquet"
     if not eval_output.exists():
         logger.info("Downloading eval month {}...", eval_month)
         con2 = duckdb.connect()
@@ -429,7 +427,7 @@ def main(cfg: DictConfig) -> None:
             filter_month(
                 eval_parquet,
                 eval_month,
-                OUTPUT_DIR,
+                RAW_UCI_DIR,
                 con2,
                 min_elo,
                 min_time,
@@ -451,12 +449,12 @@ def main(cfg: DictConfig) -> None:
 def _build_move_vocab_from_filtered(cfg: DictConfig) -> None:
     piece_aware_moves = bool(cfg.get("piece_aware_moves", False))
     side_prefixed_moves = bool(cfg.get("side_prefixed_moves", True))
-    filtered_files = sorted(OUTPUT_DIR.glob("filtered_*.parquet"))
+    filtered_files = sorted(RAW_UCI_DIR.glob("filtered_*.parquet"))
     if not filtered_files:
         logger.warning("No filtered parquet files found; skipping move vocabulary build")
         return
 
-    filtered_glob = str(OUTPUT_DIR / "filtered_*.parquet")
+    filtered_glob = str(RAW_UCI_DIR / "filtered_*.parquet")
     logger.info(
         "Building move vocabulary from {} filtered shards (piece_aware={}, side_prefixed={})",
         len(filtered_files),
