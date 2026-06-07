@@ -77,12 +77,8 @@ uid=$(id -u)
 pids=""
 for pid in $(pgrep -u "$uid" || true); do
     cwd=$(readlink "/proc/$pid/cwd" 2>/dev/null || true)
-    cmdline=$(tr "\0" " " < "/proc/$pid/cmdline" 2>/dev/null || true)
     case "$cwd" in
         "$worktree"|"$worktree"/*) pids="$pids $pid" ;;
-    esac
-    case "$cmdline" in
-        *"run_elo_ablation.sh worker $variant"*) pids="$pids $pid" ;;
     esac
 done
 if [ -n "${pids// }" ]; then
