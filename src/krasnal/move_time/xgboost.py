@@ -28,6 +28,19 @@ BASE_FEATURE_COLUMNS = [
 ENTROPY_FEATURE_COLUMNS = ["move_entropy", "entropy_x_ply_scaling"]
 TARGET_COLUMN = "target_move_time_seconds"
 TARGET_TRANSFORMS = ["none", "log1p"]
+CANONICAL_SETTINGS = {
+    "target_mode": "residual",
+    "target_transform": "log1p",
+    "max_depth": 4,
+    "n_estimators": 500,
+    "learning_rate": 0.05,
+    "subsample": 0.8,
+    "colsample_bytree": 0.8,
+    "min_child_weight": 1.0,
+    "reg_alpha": 0.0,
+    "reg_lambda": 0.0,
+    "random_state": 42,
+}
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -63,6 +76,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--canonical",
         action="store_true",
         help="Use/mark canonical config: residual + sign-log + log1p + max_depth=4 + no regularization",
+    )
+    parser.add_argument(
+        "--no-entropy-ablation",
+        action="store_true",
+        help="Also train the no-entropy ablation for comparison.",
     )
     return parser
 
@@ -131,6 +149,11 @@ def _inverse_sign_log_transform(values: np.ndarray) -> np.ndarray:
     signs = np.sign(values).astype(np.float32)
     mags = np.expm1(np.abs(values)).astype(np.float32)
     return (signs * mags).astype(np.float32, copy=False)
+
+
+def _apply_canonical_overrides(args: argparse.Namespace) -> None:
+    for key, value in CANONICAL_SETTINGS.items():
+        setattr(args, key, value)
 
 
 def _predict_regressor(model: xgb.Booster, features: np.ndarray) -> np.ndarray:
@@ -391,53 +414,35 @@ def predict_parquet(
 
 def main() -> None:
     args = build_parser().parse_args()
-    canonical_settings = {
-        "target_mode": "residual",
-        "target_transform": "log1p",
-        "max_depth": 4,
-        "reg_alpha": 0.0,
-        "reg_lambda": 0.0,
-    }
     if getattr(args, "canonical", False):
-        print("Applying canonical model overrides:", canonical_settings)
-        args.target_mode = canonical_settings["target_mode"]
-        args.target_transform = canonical_settings["target_transform"]
-        args.max_depth = canonical_settings["max_depth"]
-        args.reg_alpha = canonical_settings["reg_alpha"]
-        args.reg_lambda = canonical_settings["reg_lambda"]
+        print("Applying canonical model overrides:", CANONICAL_SETTINGS)
+        _apply_canonical_overrides(args)
     args.output_dir.mkdir(parents=True, exist_ok=True)
 
-    available_entropy_columns = True
-    for path in [args.train, args.val, args.test]:
-        df = pl.read_parquet(path, n_rows=1)
-        if not all(column in df.columns for column in ENTROPY_FEATURE_COLUMNS):
-            available_entropy_columns = False
-            break
-
+    canonical_feature_columns = BASE_FEATURE_COLUMNS + ENTROPY_FEATURE_COLUMNS
+    canonical_model_path = args.output_dir / f"xgboost_baseline_with_entropy_{args.target_mode}.json"
     variants: dict[str, dict[str, object]] = {
-        "no_entropy": train_variant(
+        "with_entropy": train_variant(
+            variant_name="with_entropy",
+            feature_columns=canonical_feature_columns,
+            train_path=args.train,
+            val_path=args.val,
+            test_path=args.test,
+            args=args,
+            model_path=canonical_model_path,
+        )
+    }
+
+    if args.no_entropy_ablation:
+        variants["no_entropy"] = train_variant(
             variant_name="no_entropy",
             feature_columns=BASE_FEATURE_COLUMNS,
             train_path=args.train,
             val_path=args.val,
             test_path=args.test,
             args=args,
-            model_path=args.output_dir / f"xgboost_baseline_{args.target_mode}.json",
+            model_path=args.output_dir / f"xgboost_baseline_no_entropy_{args.target_mode}.json",
         )
-    }
-
-    if available_entropy_columns:
-        variants["with_entropy"] = train_variant(
-            variant_name="with_entropy",
-            feature_columns=BASE_FEATURE_COLUMNS + ENTROPY_FEATURE_COLUMNS,
-            train_path=args.train,
-            val_path=args.val,
-            test_path=args.test,
-            args=args,
-            model_path=args.output_dir / f"xgboost_baseline_with_entropy_{args.target_mode}.json",
-        )
-    else:
-        print("Entropy columns not found in all splits; skipping with_entropy variant")
 
     results = {
         "target_mode": args.target_mode,
@@ -450,9 +455,9 @@ def main() -> None:
         handle.write("\n")
 
     print(json.dumps(results, indent=2, sort_keys=True))
-    print(f"Saved model to {args.output_dir / f'xgboost_baseline_{args.target_mode}.json'}")
-    if "with_entropy" in variants:
-        print(f"Saved model to {args.output_dir / f'xgboost_baseline_with_entropy_{args.target_mode}.json'}")
+    print(f"Saved model to {canonical_model_path}")
+    if "no_entropy" in variants:
+        print(f"Saved model to {args.output_dir / f'xgboost_baseline_no_entropy_{args.target_mode}.json'}")
     print(f"Saved metrics to {metrics_path}")
 
 
