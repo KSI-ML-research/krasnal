@@ -17,9 +17,6 @@ qa:
 time_control_token:
   enabled: true
 
-outcome_conditioning:
-  enabled: true
-
 # Optional training-data cap for quick ablations. Takes the first N training games
 # from sorted filtered shards; null means all available training games.
 target_games: null

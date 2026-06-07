@@ -10,13 +10,14 @@ from dataclasses import dataclass
 from itertools import count
 from pathlib import Path
 
-TARGET_GAMES = 10_000_000
-DOUBLE_TARGET_GAMES = TARGET_GAMES * 2
-MODEL = "medium"
+BASE_GAMES = 4_000_000
+DOUBLE_BASE_GAMES = BASE_GAMES * 2
+DATA_SCALE_GAMES = BASE_GAMES * 8
+SEEDS = (42, 43, 44)
 TRAIN_BATCH_SIZE = 64
-PREPROCESS_REPORT_OVERRIDE = "report.enabled=false"
 
-TOKENIZED_BASE = "data/2_tokenized_ablations"
+FILTERED_BASE = "data/1_filtered_paper"
+TOKENIZED_BASE = "data/2_tokenized_paper"
 ARTIFACT_BASE = "artifacts/pretrain"
 DIAGNOSTIC_OUTPUT_DIR = "artifacts/diagnostics"
 OUTPUT_DIR = "output"
@@ -27,11 +28,11 @@ DOWNLOAD_TIME = "04:00:00"
 DOWNLOAD_CPUS = 4
 
 PREPROCESS_PARTITION = "student-cpu"
-PREPROCESS_TIME = "08:00:00"
+PREPROCESS_TIME = "16:00:00"
 PREPROCESS_CPUS = 12
 
 TRAIN_PARTITION = "student-nvidia"
-TRAIN_TIME = "08:00:00"
+TRAIN_TIME = "24:00:00"
 TRAIN_CPUS = 24
 TRAIN_GPUS = 1
 TRAIN_WORKERS = 4
@@ -47,6 +48,7 @@ DIAGNOSTIC_WANDB = True
 class TrainVariant:
     name: str
     overrides: tuple[str, ...]
+    run_name: str | None = None
 
 
 @dataclass(frozen=True)
@@ -55,85 +57,161 @@ class DataVariant:
     preprocess_overrides: tuple[str, ...]
     train_variants: tuple[str, ...]
     train_overrides: tuple[str, ...] = ()
+    report: bool = False
 
 
-BASE_TRAIN = (
-    f"model={MODEL}",
-    "train.epochs=1.0",
-    f"train.batch_size={TRAIN_BATCH_SIZE}",
-    "seed=42",
+def games_label(games: int) -> str:
+    return f"{games // 1_000_000}M"
+
+
+def epoch_fraction(*, budget_games: int, corpus_games: int) -> str:
+    value = budget_games / corpus_games
+    if value.is_integer():
+        return f"{value:.1f}"
+    return f"{value:.6f}".rstrip("0").rstrip(".")
+
+
+def train_variant(
+    *,
+    name: str,
+    model: str,
+    seed: int,
+    budget_games: int,
+    corpus_games: int,
+    run_name: str | None = None,
+    extra_overrides: tuple[str, ...] = (),
+) -> TrainVariant:
+    return TrainVariant(
+        name=name,
+        run_name=run_name,
+        overrides=(
+            f"model={model}",
+            f"train.epochs={epoch_fraction(budget_games=budget_games, corpus_games=corpus_games)}",
+            f"train.batch_size={TRAIN_BATCH_SIZE}",
+            f"seed={seed}",
+            *extra_overrides,
+        ),
+    )
+
+
+TRAIN_VARIANTS: dict[str, TrainVariant] = {}
+
+for seed in SEEDS:
+    for model in ("small", "medium", "large"):
+        key = f"{model}_{games_label(BASE_GAMES)}_seed{seed}"
+        TRAIN_VARIANTS[key] = train_variant(
+            name=key,
+            model=model,
+            seed=seed,
+            budget_games=BASE_GAMES,
+            corpus_games=DATA_SCALE_GAMES,
+            run_name=f"baseline_{games_label(BASE_GAMES)}-{model}-seed{seed}",
+        )
+
+    key = f"medium_no_clock_{games_label(BASE_GAMES)}_seed{seed}"
+    TRAIN_VARIANTS[key] = train_variant(
+        name=key,
+        model="medium",
+        seed=seed,
+        budget_games=BASE_GAMES,
+        corpus_games=DATA_SCALE_GAMES,
+        run_name=f"no_clock_encodings_{games_label(BASE_GAMES)}-medium-seed{seed}",
+        extra_overrides=("model.use_clock_encodings=false",),
+    )
+
+for budget_games in (DOUBLE_BASE_GAMES, BASE_GAMES * 4, DATA_SCALE_GAMES):
+    key = f"large_{games_label(budget_games)}_seed42"
+    TRAIN_VARIANTS[key] = train_variant(
+        name=key,
+        model="large",
+        seed=42,
+        budget_games=budget_games,
+        corpus_games=DATA_SCALE_GAMES,
+        run_name=f"baseline_{games_label(budget_games)}-large-seed42",
+    )
+
+for seed in SEEDS:
+    key = f"medium_seed{seed}"
+    TRAIN_VARIANTS[key] = train_variant(
+        name=key,
+        model="medium",
+        seed=seed,
+        budget_games=BASE_GAMES,
+        corpus_games=BASE_GAMES,
+    )
+
+TRAIN_VARIANTS["medium_8M_seed42"] = train_variant(
+    name="medium_8M_seed42",
+    model="medium",
+    seed=42,
+    budget_games=DOUBLE_BASE_GAMES,
+    corpus_games=DOUBLE_BASE_GAMES,
 )
-
-TRAIN_VARIANTS = {
-    "baseline": TrainVariant("baseline", BASE_TRAIN),
-    "no_clock_encodings": TrainVariant(
-        "no_clock_encodings",
-        (*BASE_TRAIN, "model.use_clock_encodings=false"),
-    ),
-    "gelu": TrainVariant("gelu", (*BASE_TRAIN, "model.mlp_activation=gelu")),
-    "relu2": TrainVariant("relu2", (*BASE_TRAIN, "model.mlp_activation=relu2")),
-    # "muon": TrainVariant("muon", (*BASE_TRAIN, "train.optimizer=muon")),
-}
 
 DATA_VARIANTS = (
     DataVariant(
-        name=f"baseline_{TARGET_GAMES}",
-        preprocess_overrides=(f"target_games={TARGET_GAMES}",),
-        train_variants=("baseline", "no_clock_encodings", "gelu", "relu2"),
+        name=f"baseline_{games_label(DATA_SCALE_GAMES)}",
+        preprocess_overrides=(f"target_games={DATA_SCALE_GAMES}",),
+        train_variants=(
+            *(
+                f"{model}_{games_label(BASE_GAMES)}_seed{seed}"
+                for model in ("small", "medium", "large")
+                for seed in SEEDS
+            ),
+            *(f"medium_no_clock_{games_label(BASE_GAMES)}_seed{seed}" for seed in SEEDS),
+            f"large_{games_label(DOUBLE_BASE_GAMES)}_seed42",
+            f"large_{games_label(BASE_GAMES * 4)}_seed42",
+            f"large_{games_label(DATA_SCALE_GAMES)}_seed42",
+        ),
+        report=True,
     ),
     DataVariant(
-        name=f"no_time_control_token_{TARGET_GAMES}",
-        preprocess_overrides=(f"target_games={TARGET_GAMES}", "time_control_token.enabled=false"),
-        train_variants=("baseline",),
+        name=f"no_time_control_token_{games_label(BASE_GAMES)}",
+        preprocess_overrides=(f"target_games={BASE_GAMES}", "time_control_token.enabled=false"),
+        train_variants=tuple(f"medium_seed{seed}" for seed in SEEDS),
         train_overrides=("time_control_token.enabled=false",),
     ),
     DataVariant(
-        name=f"no_outcome_{TARGET_GAMES}",
-        preprocess_overrides=(f"target_games={TARGET_GAMES}", "outcome_conditioning.enabled=false"),
-        train_variants=("baseline",),
-        train_overrides=("outcome_conditioning.enabled=false",),
-    ),
-    DataVariant(
-        name=f"no_elo_token_{TARGET_GAMES}",
-        preprocess_overrides=(f"target_games={TARGET_GAMES}", "include_elo=false"),
-        train_variants=("baseline",),
+        name=f"no_elo_token_{games_label(BASE_GAMES)}",
+        preprocess_overrides=(f"target_games={BASE_GAMES}", "include_elo=false"),
+        train_variants=tuple(f"medium_seed{seed}" for seed in SEEDS),
         train_overrides=("include_elo=false",),
     ),
     DataVariant(
-        name=f"no_piece_prefix_{TARGET_GAMES}",
-        preprocess_overrides=(f"target_games={TARGET_GAMES}", "piece_aware_moves=false"),
-        train_variants=("baseline",),
+        name=f"no_piece_prefix_{games_label(BASE_GAMES)}",
+        preprocess_overrides=(f"target_games={BASE_GAMES}", "piece_aware_moves=false"),
+        train_variants=tuple(f"medium_seed{seed}" for seed in SEEDS),
         train_overrides=("piece_aware_moves=false",),
     ),
     DataVariant(
-        name=f"no_color_prefix_{TARGET_GAMES}",
-        preprocess_overrides=(f"target_games={TARGET_GAMES}", "side_prefixed_moves=false"),
-        train_variants=("baseline",),
+        name=f"no_color_prefix_{games_label(BASE_GAMES)}",
+        preprocess_overrides=(f"target_games={BASE_GAMES}", "side_prefixed_moves=false"),
+        train_variants=tuple(f"medium_seed{seed}" for seed in SEEDS),
         train_overrides=("side_prefixed_moves=false",),
     ),
     DataVariant(
-        name=f"no_is_check_{TARGET_GAMES}",
-        preprocess_overrides=(f"target_games={TARGET_GAMES}", "qa.check.enabled=false"),
-        train_variants=("baseline",),
+        name=f"no_is_check_{games_label(BASE_GAMES)}",
+        preprocess_overrides=(f"target_games={BASE_GAMES}", "qa.check.enabled=false"),
+        train_variants=tuple(f"medium_seed{seed}" for seed in SEEDS),
     ),
     DataVariant(
-        name=f"no_what_is_on_{TARGET_GAMES}",
-        preprocess_overrides=(f"target_games={TARGET_GAMES}", "qa.what_is_on.enabled=false"),
-        train_variants=("baseline",),
+        name=f"no_what_is_on_{games_label(BASE_GAMES)}",
+        preprocess_overrides=(f"target_games={BASE_GAMES}", "qa.what_is_on.enabled=false"),
+        train_variants=tuple(f"medium_seed{seed}" for seed in SEEDS),
     ),
     DataVariant(
-        name=f"no_opp_material_{TARGET_GAMES}",
-        preprocess_overrides=(f"target_games={TARGET_GAMES}", "opponent_material.enabled=false"),
-        train_variants=("baseline",),
+        name=f"no_opp_material_{games_label(BASE_GAMES)}",
+        preprocess_overrides=(f"target_games={BASE_GAMES}", "opponent_material.enabled=false"),
+        train_variants=tuple(f"medium_seed{seed}" for seed in SEEDS),
         train_overrides=("opponent_material.enabled=false",),
     ),
     DataVariant(
-        name=f"no_opp_material_{DOUBLE_TARGET_GAMES}",
+        name=f"no_opp_material_{games_label(DOUBLE_BASE_GAMES)}",
         preprocess_overrides=(
-            f"target_games={DOUBLE_TARGET_GAMES}",
+            f"target_games={DOUBLE_BASE_GAMES}",
             "opponent_material.enabled=false",
         ),
-        train_variants=("baseline",),
+        train_variants=("medium_8M_seed42",),
         train_overrides=("opponent_material.enabled=false",),
     ),
 )
@@ -144,6 +222,14 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 def slug(value: str) -> str:
     return re.sub(r"[^A-Za-z0-9_.-]+", "_", value).strip("_")
+
+
+def filtered_dir_for(data_name: str) -> str:
+    return f"{FILTERED_BASE}/{slug(data_name)}"
+
+
+def tokenized_dir_for(data_name: str) -> str:
+    return f"{TOKENIZED_BASE}/{slug(data_name)}"
 
 
 def export_arg(env: dict[str, str]) -> str:
@@ -175,9 +261,9 @@ def download_overrides(data: DataVariant) -> tuple[str, ...]:
 
 def submit_download(
     data: DataVariant,
+    filtered_dir: str,
     tokenized_dir: str,
     *,
-    dependency_job_id: str | None,
     submit: bool,
 ) -> str:
     command = [
@@ -196,13 +282,12 @@ def submit_download(
         "--time",
         DOWNLOAD_TIME,
     ]
-    if dependency_job_id is not None:
-        command.extend(["--dependency", f"afterok:{dependency_job_id}"])
     command.extend(
         [
             "--export",
             export_arg(
                 {
+                    "KRASNAL_FILTERED_DIR": filtered_dir,
                     "KRASNAL_TOKENIZED_DIR": tokenized_dir,
                     "DOWNLOAD_EXTRA_ARGS": " ".join(download_overrides(data)),
                 }
@@ -215,6 +300,7 @@ def submit_download(
 
 def submit_preprocess(
     data: DataVariant,
+    filtered_dir: str,
     tokenized_dir: str,
     download_job_id: str,
     *,
@@ -240,15 +326,23 @@ def submit_preprocess(
         "--export",
         export_arg(
             {
+                "KRASNAL_FILTERED_DIR": filtered_dir,
                 "KRASNAL_TOKENIZED_DIR": tokenized_dir,
                 "PREPROCESS_EXTRA_ARGS": " ".join(
-                    (*data.preprocess_overrides, PREPROCESS_REPORT_OVERRIDE)
+                    (
+                        *data.preprocess_overrides,
+                        f"report.enabled={str(data.report).lower()}",
+                    )
                 ),
             }
         ),
         "scripts/slurm/preprocess.sh",
     ]
     return run_command(command, submit=submit)
+
+
+def run_name_for(data: DataVariant, train: TrainVariant) -> str:
+    return train.run_name or f"{data.name}-{train.name}"
 
 
 def submit_train(
@@ -258,8 +352,8 @@ def submit_train(
     *,
     submit: bool,
 ) -> str:
-    run_name = f"{data.name}-{train.name}"
-    tokenized_dir = f"{TOKENIZED_BASE}/{slug(data.name)}"
+    run_name = run_name_for(data, train)
+    tokenized_dir = tokenized_dir_for(data.name)
     command = [
         "sbatch",
         "--parsable",
@@ -283,7 +377,7 @@ def submit_train(
         export_arg(
             {
                 "KRASNAL_TOKENIZED_DIR": tokenized_dir,
-                "RUN_GROUP": f"krasnal-{MODEL}-{data.name}",
+                "RUN_GROUP": f"krasnal-paper-{data.name}",
                 "RUN_NAME": run_name,
                 "RUN_OVERRIDES": " ".join((*train.overrides, *data.train_overrides)),
                 "RUN_NPROC": str(TRAIN_GPUS),
@@ -331,11 +425,11 @@ def submit_diagnostic(
                 "PROBE_ARTIFACT_DIRS": " ".join(
                     f"{ARTIFACT_BASE}/{slug(run_name)}" for run_name in artifact_run_names
                 ),
-                "PROBE_EVAL_PARQUET": f"{TOKENIZED_BASE}/{slug(eval_data_variant)}/eval.parquet",
+                "PROBE_EVAL_PARQUET": f"{tokenized_dir_for(eval_data_variant)}/eval.parquet",
                 "PROBE_JSON_OUT": f"{DIAGNOSTIC_OUTPUT_DIR}/{slug(name)}.json",
                 "PROBE_WANDB": str(DIAGNOSTIC_WANDB).lower(),
                 "PROBE_WANDB_NAME": name,
-                "PROBE_WANDB_GROUP": f"krasnal-{MODEL}-diagnostics",
+                "PROBE_WANDB_GROUP": "krasnal-paper-diagnostics",
             }
         ),
         "scripts/slurm/diagnostic_probe.sh",
@@ -358,57 +452,59 @@ def main() -> None:
         f"{len(DATA_VARIANTS)} preprocess jobs, {train_count} train jobs, "
         f"{diagnostic_count} diagnostic jobs"
     )
-    print(f"Model: {MODEL}")
-    print(f"Target games: {TARGET_GAMES}")
+    print(f"Base games: {games_label(BASE_GAMES)}")
+    print(f"Data scale corpus: {games_label(DATA_SCALE_GAMES)}")
+    print(f"Seeds: {', '.join(str(seed) for seed in SEEDS)}")
     print(f"Train batch size: {TRAIN_BATCH_SIZE}")
 
     PROJECT_ROOT.joinpath(OUTPUT_DIR).mkdir(exist_ok=True)
 
-    previous_download_job_id: str | None = None
     train_job_ids: dict[str, str] = {}
     for data in DATA_VARIANTS:
         print(f"\nData variant: {data.name}")
-        tokenized_dir = f"{TOKENIZED_BASE}/{slug(data.name)}"
+        filtered_dir = filtered_dir_for(data.name)
+        tokenized_dir = tokenized_dir_for(data.name)
         download_job_id = submit_download(
             data,
+            filtered_dir,
             tokenized_dir,
-            dependency_job_id=previous_download_job_id,
             submit=args.submit,
         )
-        previous_download_job_id = download_job_id
         preprocess_job_id = submit_preprocess(
             data,
+            filtered_dir,
             tokenized_dir,
             download_job_id,
             submit=args.submit,
         )
         for train_name in data.train_variants:
-            run_name = f"{data.name}-{train_name}"
+            train = TRAIN_VARIANTS[train_name]
+            run_name = run_name_for(data, train)
             train_job_ids[run_name] = submit_train(
                 data,
-                TRAIN_VARIANTS[train_name],
+                train,
                 preprocess_job_id,
                 submit=args.submit,
             )
 
-    baseline_run = f"baseline_{TARGET_GAMES}-baseline"
-    no_is_check_run = f"no_is_check_{TARGET_GAMES}-baseline"
-    no_what_is_on_run = f"no_what_is_on_{TARGET_GAMES}-baseline"
+    baseline_run = f"baseline_{games_label(BASE_GAMES)}-medium-seed42"
+    no_is_check_run = f"no_is_check_{games_label(BASE_GAMES)}-medium_seed42"
+    no_what_is_on_run = f"no_what_is_on_{games_label(BASE_GAMES)}-medium_seed42"
 
     print("\nDiagnostic probes")
     submit_diagnostic(
-        name=f"check_state_no_is_check_vs_baseline_{TARGET_GAMES}",
+        name=f"check_state_no_is_check_vs_baseline_{games_label(BASE_GAMES)}",
         script="scripts/diagnostics/check_state_probe.py",
         artifact_run_names=(no_is_check_run, baseline_run),
-        eval_data_variant=f"no_is_check_{TARGET_GAMES}",
+        eval_data_variant=f"no_is_check_{games_label(BASE_GAMES)}",
         dependency_job_ids=(train_job_ids[no_is_check_run], train_job_ids[baseline_run]),
         submit=args.submit,
     )
     submit_diagnostic(
-        name=f"board_state_no_what_is_on_vs_baseline_{TARGET_GAMES}",
+        name=f"board_state_no_what_is_on_vs_baseline_{games_label(BASE_GAMES)}",
         script="scripts/diagnostics/board_state_probe.py",
         artifact_run_names=(no_what_is_on_run, baseline_run),
-        eval_data_variant=f"no_what_is_on_{TARGET_GAMES}",
+        eval_data_variant=f"no_what_is_on_{games_label(BASE_GAMES)}",
         dependency_job_ids=(train_job_ids[no_what_is_on_run], train_job_ids[baseline_run]),
         submit=args.submit,
     )
