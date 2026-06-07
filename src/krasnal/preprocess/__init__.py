@@ -2,7 +2,7 @@
 
 from .clock_report import run_clock_report
 from .config import PreprocessConfig
-from .eval_sampling import EVAL_GAMES_PER_BIN, EVAL_MIN_CLOCK, EVAL_MONTH, maia_eval_sample_sql
+from .eval_sampling import EVAL_GAMES_PER_BIN, EVAL_MONTH, maia_eval_sample_sql
 from .move_vocab_duckdb import build_move_vocab_from_filtered_parquet
 from .pack import PackedWindowBuilder, write_packed_dataset_manifest
 from .stats import (
@@ -17,7 +17,6 @@ from .what_is_on_baseline import build_what_is_on_baseline_counts
 
 __all__ = [
     "EVAL_GAMES_PER_BIN",
-    "EVAL_MIN_CLOCK",
     "EVAL_MONTH",
     "InvalidClockDataError",
     "PackedWindowBuilder",

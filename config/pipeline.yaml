@@ -10,7 +10,7 @@ time_control_token:
 opponent_material:
   enabled: true
 outcome_conditioning:
-  enabled: true
+  enabled: false
 block_size: 512
 wandb_project: krasnal
 

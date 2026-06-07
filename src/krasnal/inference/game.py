@@ -23,7 +23,7 @@ class Game:
     black_elo_token: int = ELO_ABOVE_2200_ID
     time_control_token: int = TC_UNKNOWN_ID
     target_outcome_token: int = DRAW_ID
-    outcome_conditioning_enabled: bool = True
+    outcome_conditioning_enabled: bool = False
     opponent_material_enabled: bool = False
     moves_uci: list[str] = field(default_factory=list)
     tokens: list[int] = field(default_factory=list)

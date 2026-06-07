@@ -15,6 +15,10 @@ qa:
 # null means use train.batch_size
 inference_batch_size: null
 
+# Maia-style position filter for move metrics.
+min_ply: 10
+min_active_clock: 30
+
 # List of classical metrics to compute
 metrics:
   - acc
@@ -25,8 +29,6 @@ metrics:
   - acc_when_in_check
   - mrr
   - top1_legal
-  - acc_elo_below_1000
-  - acc_elo_1000_1099
   - acc_elo_1100_1199
   - acc_elo_1200_1299
   - acc_elo_1300_1399
@@ -36,6 +38,3 @@ metrics:
   - acc_elo_1700_1799
   - acc_elo_1800_1899
   - acc_elo_1900_1999
-  - acc_elo_2000_2099
-  - acc_elo_2100_2199
-  - acc_elo_above_2200

@@ -1,23 +1,18 @@
 import duckdb
 import polars as pl
 
-from krasnal.preprocess.eval_sampling import (
-    EVAL_GAMES_PER_BIN,
-    EVAL_MIN_CLOCK,
-    maia_eval_sample_sql,
-)
+from krasnal.preprocess.eval_sampling import EVAL_GAMES_PER_BIN, maia_eval_sample_sql
 
 
 def _synthetic_games() -> pl.DataFrame:
     rows = []
     for bin_base in (1500, 1600):
         for game_idx in range(12_000):
-            low_clock = game_idx < 100
             rows.append(
                 {
                     "lichess_id": f"{bin_base}_{game_idx}",
                     "uci_moves": "e2e4",
-                    "clocks_white": [20 if low_clock else 40],
+                    "clocks_white": [20 if game_idx < 100 else 40],
                     "clocks_black": [40],
                     "white_rating": bin_base + 25,
                     "black_rating": bin_base + 75,
@@ -47,7 +42,6 @@ def test_maia_eval_sample_sql_filters_and_caps_per_bin(tmp_path):
         f"SELECT * FROM '{path}'",
         seed=seed,
         games_per_bin=games_per_bin,
-        min_clock=EVAL_MIN_CLOCK,
     )
     sampled = pl.from_pandas(con.execute(sql).df())
 
@@ -60,6 +54,27 @@ def test_maia_eval_sample_sql_filters_and_caps_per_bin(tmp_path):
         .sort("bin")
     )
     assert bin_counts["len"].to_list() == [games_per_bin, games_per_bin]
+
+
+def test_maia_eval_sample_sql_does_not_filter_whole_games_by_clock(tmp_path):
+    path = tmp_path / "low_clock.parquet"
+    pl.DataFrame(
+        {
+            "lichess_id": ["low_clock"],
+            "clocks_white": [[10]],
+            "clocks_black": [[40]],
+            "white_rating": [1550],
+            "black_rating": [1550],
+        }
+    ).write_parquet(path)
+
+    con = duckdb.connect()
+    inner = f"SELECT * FROM '{path}'"
+    sampled = pl.from_pandas(
+        con.execute(f"SELECT * FROM ({maia_eval_sample_sql(inner, seed=1)})").df()
+    )
+
+    assert sampled["lichess_id"].to_list() == ["low_clock"]
 
 
 def test_maia_eval_sample_sql_caps_per_bin(tmp_path):
@@ -80,3 +95,24 @@ def test_maia_eval_sample_sql_caps_per_bin(tmp_path):
         0
     ]
     assert count == EVAL_GAMES_PER_BIN
+
+
+def test_maia_eval_sample_sql_uses_maia_rating_range(tmp_path):
+    path = tmp_path / "rating_range.parquet"
+    pl.DataFrame(
+        {
+            "lichess_id": ["too_low", "maia_low", "maia_high", "too_high"],
+            "clocks_white": [[40]] * 4,
+            "clocks_black": [[40]] * 4,
+            "white_rating": [1050, 1150, 1950, 2050],
+            "black_rating": [1050, 1150, 1950, 2050],
+        }
+    ).write_parquet(path)
+
+    con = duckdb.connect()
+    inner = f"SELECT * FROM '{path}'"
+    sampled = pl.from_pandas(
+        con.execute(f"SELECT * FROM ({maia_eval_sample_sql(inner, seed=1)})").df()
+    )
+
+    assert sampled["lichess_id"].to_list() == ["maia_low", "maia_high"]

@@ -120,7 +120,7 @@ class ModelProvider(ChessModelProvider):
         self.session: InferenceSession | None = None
         self.artifact_config = artifact_config or {}
         self.outcome_conditioning_enabled = bool(
-            self.artifact_config.get("outcome_conditioning_enabled", True)
+            self.artifact_config.get("outcome_conditioning_enabled", False)
         )
         self.opponent_material_enabled = bool(
             self.artifact_config.get("opponent_material_enabled", False)

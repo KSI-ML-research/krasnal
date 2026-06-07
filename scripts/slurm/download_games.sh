@@ -31,5 +31,5 @@ test -d .venv || uv venv .venv --python 3.13
 uv sync
 
 echo "Tokenized dir: ${KRASNAL_TOKENIZED_DIR:-data/2_tokenized}"
-echo "Download overrides: ${DOWNLOAD_EXTRA_ARGS:-target_games=$GAMES require_evals=false}"
-uv run scripts/data/download_games.py ${DOWNLOAD_EXTRA_ARGS:-target_games=$GAMES require_evals=false}
+echo "Download overrides: ${DOWNLOAD_EXTRA_ARGS:-target_games=$GAMES}"
+uv run scripts/data/download_games.py ${DOWNLOAD_EXTRA_ARGS:-target_games=$GAMES}

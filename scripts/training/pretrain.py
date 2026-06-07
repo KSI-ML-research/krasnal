@@ -63,7 +63,7 @@ def _main(cfg: DictConfig, dist_info: DistributedInfo) -> None:
     include_elo = bool(cfg.get("include_elo", True))
     time_control_token_enabled = bool(cfg.get("time_control_token", {}).get("enabled", True))
     opponent_material_enabled = bool(cfg.get("opponent_material", {}).get("enabled", False))
-    outcome_conditioning_enabled = bool(cfg.get("outcome_conditioning", {}).get("enabled", True))
+    outcome_conditioning_enabled = bool(cfg.get("outcome_conditioning", {}).get("enabled", False))
     load_move_vocab(
         MOVE_VOCAB_PATH,
         piece_aware_moves=piece_aware_moves,

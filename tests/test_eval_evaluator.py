@@ -30,6 +30,19 @@ def test_compute_binary_f1_metrics_returns_expected_values():
     assert result["qa/is_check/f1"] == 2 * 0.75 * 0.6 / (0.75 + 0.6)
 
 
+def test_chess_evaluator_filters_maia_style_positions():
+    evaluator = ChessEvaluator(
+        metrics=["acc"],
+        min_ply=10,
+        min_active_clock=30,
+    )
+
+    assert not evaluator._include_context(EvalContext(what_is_on_ply=9, active_clock_seconds=60))
+    assert not evaluator._include_context(EvalContext(what_is_on_ply=10, active_clock_seconds=29))
+    assert evaluator._include_context(EvalContext(what_is_on_ply=10, active_clock_seconds=30))
+    assert evaluator._include_context(EvalContext(what_is_on_ply=10, active_clock_seconds=None))
+
+
 def test_build_what_is_on_heatmap_uses_all_squares():
     square_accs = {f"{file}{rank}": float(rank) for rank in range(1, 9) for file in "abcdefgh"}
 

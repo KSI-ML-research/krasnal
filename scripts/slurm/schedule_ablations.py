@@ -166,13 +166,10 @@ def download_overrides(data: DataVariant) -> tuple[str, ...]:
         "piece_aware_moves=",
         "side_prefixed_moves=",
     )
-    return (
-        *(
-            override
-            for override in data.preprocess_overrides
-            if override.startswith(vocab_relevant_prefixes)
-        ),
-        "require_evals=false",
+    return tuple(
+        override
+        for override in data.preprocess_overrides
+        if override.startswith(vocab_relevant_prefixes)
     )
 
 
