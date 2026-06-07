@@ -28,7 +28,7 @@ from krasnal.utils import set_seed
 from .metrics.context import EvalContext
 
 EVAL_GAME_CHUNK_SIZE = 256
-BASE_MOVE_METRICS = {"acc", "top1_legal"}
+BASE_MOVE_METRICS = {"acc", "mrr", "top1_legal"}
 ACC_FILTERS = {
     "acc_opening": "opening",
     "acc_middlegame": "middlegame",
@@ -86,8 +86,10 @@ class _MoveMetricAccumulator:
         )
         top1 = logits.argmax(dim=1)
         top1_cpu = top1.detach().cpu().tolist()
+        rank = logits.gt(logits.gather(1, actual[:, None])).sum(dim=1) + 1
 
         acc = top1.eq(actual).float()
+        mrr = rank.float().reciprocal()
         top1_legal = torch.tensor(
             [
                 1.0 if _is_legal_token_in_position(ctx, top_id) else 0.0
@@ -99,6 +101,7 @@ class _MoveMetricAccumulator:
 
         return {
             "acc": acc,
+            "mrr": mrr,
             "top1_legal": top1_legal,
         }
 

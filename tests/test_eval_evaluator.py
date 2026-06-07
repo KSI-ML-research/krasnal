@@ -97,6 +97,7 @@ def test_move_metric_accumulator_computes_requested_metrics():
         "acc_when_in_check",
         "acc_elo_1500_1599",
         "acc_elo_1600_1699",
+        "mrr",
         "top1_legal",
     ]
     contexts = [
@@ -133,6 +134,7 @@ def test_move_metric_accumulator_computes_requested_metrics():
     logits = torch.zeros((3, get_vocab_size()))
     logits[0, legal_token] = 1.0
     logits[1, illegal_for_start_position] = 1.0
+    logits[1, legal_token] = 0.5
     logits[2, legal_token] = 1.0
     accumulator.update(contexts, logits)
     result = accumulator.finalize()
@@ -146,6 +148,7 @@ def test_move_metric_accumulator_computes_requested_metrics():
         "acc_when_in_check": 0.0,
         "acc/acc_elo_1500_1599": 1.0,
         "acc/acc_elo_1600_1699": 0.0,
+        "mrr": (1.0 + 0.5 + 1.0) / 3,
         "top1_legal": 2 / 3,
     }
 
