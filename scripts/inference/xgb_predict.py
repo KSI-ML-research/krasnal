@@ -1,5 +1,4 @@
-#!/usr/bin/env python3
-
+"""CLI wrapper that runs XGBoost prediction on move-lvl parquets"""
 from __future__ import annotations
 
 import argparse

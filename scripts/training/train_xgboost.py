@@ -1,5 +1,4 @@
-#!/usr/bin/env python3
-
+"""CLI entrypoint - runs XGBoost training"""
 from krasnal.move_time.xgboost import main
 
 

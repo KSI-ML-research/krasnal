@@ -1,8 +1,7 @@
-#!/usr/bin/env python3
-"""Quick calibration script for `analyze_move`.
+"""Quick calibration script for 'analyze_move'.
 
 Generates several example legal-prob distributions and evaluates
-`analyze_move` across a range of `ply` values so you can eyeball the
+'analyze_move' across a range of 'ply' values to show the
 heuristic baseline behavior.
 """
 from __future__ import annotations
@@ -96,7 +95,7 @@ def eval_scenarios(n: int, plies: List[int]) -> None:
 
 
 if __name__ == "__main__":
-    # small toy vocab size (legal moves count) — tune as needed
+    # small vocab size (legal moves count)
     vocab_n = 16
     plies = [0, 5, 10, 20, 35, 40, 60]
     eval_scenarios(vocab_n, plies)

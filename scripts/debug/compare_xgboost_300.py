@@ -1,5 +1,4 @@
-#!/usr/bin/env python3
-
+"""Compares metrics from quick local XGBoost training with reference artifact and prints out diffs."""
 from __future__ import annotations
 
 import argparse

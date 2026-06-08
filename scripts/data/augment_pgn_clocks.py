@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Augment Aix-filtered parquet files with PGN clock annotations from Lichess."""
 
 from __future__ import annotations

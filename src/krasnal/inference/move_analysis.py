@@ -1,3 +1,4 @@
+"""Heuristic baseline for time prediction model using move entropy and ply with applied function"""
 from dataclasses import dataclass
 import math
 

@@ -1,3 +1,10 @@
+"""XGBoost baseline trainer and predictor for move-time estimation.
+
+Provides utilities to train/evaluate XGBoost variants (with or without
+entropy features), predict on parquet files, and produce timestamped
+artifact directories with metrics and saved models.
+"""
+
 from __future__ import annotations
 
 import argparse

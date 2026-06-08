@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Build move-level train/val/test parquet tables for XGBoost.
 
 Input files are expected to be game-level parquet files produced by preprocess
@@ -86,8 +85,8 @@ def _load_games(input_paths: list[Path]) -> pl.DataFrame:
             continue
 
         df = pl.read_parquet(path)
-        # Ensure we have a ply list; if not, try to derive from `uci_moves` or from
-        # the length of `move_clocks_seconds`.
+        # If there's no ply list then try to derive from 'uci_moves' or from
+        # the length of 'move_clocks_seconds'.
         if "ply_list" not in df.columns:
             if "uci_moves" in df.columns:
                 # derive ply_list as list of indices per game from uci_moves
@@ -138,7 +137,6 @@ def _load_games(input_paths: list[Path]) -> pl.DataFrame:
                 return out
 
             labels_list = []
-            # prepare python lists to avoid polars Series truth-value issues
             mc_list = df["move_clocks_seconds"].to_list()
             if "time_initial" in df.columns:
                 ti_list = df["time_initial"].to_list()
@@ -169,7 +167,7 @@ def _load_games(input_paths: list[Path]) -> pl.DataFrame:
                     elif ti is not None and tinc is not None:
                         labels = _compute_labels_row(mc, ti, tinc)
                     else:
-                        # fallback: compute per-ply time from adjacent clocks (assume increment=0)
+                        # compute per-ply time from adjacent clocks (increment=0)
                         labels = []
                         for j in range(len(mc) - 1):
                             a = mc[j]
@@ -450,11 +448,8 @@ def _explode_to_moves(games: pl.DataFrame) -> pl.DataFrame:
 
 def _filter_implausible_move_times(moves: pl.DataFrame) -> pl.DataFrame:
     """Drop moves whose reported think time exceeds a generous clock-based bound.
-
-    The labels are derived from clock comments, so a move time should not be much
-    larger than the available pre-move clock. We keep a wide 300-second margin to
-    avoid removing legitimate long thinks while still catching obvious clock
-    mismatches and parsing errors.
+    300-second margin to avoid removing legitimate long thinks while still catching 
+    obvious clock mismatches and parsing errors.
     """
 
     if "prev_clock_seconds" not in moves.columns or "target_move_time_seconds" not in moves.columns:

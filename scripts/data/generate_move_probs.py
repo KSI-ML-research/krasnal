@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Generate per-move model probabilities or entropy for selected games only.
 
 This script is intentionally scoped to a small set of games (for example the
@@ -120,8 +119,8 @@ def main() -> None:
         return
 
     # Build game states and full legal probability vectors.
-    # We intentionally rebuild each prefix Game instead of copying Game objects,
-    # because bulletchess.Board cannot be deep-copied/pickled safely.
+    # Rebuild each prefix Game instead of copying Game objects,
+    # because bulletchess.Board can't be deep-copied/pickled safely.
     games: list[Game] = []
     mapping: list[tuple[int, int]] = []
     for row_idx, uci_raw in enumerate(df.get_column("uci_moves")):
