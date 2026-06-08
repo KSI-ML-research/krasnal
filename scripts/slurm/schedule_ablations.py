@@ -140,13 +140,15 @@ for seed in SEEDS:
         corpus_games=BASE_GAMES,
     )
 
-TRAIN_VARIANTS["medium_8M_seed42"] = train_variant(
-    name="medium_8M_seed42",
-    model="medium",
-    seed=42,
-    budget_games=DOUBLE_BASE_GAMES,
-    corpus_games=DOUBLE_BASE_GAMES,
-)
+for seed in SEEDS:
+    key = f"medium_8M_seed{seed}"
+    TRAIN_VARIANTS[key] = train_variant(
+        name=key,
+        model="medium",
+        seed=seed,
+        budget_games=DOUBLE_BASE_GAMES,
+        corpus_games=DOUBLE_BASE_GAMES,
+    )
 
 DATA_VARIANTS = (
     DataVariant(
@@ -211,7 +213,7 @@ DATA_VARIANTS = (
             f"target_games={DOUBLE_BASE_GAMES}",
             "opponent_material.enabled=false",
         ),
-        train_variants=("medium_8M_seed42",),
+        train_variants=tuple(f"medium_8M_seed{seed}" for seed in SEEDS),
         train_overrides=("opponent_material.enabled=false",),
     ),
 )

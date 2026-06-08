@@ -1,0 +1,14 @@
+defaults:
+  - preprocess
+  - _self_
+
+include_elo: false
+
+time_control_token:
+  enabled: false
+
+opponent_material:
+  enabled: false
+
+outcome_conditioning:
+  enabled: false

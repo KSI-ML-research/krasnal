@@ -80,7 +80,7 @@ bot-run +model_path='':
         exit 1; \
     fi
     @if [ ! -x ".venv/bin/python" ]; then \
-        echo "Missing project venv for engine. Run: just setup"; \
+        echo "Missing project venv for engine. Run: uv sync"; \
         exit 1; \
     fi
     @if [ "$(uname)" = "Darwin" ]; then \

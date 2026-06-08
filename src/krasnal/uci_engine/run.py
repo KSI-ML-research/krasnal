@@ -37,8 +37,8 @@ def main() -> None:
         print("WARNING: Running in MOCK mode (random moves)", file=sys.stderr)
         print("=" * 60 + "\n", file=sys.stderr)
 
-    # Defer ``build_provider()`` until the first ``uci`` so python-chess gets ``uciok`` quickly
-    # while torch / weights load (lichess-bot ``silence_stderr: false`` hides stderr otherwise).
+    # Defer ``build_provider()`` until ``isready`` / first use so python-chess gets ``uciok``
+    # quickly while torch / weights load.
     uci = UCIParser(lazy_start=True)
     uci.run()
 

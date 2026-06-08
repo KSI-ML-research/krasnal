@@ -12,18 +12,12 @@ from loguru import logger
 from krasnal.inference import Game, InferenceSession, load_model
 from krasnal.inference.exceptions import NoLegalMovesError
 from krasnal.inference.sampling import sample_token
-from krasnal.time_conditioning import uniform_clock_pair
 from krasnal.tokens import (
-    ELO_ABOVE_2200_ID,
-    TC_UNKNOWN_ID,
-    get_elo_bucket,
-    get_time_control_bucket,
     legal_token_ids,
     load_move_vocab,
     normalize_history_uci_moves,
     to_uci,
 )
-from krasnal.uci_engine.go_params import GoParams
 from krasnal.utils import (
     gpt_config_from_artifact_dict,
     read_model_config_json,
@@ -41,20 +35,12 @@ class ChessModelProvider(ABC):
     """
 
     @abstractmethod
-    def reset_session(self, outcome_token: int) -> None:
+    def reset_session(self) -> None:
         """Reset for a new game (``ucinewgame``)."""
 
     @abstractmethod
     def get_best_move(self, uci_moves: str) -> str:
         """Return best move UCI for the given move list string."""
-
-    def set_go_params(self, params: GoParams | None) -> None:
-        """Latest ``go`` line (clocks); default no-op for mocks."""
-        _ = params
-
-    def apply_setoption(self, name: str, value: str) -> None:
-        """Optional ``setoption`` (Elo / TC metadata); default no-op."""
-        _ = (name, value)
 
 
 class RandomMockProvider(ChessModelProvider):
@@ -62,8 +48,8 @@ class RandomMockProvider(ChessModelProvider):
     Chess model returning random legal move. Use for testing, not actual games ;)
     """
 
-    def reset_session(self, outcome_token: int) -> None:
-        _ = outcome_token
+    def reset_session(self) -> None:
+        return None
 
     @staticmethod
     def _apply_uci_move_list(board: bulletchess.Board, uci_moves: str) -> None:
@@ -83,17 +69,6 @@ class RandomMockProvider(ChessModelProvider):
 
         chosen_move = random.choice(legal_moves)
         return chosen_move.uci()
-
-
-def _parse_spin_option(value: str) -> int | None:
-    v = value.strip()
-    if not v:
-        return None
-    try:
-        n = int(v)
-    except ValueError:
-        return None
-    return None if n < 0 else n
 
 
 class ModelProvider(ChessModelProvider):
@@ -116,20 +91,8 @@ class ModelProvider(ChessModelProvider):
         )
         self.temperature = float(os.environ.get("KRASNAL_TEMPERATURE", "0.0"))
         self.top_p = float(os.environ.get("KRASNAL_TOP_P", "1.0"))
-        self.outcome_token: int | None = None
         self.session: InferenceSession | None = None
         self.artifact_config = artifact_config or {}
-        self.outcome_conditioning_enabled = bool(
-            self.artifact_config.get("outcome_conditioning_enabled", False)
-        )
-        self.opponent_material_enabled = bool(
-            self.artifact_config.get("opponent_material_enabled", False)
-        )
-        self._last_go: GoParams | None = None
-        self._white_elo: int | None = None
-        self._black_elo: int | None = None
-        self._tc_initial_sec: int | None = None
-        self._tc_inc_sec: int | None = None
 
     @classmethod
     def from_artifact_dir(
@@ -139,6 +102,21 @@ class ModelProvider(ChessModelProvider):
     ) -> ModelProvider:
         cfg_path = artifact_dir / "config.json"
         artifact_config = read_model_config_json(cfg_path)
+        unsupported = []
+        if bool(artifact_config.get("outcome_conditioning_enabled", False)):
+            unsupported.append("outcome_conditioning")
+        if bool(artifact_config["use_clock_encodings"]):
+            unsupported.append("clock_encodings")
+        if bool(artifact_config.get("time_control_token_enabled", True)):
+            unsupported.append("time_control_token")
+        if bool(artifact_config.get("opponent_material_enabled", False)):
+            unsupported.append("opponent_material")
+        if bool(artifact_config.get("include_elo", True)):
+            unsupported.append("elo_tokens")
+        if unsupported:
+            raise ModelProviderError(
+                "Artifacts with " + ", ".join(unsupported) + " are not supported for inference"
+            )
         if not (artifact_dir / "model.pt").is_file():
             raise ValueError(
                 f"Missing model.pt under {artifact_dir}. "
@@ -159,98 +137,37 @@ class ModelProvider(ChessModelProvider):
             artifact_config=artifact_config,
         )
 
-    def _white_elo_token(self) -> int:
-        return get_elo_bucket(self._white_elo) if self._white_elo is not None else ELO_ABOVE_2200_ID
-
-    def _black_elo_token(self) -> int:
-        return get_elo_bucket(self._black_elo) if self._black_elo is not None else ELO_ABOVE_2200_ID
-
-    def _time_control_token(self) -> int:
-        if self._tc_initial_sec is None or self._tc_inc_sec is None:
-            return TC_UNKNOWN_ID
-        return get_time_control_bucket(self._tc_initial_sec, self._tc_inc_sec)
-
-    def _build_game(self, outcome_token: int) -> Game:
+    def _build_game(self) -> Game:
         return Game(
-            white_elo_token=self._white_elo_token(),
-            black_elo_token=self._black_elo_token(),
-            time_control_token=self._time_control_token(),
-            target_outcome_token=outcome_token,
-            outcome_conditioning_enabled=self.outcome_conditioning_enabled,
-            opponent_material_enabled=self.opponent_material_enabled,
+            elo_tokens_enabled=False,
+            time_control_token_enabled=False,
         )
 
-    def _clock_initial_seconds_for_session(self) -> int | None:
-        if not self.model.config.use_clock_encodings:
-            return None
-        if self._tc_initial_sec is not None:
-            return self._tc_initial_sec
-        raw = self.artifact_config.get("time_initial")
-        if raw is not None:
-            return int(raw)
-        raise ModelProviderError(
-            "krasnalInitialSeconds setoption (or time_initial in model config) is required "
-            "when use_clock_encodings is enabled"
-        )
-
-    def reset_session(self, outcome_token: int) -> None:
-        """Reset for a new game; clears ``go`` metadata but keeps setoption TC/Elo."""
-        self.outcome_token = outcome_token
-        self._last_go = None
+    def reset_session(self) -> None:
+        """Reset for a new game."""
         self.session = InferenceSession(
             self.model,
             self.device,
-            game=self._build_game(outcome_token),
-            clock_initial_seconds=self._clock_initial_seconds_for_session(),
+            game=self._build_game(),
         )
 
-    def set_go_params(self, params: GoParams | None) -> None:
-        self._last_go = params
-
-    def apply_setoption(self, name: str, value: str) -> None:
-        key = name.strip()
-        val = _parse_spin_option(value)
-        match key.lower():
-            case "krasnalwhiteelo":
-                self._white_elo = val
-            case "krasnalblackelo":
-                self._black_elo = val
-            case "krasnalinitialseconds":
-                self._tc_initial_sec = val
-            case "krasnalincrementseconds":
-                self._tc_inc_sec = val
-            case _:
-                return
-        self._sync_session_conditioning()
-
-    def _sync_session_conditioning(self) -> None:
-        if self.session is None:
-            return
-        g = self.session.game
-        g.white_elo_token = self._white_elo_token()
-        g.black_elo_token = self._black_elo_token()
-        g.time_control_token = self._time_control_token()
-        self.session.sync_prefix_tokens_from_game()
-
     def _sync_session_history(self, move_list: list[str]) -> InferenceSession:
-        if self.session is None or self.outcome_token is None:
-            raise ModelProviderError("Session not initialized. Call reset_session first.")
+        if self.session is None:
+            self.reset_session()
 
         session = self.session
+        assert session is not None
         current_moves = session.game.moves_uci
 
         if move_list[: len(current_moves)] != current_moves:
-            self.reset_session(self.outcome_token)
+            self.reset_session()
             session = self.session
             assert session is not None
             current_moves = session.game.moves_uci
 
         for move_str in move_list[len(current_moves) :]:
             try:
-                session.feed_uci(
-                    move_str,
-                    *uniform_clock_pair(self._clock_initial_seconds_for_session()),
-                )
+                session.feed_uci(move_str)
             except ValueError as exc:
                 raise ModelProviderError(f"Invalid move in history: {move_str}") from exc
 
@@ -259,8 +176,6 @@ class ModelProvider(ChessModelProvider):
     def _pick_best_uci(self, session: InferenceSession) -> str:
         if not list(session.game.board.legal_moves()):
             raise NoLegalMovesError("No legal moves available")
-
-        session.prepare_go_clocks(self._last_go)
 
         legal_ids = legal_token_ids(session.game.board)
         if not legal_ids:
