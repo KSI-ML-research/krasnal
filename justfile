@@ -17,7 +17,6 @@ LICHESS_BOT_REF := "96a8f74d87a42db8039e847548fec0d9528bb079"
     @echo "  just format [args]                    - format Python code"
     @echo "  just test [args]                      - run Python tests"
     @echo "  just pre-commit                       - run all pre-commit hooks"
-    @echo "  just pipeline                         - run full training pipeline"
     @echo "  just download-games [args]            - download & filter games"
     @echo "  just preprocess                       - tokenize Aix-filtered games for training"
     @echo "  just pretrain model=large train=cuda  - run pretraining stage"
@@ -38,13 +37,6 @@ test *args:
 pre-commit:
     uv run pre-commit run --all-files
 
-
-# Run full training pipeline: download games, preprocess, pretrain
-pipeline:
-    uv sync
-    just download-games
-    just preprocess
-    just pretrain
 
 # Download & filter Aix Lichess database for high-quality games with evals
 # Uses DuckDB + Aix extension for fast SQL-based filtering

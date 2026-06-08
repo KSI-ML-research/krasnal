@@ -220,8 +220,10 @@ local_games/
 lichess-bot/
 
 # Hydra output
+output/
 outputs/
 .hydra/
+.tmp/
 
 
 *.pt
@@ -237,6 +239,7 @@ artifacts/
 
 .hf_home/
 .hf_cache/
+.uv-cache/
 
 .cursor
 .codex

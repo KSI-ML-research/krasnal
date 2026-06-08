@@ -4,101 +4,70 @@
 [![GitHub Stars](https://img.shields.io/github/stars/KSI-ML-research/krasnal)](https://github.com/KSI-ML-research/krasnal/stargazers)
 [![GitHub Forks](https://img.shields.io/github/forks/KSI-ML-research/krasnal)](https://github.com/KSI-ML-research/krasnal/network)
 
-**Wrocław-based chess engine powered by Transformer architecture.**
+Transformer-based chess engine.
 
-## 1. Project Goal
+## Project goal
 
-Krasnal is a Transformer-based chess engine. It aims to play strong, human-like chess — balancing the intuition of Maya Chess with the strength of Stockfish.
+Krasnal aims to be the most human-like chess engine: strong enough to play useful games, but
+trained to choose moves that feel closer to human play than classical engine search.
 
-## 2. System Architecture
-
-The architecture is documented using the [C4 model](https://c4model.com/).
-
-### C4: Context Diagram
+## Architecture
 
 ```mermaid
 flowchart LR
-    subgraph External["External"]
-        LichessAPI[Lichess API<br/>Games Database]
-        LichessOrg[lichess.org<br/>Chess Server]
-        LichessBot[lichess-bot<br/>Bot Client]
-        User(👤 Player)
-    end
-
-    subgraph Krasnal["System: Krasnal"]
-        DataIngestion[DuckDB + Aix<br/>Data Ingestion]
-        Training[Training Pipeline]
-        Inference[UCI Engine]
-        Model[Transformer Model]
-    end
-
-    LichessAPI -->|"PGN"| DataIngestion
-    DataIngestion -->|"Parquet"| Training
-    Training -->|"Model weights"| Model
-    User -->|"plays"| LichessOrg
-    LichessOrg <-->|"UCI"| LichessBot
-    LichessBot <--"UCI"--> Inference
-    Inference --> Model
+    Lichess[Lichess games] --> Download[Download and filter]
+    Download --> Preprocess[Tokenize and pack]
+    Preprocess --> Train[Train Transformer]
+    Train --> Artifact[Model artifact]
+    Artifact --> UCI[UCI engine]
+    UCI --> Bot[lichess-bot]
 ```
 
-### C4: Container Diagram
+## Setup
 
-```mermaid
-flowchart TD
-    subgraph Data["Data Ingestion (Python)"]
-        AixDB[Aix Database<br/>HuggingFace]
-        DuckDB[Aix DuckDB<br/>Extension]
-        ParquetRaw[("Parquet<br/>Filtered games")]
-    end
+This project uses `uv` for dependency management.
 
-    subgraph Preprocess["Preprocessing (Python)"]
-        Tokenizer[Tokenizer]
-        Conditioning[Outcome Conditioning<br/>ELO + Result tokens]
-        ParquetTokenized[("Parquet<br/>Tokenized training data")]
-    end
-
-    subgraph Training["Model Training (Python + PyTorch)"]
-        WAndB[W&B<br/>Logging]
-        GPTTraining[GPT Training]
-        Artifacts[("Model artifacts<br/>.pt + config")]
-    end
-
-    subgraph Inference["Inference (Python)"]
-        UCI[UCI Parser]
-        Provider[Model Provider]
-        Generator[Move Generator]
-    end
-
-    subgraph External["External"]
-        LichessBot[lichess-bot]
-    end
-
-    AixDB -->|"Parquet"| DuckDB -->|"UCI + FEN"| ParquetRaw
-    ParquetRaw --> Tokenizer --> Conditioning --> ParquetTokenized
-    ParquetTokenized --> GPTTraining --> Artifacts
-    GPTTraining -.->|".pt + evals"| WAndB
-    Artifacts --> Provider
-    LichessBot <--"stdin/stdout (UCI)"--> UCI
-    UCI --> Provider --> Generator
+```bash
+uv sync
 ```
 
----
+Optional local credentials can be configured by copying `.env.example` to `.env`.
 
-## 3. Documentation
+## Common commands
 
-Detailed guides for developers and users:
+Commands are defined in the local `justfile`.
 
--   [**Installation Guide**](docs/INSTALLATION.md) - How to set up the environment (Python, uv).
--   [**Training Pipeline**](docs/training_pipeline.md) - Download games, preprocess, and pretrain.
--   [**Contributing Guide**](docs/CONTRIBUTING.md) - Code standards, pre-commit hooks and development process.
--   [**Research Notes**](docs/RESEARCH.md) - Summary of tested architecture variants and experiments.
--   [**Outcome conditioning**](docs/outcome_conditioning.md) - Prefix with a win/loss token so the model can be steered toward playing for White or Black.
--   [**Weights & Biases**](docs/wandb.md) - Experiment logging.
--   [**Lichess bot (local)**](docs/lichess_bot_local_setup.md) - Run the bot from your machine.
--   [**Bot implementation plan**](docs/bot_implementation_plan.md) - Lichess integration architecture.
+```bash
+just --list
+just test
+just lint
+just format
+```
 
-## 4. Configuration Layout
+The main pipeline commands are:
 
--   Hydra configs for training and generation live in `config/`.
--   Lichess bot template config lives at `config/config.yml.example`.
--   Existing `just` command usage remains the same.
+```bash
+just download-games
+just preprocess
+just pretrain
+```
+
+## Training and artifacts
+
+Training configuration lives in `config/`. Model sizes are defined under `config/model/`, while
+runtime and training settings are split across `config/train/`, `config/preprocess.yaml`,
+`config/download.yaml`, and `config/pretrain.yaml`.
+
+Generated datasets, checkpoints, W&B runs, model artifacts, caches, and local bot files are not
+committed to the repository.
+
+## Lichess bot
+
+The UCI engine can be run locally through `lichess-bot`.
+
+```bash
+just bot-setup
+just bot-run artifacts/path/to/model
+```
+
+See `docs/lichess_bot_local_setup.md` for details.
