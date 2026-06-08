@@ -137,7 +137,7 @@ def main(cfg: DictConfig) -> None:
         move_vocab_path=MOVE_VOCAB_PATH,
     )
 
-    parquet_files = sorted(input_dir.glob("*.parquet"))
+    parquet_files = sorted(RAW_UCI_DIR.glob("*.parquet"))
     if not parquet_files:
         raise FileNotFoundError(f"No Aix-filtered games found in {RAW_UCI_DIR}")
 

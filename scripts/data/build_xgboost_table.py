@@ -1,16 +1,14 @@
 """Build move-level train/val/test parquet tables for XGBoost.
 
-Input files are expected to be game-level parquet files produced by preprocess
-with list columns:
-  - ply_list
-  - move_clocks_seconds
-  - move_time_seconds
+Input files are game-level parquet files from data/1_filtered/ (produced by
+download_games.py) with Aix clock columns (clocks_white, clocks_black,
+time_initial, time_increment).
 """
 
 from __future__ import annotations
 
+import contextlib
 from pathlib import Path
-import re
 
 import chess
 import hydra
@@ -19,14 +17,29 @@ import torch
 from loguru import logger
 from omegaconf import DictConfig
 
-from krasnal.config import EVAL_DATASET_PATH, PRETRAIN_DATASET_PATH
+from krasnal.config import RAW_UCI_DIR
 from krasnal.inference.move_analysis import move_entropy, ply_scaling
-from krasnal.lichess_clocks import fetch_lichess_pgn
-
 
 MAX_TIME_OVER_CLOCK_SECONDS = 300.0
 TRAIN_FRACTION = 0.70
 VAL_FRACTION = 0.15
+
+_REQUIRED_COLUMNS = {
+    "lichess_id",
+    "uci_moves",
+    "clocks_white",
+    "clocks_black",
+    "time_initial",
+    "time_increment",
+    "ply_count",
+    "is_check",
+    "piece_moved",
+    "white_rating",
+    "black_rating",
+    "result",
+}
+
+_READ_COLUMNS = sorted(_REQUIRED_COLUMNS)
 
 
 def _bucket_time_initial(time_initial: float | int | None) -> str:
@@ -54,245 +67,260 @@ def _bucket_ply_count(ply_count: float | int | None) -> str:
 
 
 def _stable_shuffle_key(game_idx: pl.Expr, seed: int = 42) -> pl.Expr:
-    # Simple deterministic pseudo-shuffle that keeps the split reproducible.
     return ((game_idx.cast(pl.Int64) * 1103515245) + seed) % 2_147_483_647
 
 
-def _parse_timecontrol_from_pgn(pgn_text: str) -> tuple[float | None, float | None]:
-    """Parse TimeControl PGN tag as (initial_seconds, increment_seconds)."""
-    match = re.search(r'\[TimeControl\s+"(\d+)\+(\d+)"\]', pgn_text)
-    if not match:
-        return None, None
-    try:
-        return float(match.group(1)), float(match.group(2))
-    except Exception:
-        return None, None
+def _interleave_clocks(
+    clocks_white: list[float] | None,
+    clocks_black: list[float] | None,
+    n_moves: int,
+) -> list[float | None]:
+    if clocks_white is None or clocks_black is None:
+        return [None] * n_moves
+    result: list[float | None] = []
+    w_idx = 0
+    b_idx = 0
+    for ply in range(n_moves):
+        if ply % 2 == 0:
+            if w_idx < len(clocks_white):
+                result.append(clocks_white[w_idx])
+                w_idx += 1
+            else:
+                result.append(None)
+        else:
+            if b_idx < len(clocks_black):
+                result.append(clocks_black[b_idx])
+                b_idx += 1
+            else:
+                result.append(None)
+    return result
+
+
+def _compute_move_time_seconds(
+    clocks_white: list[float] | None,
+    clocks_black: list[float] | None,
+    time_initial: float,
+    time_increment: float,
+    n_moves: int,
+) -> list[float | None]:
+    if clocks_white is None or clocks_black is None:
+        return [None] * max(n_moves, 0)
+    result: list[float | None] = []
+    white_prev = time_initial
+    black_prev = time_initial
+    w_idx = 0
+    b_idx = 0
+    for ply in range(n_moves):
+        if ply % 2 == 0:
+            if w_idx < len(clocks_white):
+                cur = clocks_white[w_idx]
+                w_idx += 1
+            else:
+                result.append(None)
+                continue
+            if cur is None:
+                result.append(None)
+            else:
+                used = white_prev - float(cur) + time_increment
+                result.append(max(0.0, used))
+                white_prev = float(cur)
+        else:
+            if b_idx < len(clocks_black):
+                cur = clocks_black[b_idx]
+                b_idx += 1
+            else:
+                result.append(None)
+                continue
+            if cur is None:
+                result.append(None)
+            else:
+                used = black_prev - float(cur) + time_increment
+                result.append(max(0.0, used))
+                black_prev = float(cur)
+    return result
+
+
+def _compute_prev_clock_seconds(
+    move_clocks: list[float | None],
+) -> list[float | None]:
+    result: list[float | None] = []
+    for i in range(len(move_clocks)):
+        if i >= 2:
+            result.append(move_clocks[i - 2])
+        else:
+            result.append(None)
+    return result
+
+
+def _compute_clock_diff_seconds(
+    move_clocks: list[float | None],
+) -> list[float | None]:
+    result: list[float | None] = []
+    for i in range(len(move_clocks)):
+        if i >= 2 and move_clocks[i - 2] is not None and move_clocks[i] is not None:
+            try:
+                diff = max(0.0, float(move_clocks[i - 2]) - float(move_clocks[i]))
+                result.append(diff)
+            except Exception:
+                result.append(None)
+        else:
+            result.append(None)
+    return result
 
 
 def _load_games(input_paths: list[Path]) -> pl.DataFrame:
     frames: list[pl.DataFrame] = []
     game_offset = 0
 
-    required_columns = {
-        "ply_list",
-        "move_clocks_seconds",
-        "move_time_seconds",
-    }
-
     for path in input_paths:
         if not path.exists():
             logger.warning("Skipping missing input: {}", path)
             continue
 
-        df = pl.read_parquet(path)
-        # If there's no ply list then try to derive from 'uci_moves' or from
-        # the length of 'move_clocks_seconds'.
-        if "ply_list" not in df.columns:
-            if "uci_moves" in df.columns:
-                # derive ply_list as list of indices per game from uci_moves
-                ply_lists = []
-                for s in df["uci_moves"]:
-                    if s is None:
-                        ply_lists.append([])
-                    else:
-                        try:
-                            n = len(s.split())
-                        except Exception:
-                            n = 0
-                        ply_lists.append(list(range(n)))
-                df = df.with_columns(pl.Series("ply_list", ply_lists, dtype=pl.List(pl.Int64)))
-            elif "move_clocks_seconds" in df.columns:
-                # derive sequential ply indices per game from clocks length (eager Python fallback)
-                ply_lists = []
-                for lst in df["move_clocks_seconds"]:
-                    if lst is None:
-                        ply_lists.append([])
-                    else:
-                        try:
-                            n = len(lst)
-                        except Exception:
-                            n = 0
-                        ply_lists.append(list(range(n)))
-                df = df.with_columns(pl.Series("ply_list", ply_lists, dtype=pl.List(pl.Int64)))
+        df = pl.read_parquet(path, columns=_READ_COLUMNS)
 
-        # Ensure we have move_time_seconds (labels). If missing and we have
-        # move_clocks_seconds plus time_initial/time_increment, compute labels.
-        if "move_time_seconds" not in df.columns and "move_clocks_seconds" in df.columns:
-            # compute per-row labels eagerly using Python (safer for varied input types)
-            def _compute_labels_row(move_clocks, time_initial, time_increment):
-                if not move_clocks:
-                    return [None] * 0
-                if time_initial is None or time_increment is None:
-                    return [None] * len(move_clocks)
-                prev = float(time_initial)
-                inc = float(time_increment)
-                out = []
-                for cur in move_clocks:
-                    if cur is None:
-                        out.append(None)
-                    else:
-                        used = prev - float(cur) + inc
-                        out.append(max(0.0, used))
-                        prev = float(cur)
-                return out
-
-            labels_list = []
-            mc_list = df["move_clocks_seconds"].to_list()
-            if "time_initial" in df.columns:
-                ti_list = df["time_initial"].to_list()
-            else:
-                ti_list = [None] * len(mc_list)
-            if "time_increment" in df.columns:
-                tinc_list = df["time_increment"].to_list()
-            else:
-                tinc_list = [None] * len(mc_list)
-            lichess_list = df["lichess_id"].to_list() if "lichess_id" in df.columns else [None] * len(mc_list)
-
-            for mc, ti, tinc, lichess_id in zip(mc_list, ti_list, tinc_list, lichess_list):
-                if (ti is None or tinc is None) and lichess_id is not None:
-                    try:
-                        pgn_text = fetch_lichess_pgn(str(lichess_id), timeout=5, max_retries=1)
-                        parsed = _parse_timecontrol_from_pgn(pgn_text)
-                        if parsed is not None:
-                            if ti is None:
-                                ti = parsed[0]
-                            if tinc is None:
-                                tinc = parsed[1]
-                    except Exception:
-                        pass
-
-                try:
-                    if mc is None:
-                        labels = []
-                    elif ti is not None and tinc is not None:
-                        labels = _compute_labels_row(mc, ti, tinc)
-                    else:
-                        # compute per-ply time from adjacent clocks (increment=0)
-                        labels = []
-                        for j in range(len(mc) - 1):
-                            a = mc[j]
-                            b = mc[j + 1]
-                            if a is None or b is None:
-                                labels.append(None)
-                            else:
-                                labels.append(max(0.0, float(a) - float(b)))
-                        # last ply has no next clock
-                        if len(mc) > 0:
-                            labels.append(None)
-                        else:
-                            labels = []
-                except Exception:
-                    labels = [None] * (len(mc) if mc else 0)
-                labels_list.append(labels)
-
-            df = df.with_columns(pl.Series("move_time_seconds", labels_list, dtype=pl.List(pl.Float64)))
-
-            # Compute prev_clock_seconds and clock_diff_seconds as list columns per game.
-            prev_clock_lists = []
-            clock_diff_lists = []
-            mc_list = df["move_clocks_seconds"].to_list()
-            for mc in mc_list:
-                if not mc:
-                    prev_clock_lists.append([])
-                    clock_diff_lists.append([])
-                    continue
-                prevs = []
-                diffs = []
-                for i in range(len(mc)):
-                    if i >= 2:
-                        prev = mc[i - 2]
-                    else:
-                        prev = None
-                    prevs.append(prev)
-                    if prev is None or mc[i] is None:
-                        diffs.append(None)
-                    else:
-                        try:
-                            diffs.append(max(0.0, float(prev) - float(mc[i])))
-                        except Exception:
-                            diffs.append(None)
-                prev_clock_lists.append(prevs)
-                clock_diff_lists.append(diffs)
-
-            df = df.with_columns(
-                pl.Series("prev_clock_seconds", prev_clock_lists, dtype=pl.List(pl.Float64)),
-                pl.Series("clock_diff_seconds", clock_diff_lists, dtype=pl.List(pl.Float64)),
-            )
-
-        # Compute pre-move board-state features from move history.
-        if (
-            ("is_in_check_before_move" not in df.columns or "total_pieces_before_move" not in df.columns)
-            and "ply_list" in df.columns
-        ):
-            uci_rows = df["uci_moves"].to_list() if "uci_moves" in df.columns else [None] * df.height
-            ply_rows = df["ply_list"].to_list()
-            check_rows: list[list[int | None]] = []
-            piece_rows: list[list[int | None]] = []
-
-            for uci_raw, ply_raw in zip(uci_rows, ply_rows):
-                n = len(ply_raw) if ply_raw is not None else 0
-                if n == 0:
-                    check_rows.append([])
-                    piece_rows.append([])
-                    continue
-
-                if uci_raw is None:
-                    check_rows.append([None] * n)
-                    piece_rows.append([None] * n)
-                    continue
-
-                if isinstance(uci_raw, str):
-                    move_tokens = uci_raw.split()
-                elif isinstance(uci_raw, list):
-                    move_tokens = [str(m) for m in uci_raw]
-                else:
-                    check_rows.append([None] * n)
-                    piece_rows.append([None] * n)
-                    continue
-
-                board = chess.Board()
-                row_values: list[int | None] = []
-                row_piece_values: list[int | None] = []
-                try:
-                    for token in move_tokens[:n]:
-                        row_values.append(1 if board.is_check() else 0)
-                        row_piece_values.append(len(board.piece_map()))
-                        board.push_uci(token)
-                except Exception:
-                    check_rows.append([None] * n)
-                    piece_rows.append([None] * n)
-                    continue
-
-                if len(row_values) < n:
-                    row_values.extend([None] * (n - len(row_values)))
-                if len(row_piece_values) < n:
-                    row_piece_values.extend([None] * (n - len(row_piece_values)))
-                check_rows.append(row_values)
-                piece_rows.append(row_piece_values)
-
-            new_columns = []
-            if "is_in_check_before_move" not in df.columns:
-                new_columns.append(
-                    pl.Series("is_in_check_before_move", check_rows, dtype=pl.List(pl.Int8))
-                )
-            if "total_pieces_before_move" not in df.columns:
-                new_columns.append(
-                    pl.Series("total_pieces_before_move", piece_rows, dtype=pl.List(pl.Int16))
-                )
-            if new_columns:
-                df = df.with_columns(*new_columns)
-
-        missing = required_columns.difference(df.columns)
+        missing = _REQUIRED_COLUMNS.difference(df.columns)
         if missing:
             logger.warning("Skipping {} (missing columns: {})", path, sorted(missing))
             continue
+
+        clock_missing_count = df.filter(
+            pl.col("clocks_white").is_null() | pl.col("clocks_black").is_null()
+        ).height
+        if clock_missing_count > 0:
+            logger.warning(
+                "{} has {} games with null clock columns; skipping those rows",
+                path.name,
+                clock_missing_count,
+            )
+
+        df = df.filter(pl.col("clocks_white").is_not_null() & pl.col("clocks_black").is_not_null())
+
+        if df.height == 0:
+            logger.warning("No games with clock data in {}, skipping", path)
+            continue
+
+        n_moves_list: list[int] = []
+        mc_list: list[list[float | None]] = []
+        mt_list: list[list[float | None]] = []
+        ply_lists: list[list[int]] = []
+        prev_clock_lists: list[list[float | None]] = []
+        clock_diff_lists: list[list[float | None]] = []
+
+        cw_rows = df["clocks_white"].to_list()
+        cb_rows = df["clocks_black"].to_list()
+        ti_vals = df["time_initial"].to_list()
+        tinc_vals = df["time_increment"].to_list()
+        uci_rows = df["uci_moves"].to_list()
+
+        for cw, cb, ti, tinc, uci_str in zip(
+            cw_rows, cb_rows, ti_vals, tinc_vals, uci_rows, strict=True
+        ):
+            if cw is None or cb is None:
+                n_moves_list.append(0)
+                mc_list.append([])
+                mt_list.append([])
+                ply_lists.append([])
+                prev_clock_lists.append([])
+                clock_diff_lists.append([])
+                continue
+            if uci_str is None:
+                n_moves_list.append(0)
+                mc_list.append([])
+                mt_list.append([])
+                ply_lists.append([])
+                prev_clock_lists.append([])
+                clock_diff_lists.append([])
+                continue
+
+            cw_clean = [float(v) if v is not None else None for v in cw]
+            cb_clean = [float(v) if v is not None else None for v in cb]
+            ti_val = float(ti) if ti is not None else 0.0
+            tinc_val = float(tinc) if tinc is not None else 0.0
+            moves_str = str(uci_str)
+            n_moves = len(moves_str.split())
+
+            mc = _interleave_clocks(cw_clean, cb_clean, n_moves)
+            mt = _compute_move_time_seconds(cw_clean, cb_clean, ti_val, tinc_val, n_moves)
+            ply_list = list(range(n_moves))
+            prev_clocks = _compute_prev_clock_seconds(mc)
+            clock_diffs = _compute_clock_diff_seconds(mc)
+
+            n_moves_list.append(n_moves)
+            mc_list.append(mc)
+            mt_list.append(mt)
+            ply_lists.append(ply_list)
+            prev_clock_lists.append(prev_clocks)
+            clock_diff_lists.append(clock_diffs)
+
+        df = df.with_columns(
+            pl.Series("ply_list", ply_lists, dtype=pl.List(pl.Int64)),
+            pl.Series("move_clocks_seconds", mc_list, dtype=pl.List(pl.Float64)),
+            pl.Series("move_time_seconds", mt_list, dtype=pl.List(pl.Float64)),
+            pl.Series("prev_clock_seconds", prev_clock_lists, dtype=pl.List(pl.Float64)),
+            pl.Series("clock_diff_seconds", clock_diff_lists, dtype=pl.List(pl.Float64)),
+        )
+
+        uci_rows = df["uci_moves"].to_list()
+        ply_rows = df["ply_list"].to_list()
+        is_check_rows = df["is_check"].to_list()
+        check_before: list[list[int | None]] = []
+        piece_count_before: list[list[int | None]] = []
+
+        for uci_raw, ply_raw, is_check_raw in zip(uci_rows, ply_rows, is_check_rows, strict=True):
+            n = len(ply_raw) if ply_raw is not None else 0
+            if n == 0:
+                check_before.append([])
+                piece_count_before.append([])
+                continue
+
+            if uci_raw is None:
+                check_before.append([None] * n)
+                piece_count_before.append([None] * n)
+                continue
+
+            if isinstance(uci_raw, str):
+                move_tokens = uci_raw.split()
+            elif isinstance(uci_raw, list):
+                move_tokens = [str(m) for m in uci_raw]
+            else:
+                check_before.append([None] * n)
+                piece_count_before.append([None] * n)
+                continue
+
+            board = chess.Board()
+            row_check: list[int | None] = []
+            row_pieces: list[int | None] = []
+
+            if is_check_raw is None or len(is_check_raw) < n:
+                is_check_safe = [False] * n
+            else:
+                is_check_safe = list(is_check_raw)
+            is_check_safe = is_check_safe[:n]
+            while len(is_check_safe) < n:
+                is_check_safe.append(False)
+
+            for ply_idx in range(n):
+                row_check.append(1 if board.is_check() else 0)
+                row_pieces.append(len(board.piece_map()))
+                if ply_idx < len(move_tokens):
+                    with contextlib.suppress(Exception):
+                        board.push_uci(move_tokens[ply_idx])
+
+            check_before.append(row_check)
+            piece_count_before.append(row_pieces)
+
+        df = df.with_columns(
+            pl.Series("is_in_check_before_move", check_before, dtype=pl.List(pl.Int8)),
+            pl.Series("total_pieces_before_move", piece_count_before, dtype=pl.List(pl.Int16)),
+        )
 
         df = df.with_row_index("game_idx", offset=game_offset)
         game_offset += df.height
         frames.append(df)
 
     if not frames:
-        raise ValueError("No valid preprocess parquet inputs found")
+        raise ValueError("No valid input parquet files found")
 
     return pl.concat(frames, how="vertical_relaxed")
 
@@ -311,7 +339,7 @@ def _compute_entropy_features(games: pl.DataFrame) -> pl.DataFrame:
     scaled_rows: list[list[float | None]] = []
     flat_entropy: list[float] = []
 
-    for row_idx, (probs_row, ply_row) in enumerate(zip(probs_rows, ply_rows)):
+    for row_idx, (probs_row, ply_row) in enumerate(zip(probs_rows, ply_rows, strict=True)):
         if ply_row is None:
             entropy_rows.append([])
             scaled_rows.append([])
@@ -331,11 +359,9 @@ def _compute_entropy_features(games: pl.DataFrame) -> pl.DataFrame:
 
         row_entropy: list[float | None] = []
         row_scaled: list[float | None] = []
-        for move_probs, ply in zip(probs_row, ply_row):
+        for move_probs, ply in zip(probs_row, ply_row, strict=True):
             if move_probs is None or len(move_probs) == 0:
-                raise ValueError(
-                    f"Row {row_idx} contains an empty probability vector; entropy would be fabricated"
-                )
+                raise ValueError(f"Row {row_idx} empty prob vector; entropy would be fabricated")
 
             probs_tensor = torch.tensor(move_probs, dtype=torch.float32)
             ent = move_entropy(probs_tensor)
@@ -361,7 +387,9 @@ def _compute_entropy_features(games: pl.DataFrame) -> pl.DataFrame:
         entropy_min = float(entropy_series.min())
         entropy_max = float(entropy_series.max())
         if entropy_min == entropy_max:
-            raise ValueError("move_entropy is constant across the dataset; probabilities look invalid")
+            raise ValueError(
+                "move_entropy is constant across the dataset; probabilities look invalid"
+            )
 
         entropy_tensor = torch.tensor(flat_entropy, dtype=torch.float32)
         if torch.allclose(entropy_tensor, torch.ones_like(entropy_tensor), atol=1e-6, rtol=0.0):
@@ -447,11 +475,6 @@ def _explode_to_moves(games: pl.DataFrame) -> pl.DataFrame:
 
 
 def _filter_implausible_move_times(moves: pl.DataFrame) -> pl.DataFrame:
-    """Drop moves whose reported think time exceeds a generous clock-based bound.
-    300-second margin to avoid removing legitimate long thinks while still catching 
-    obvious clock mismatches and parsing errors.
-    """
-
     if "prev_clock_seconds" not in moves.columns or "target_move_time_seconds" not in moves.columns:
         return moves
 
@@ -459,14 +482,18 @@ def _filter_implausible_move_times(moves: pl.DataFrame) -> pl.DataFrame:
         pl.col("target_move_time_seconds").is_not_null()
         & pl.col("prev_clock_seconds").is_not_null()
         & (pl.col("target_move_time_seconds") >= 0)
-        & (pl.col("target_move_time_seconds") <= pl.col("prev_clock_seconds") + MAX_TIME_OVER_CLOCK_SECONDS)
+        & (
+            pl.col("target_move_time_seconds")
+            <= pl.col("prev_clock_seconds") + MAX_TIME_OVER_CLOCK_SECONDS
+        )
     )
     filtered = moves.filter(valid)
 
     removed = moves.height - filtered.height
     if removed > 0:
         logger.info(
-            "Filtered {} implausible move rows where target_move_time_seconds > prev_clock_seconds + {}",
+            "Filtered {} implausible move rows where "
+            "target_move_time_seconds > prev_clock_seconds + {}",
             removed,
             int(MAX_TIME_OVER_CLOCK_SECONDS),
         )
@@ -504,7 +531,7 @@ def _split_games(games: pl.DataFrame) -> tuple[pl.DataFrame, pl.DataFrame, pl.Da
     val_parts: list[pl.DataFrame] = []
     test_parts: list[pl.DataFrame] = []
 
-    for stratum, stratum_df in with_strata.partition_by("split_stratum", as_dict=True).items():
+    for _stratum, stratum_df in with_strata.partition_by("split_stratum", as_dict=True).items():
         ordered = stratum_df.sort("shuffle_key")
         n_games = ordered.height
         n_train = int(n_games * TRAIN_FRACTION)
@@ -533,13 +560,17 @@ def _split_games(games: pl.DataFrame) -> tuple[pl.DataFrame, pl.DataFrame, pl.Da
 
 @hydra.main(version_base=None, config_path="../../config", config_name="preprocess")
 def main(cfg: DictConfig) -> None:
-    pretrain_path = Path(str(cfg.get("pretrain_input", PRETRAIN_DATASET_PATH)))
-    eval_path = Path(str(cfg.get("eval_input", EVAL_DATASET_PATH)))
+    input_raw = str(cfg.get("xgb_input_dir", str(RAW_UCI_DIR)))
+    input_dir = Path(input_raw)
     output_dir = Path(str(cfg.get("xgboost_output_dir", "data/3_xgboost")))
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    logger.info("Reading preprocess outputs: {}, {}", pretrain_path, eval_path)
-    games = _load_games([pretrain_path, eval_path])
+    input_paths = sorted(input_dir.glob("*.parquet"))
+    if not input_paths:
+        raise FileNotFoundError(f"No parquet files found in {input_dir}")
+
+    logger.info("Reading filtered games from {} ({} files)", input_dir, len(input_paths))
+    games = _load_games(input_paths)
     logger.info("Loaded {} game rows", games.height)
 
     games = _compute_entropy_features(games)

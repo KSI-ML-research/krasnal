@@ -8,19 +8,19 @@ artifact directories with metrics and saved models.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import os
-from pathlib import Path
-from datetime import datetime
-import subprocess
 import shutil
+import subprocess
+from datetime import datetime
+from pathlib import Path
 
 import numpy as np
 import polars as pl
 import xgboost as xgb
 
 from krasnal.inference.move_analysis import delay_to_seconds, ply_scaling
-
 
 DEFAULT_TRAIN_PATH = Path("data/3_xgboost/xgb_train.parquet")
 DEFAULT_VAL_PATH = Path("data/3_xgboost/xgb_val.parquet")
@@ -104,12 +104,12 @@ def _load_split(
         raise FileNotFoundError(f"Missing parquet split: {path}")
 
     df = pl.read_parquet(path)
-    missing = [column for column in feature_columns + [TARGET_COLUMN] if column not in df.columns]
+    missing = [column for column in [*feature_columns, TARGET_COLUMN] if column not in df.columns]
     if missing:
         raise ValueError(f"{path} is missing required columns: {missing}")
 
     extra_columns = [column for column in (keep_columns or []) if column in df.columns]
-    selected_columns = list(dict.fromkeys(feature_columns + [TARGET_COLUMN] + extra_columns))
+    selected_columns = list(dict.fromkeys([*feature_columns, TARGET_COLUMN, *extra_columns]))
     clean = df.select(selected_columns).drop_nulls()
     if clean.is_empty():
         raise ValueError(f"{path} does not contain any non-null rows")
@@ -196,7 +196,10 @@ def _heuristic_predictions(df: pl.DataFrame) -> np.ndarray:
     else:
         entropy_arr = np.ones_like(ply_arr, dtype=np.float32)
 
-    preds = [delay_to_seconds(ply_scaling(int(p)) * float(e)) for p, e in zip(ply_arr, entropy_arr)]
+    preds = [
+        delay_to_seconds(ply_scaling(int(p)) * float(e))
+        for p, e in zip(ply_arr, entropy_arr, strict=False)
+    ]
     return np.array(preds, dtype=np.float32)
 
 
@@ -210,7 +213,9 @@ def train_variant(
     args: argparse.Namespace,
     model_path: Path | None = None,
 ) -> dict[str, object]:
-    x_train, y_train, train_df = _load_split(train_path, feature_columns, keep_columns=["move_entropy"])
+    x_train, y_train, train_df = _load_split(
+        train_path, feature_columns, keep_columns=["move_entropy"]
+    )
     x_val, y_val, val_df = _load_split(val_path, feature_columns, keep_columns=["move_entropy"])
     x_test, y_test, test_df = _load_split(test_path, feature_columns, keep_columns=["move_entropy"])
 
@@ -257,7 +262,7 @@ def train_variant(
 
     train_dmatrix = xgb.DMatrix(x_train, label=y_train_model)
     val_dmatrix = xgb.DMatrix(x_val, label=y_val_model)
-    test_dmatrix = xgb.DMatrix(x_test, label=y_test_model)
+    xgb.DMatrix(x_test, label=y_test_model)
 
     params = {
         "objective": "reg:absoluteerror",
@@ -334,7 +339,9 @@ def train_variant(
             "heuristic": heuristic_results,
         },
         "xgboost": {
-            "best_iteration": int(model.best_iteration if model.best_iteration is not None else args.n_estimators),
+            "best_iteration": int(
+                model.best_iteration if model.best_iteration is not None else args.n_estimators
+            ),
             "train": _metrics(y_train, train_pred),
             "val": _metrics(y_val, val_pred),
             "test": _metrics(y_test, test_pred),
@@ -391,10 +398,7 @@ def predict_frame(
         return _inverse_transform_target(raw_pred, target_transform)
 
     heuristic = _heuristic_predictions(clean)
-    if target_transform == "log1p":
-        residual = _inverse_sign_log_transform(raw_pred)
-    else:
-        residual = raw_pred
+    residual = _inverse_sign_log_transform(raw_pred) if target_transform == "log1p" else raw_pred
     return np.clip(heuristic + residual, a_min=0.0, a_max=None)
 
 
@@ -437,7 +441,9 @@ def main() -> None:
     args.output_dir = run_dir
 
     canonical_feature_columns = BASE_FEATURE_COLUMNS + ENTROPY_FEATURE_COLUMNS
-    canonical_model_path = args.output_dir / f"xgboost_baseline_with_entropy_{args.target_mode}.json"
+    canonical_model_path = (
+        args.output_dir / f"xgboost_baseline_with_entropy_{args.target_mode}.json"
+    )
     variants: dict[str, dict[str, object]] = {
         "with_entropy": train_variant(
             variant_name="with_entropy",
@@ -471,7 +477,9 @@ def main() -> None:
     git_sha = None
     try:
         git_sha = (
-            subprocess.check_output(["git", "rev-parse", "--short", "HEAD"], stderr=subprocess.DEVNULL)
+            subprocess.check_output(
+                ["git", "rev-parse", "--short", "HEAD"], stderr=subprocess.DEVNULL
+            )
             .decode()
             .strip()
         )
@@ -493,7 +501,9 @@ def main() -> None:
     print(json.dumps(results, indent=2, sort_keys=True))
     print(f"Saved model to {canonical_model_path}")
     if "no_entropy" in variants:
-        print(f"Saved model to {args.output_dir / f'xgboost_baseline_no_entropy_{args.target_mode}.json'}")
+        print(
+            f"Saved model to {args.output_dir / f'xgboost_baseline_no_entropy_{args.target_mode}.json'}"
+        )
     print(f"Saved metrics to {metrics_path}")
 
     # Update (or create) a stable `latest` symlink in the base output dir
@@ -508,10 +518,8 @@ def main() -> None:
         os.symlink(str(run_dir.resolve()), str(latest_link))
     except Exception:
         # If symlink fails (e.g., on filesystems that disallow), fall back to copying metrics.json
-        try:
+        with contextlib.suppress(Exception):
             shutil.copy2(metrics_path, base_output_dir / "latest_metrics.json")
-        except Exception:
-            pass
 
 
 if __name__ == "__main__":

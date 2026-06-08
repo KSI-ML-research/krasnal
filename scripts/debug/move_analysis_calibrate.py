@@ -4,11 +4,11 @@ Generates several example legal-prob distributions and evaluates
 'analyze_move' across a range of 'ply' values to show the
 heuristic baseline behavior.
 """
+
 from __future__ import annotations
 
 from collections import defaultdict
 from pathlib import Path
-from typing import List
 
 import matplotlib.pyplot as plt
 import torch
@@ -46,7 +46,7 @@ def make_random_temp(n: int, temp: float = 1.0, seed: int | None = None) -> torc
     return p
 
 
-def eval_scenarios(n: int, plies: List[int]) -> None:
+def eval_scenarios(n: int, plies: list[int]) -> None:
     scenarios = [
         ("uniform", make_uniform(n)),
         ("peaked", make_peaked(n, peak_idx=0, peak=0.9)),
@@ -55,14 +55,20 @@ def eval_scenarios(n: int, plies: List[int]) -> None:
         ("rand_hot", make_random_temp(n, temp=2.0, seed=1)),
     ]
 
-    print(f"{'scenario':12} {'ply':>4} {'entropy':>10} {'ply_factor':>12} {'delay':>10} {'delay_s':>10}")
+    print(
+        f"{'scenario':12} {'ply':>4} {'entropy':>10} {'ply_factor':>12} {'delay':>10} {'delay_s':>10}"
+    )
     print("-" * 64)
     rows = []
     for name, probs in scenarios:
         for ply in plies:
             res = analyze_move(probs, ply)
-            print(f"{name:12} {ply:4d} {res.move_dist_entropy:10.4f} {res.ply_factor:12.4f} {res.delay:10.4f} {res.delay_seconds:10.4f}")
-            rows.append((name, ply, res.move_dist_entropy, res.ply_factor, res.delay, res.delay_seconds))
+            print(
+                f"{name:12} {ply:4d} {res.move_dist_entropy:10.4f} {res.ply_factor:12.4f} {res.delay:10.4f} {res.delay_seconds:10.4f}"
+            )
+            rows.append(
+                (name, ply, res.move_dist_entropy, res.ply_factor, res.delay, res.delay_seconds)
+            )
 
     by_scenario = defaultdict(list)
     for name, ply, entropy, ply_factor, delay_value, delay_seconds in rows:

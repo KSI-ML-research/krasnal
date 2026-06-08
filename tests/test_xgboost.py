@@ -1,4 +1,3 @@
-import json
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -6,9 +5,8 @@ import numpy as np
 import polars as pl
 import xgboost as xgb
 
+from krasnal.inference.move_analysis import delay_to_seconds, ply_scaling
 from krasnal.move_time import xgboost as mt_xgb
-from krasnal.inference.move_analysis import ply_scaling, delay_to_seconds
-
 
 REAL_300_DATA_DIR = Path("data/3_xgboost_300_probs_v4_stratified")
 

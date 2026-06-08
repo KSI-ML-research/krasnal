@@ -1,4 +1,5 @@
 """Compares metrics from quick local XGBoost training with reference artifact and prints out diffs."""
+
 from __future__ import annotations
 
 import argparse
@@ -11,7 +12,6 @@ from krasnal.move_time.xgboost import (
     ENTROPY_FEATURE_COLUMNS,
     train_variant,
 )
-
 
 DEFAULT_DATA_DIR = Path("data/3_xgboost_300_probs_v4_stratified")
 DEFAULT_REFERENCE_METRICS = Path("artifacts/xgboost_baseline_residual_log1p_md4_noreg/metrics.json")
@@ -40,7 +40,9 @@ def _print_metric_diffs(current: dict[str, object], reference: dict[str, object]
         for subkey in sorted(reference[section]):
             current_block = current[section][subkey]
             reference_block = reference[section][subkey]
-            if isinstance(reference_block, dict) and all(isinstance(v, dict) for v in reference_block.values()):
+            if isinstance(reference_block, dict) and all(
+                isinstance(v, dict) for v in reference_block.values()
+            ):
                 print(f"  {subkey}")
                 for split in ["train", "val", "test"]:
                     if split not in reference_block:
@@ -53,7 +55,9 @@ def _print_metric_diffs(current: dict[str, object], reference: dict[str, object]
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Compare current XGBoost run with a reference artifact.")
+    parser = argparse.ArgumentParser(
+        description="Compare current XGBoost run with a reference artifact."
+    )
     parser.add_argument("--data-dir", type=Path, default=DEFAULT_DATA_DIR)
     parser.add_argument("--reference-metrics", type=Path, default=DEFAULT_REFERENCE_METRICS)
     args = parser.parse_args()

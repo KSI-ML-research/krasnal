@@ -15,7 +15,6 @@ import argparse
 from pathlib import Path
 
 import polars as pl
-import torch
 
 from krasnal.inference.batch import StatelessBatchInferenceSession
 from krasnal.inference.game import Game
@@ -83,7 +82,9 @@ def main() -> None:
     df = pl.read_parquet(args.input)
     if args.lichess_ids:
         if "lichess_id" not in df.columns:
-            raise SystemExit("Input parquet has no lichess_id column, cannot filter by --lichess-ids")
+            raise SystemExit(
+                "Input parquet has no lichess_id column, cannot filter by --lichess-ids"
+            )
         df = df.filter(pl.col("lichess_id").cast(str).is_in([str(x) for x in args.lichess_ids]))
     if args.limit is not None:
         df = df.head(args.limit)
@@ -149,7 +150,7 @@ def main() -> None:
     probs_tensor = batcher.get_legal_probs_batch(games, batch_size=args.batch_size)
     probs_cpu = probs_tensor.cpu().numpy()
     per_row: list[list[list[float]]] = [[] for _ in range(df.height)]
-    for (row_idx, _move_idx), prob_vec in zip(mapping, probs_cpu):
+    for (row_idx, _move_idx), prob_vec in zip(mapping, probs_cpu, strict=False):
         per_row[row_idx].append([float(x) for x in prob_vec.tolist()])
 
     df = df.with_columns(pl.Series("model_move_probs", per_row))

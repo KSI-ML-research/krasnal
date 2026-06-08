@@ -1,7 +1,0 @@
-input_dir: data/1_filtered
-output_dir: data/1_filtered_clocked
-workers: 4
-batch_size: 256
-request_timeout: 30.0
-max_retries: 3
-skip_existing: true

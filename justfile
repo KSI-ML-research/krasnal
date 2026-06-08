@@ -54,10 +54,6 @@ pre-commit:
 download-games *args:
     uv run scripts/data/download_games.py {{args}}
 
-# Augment filtered Aix games with PGN clock annotations fetched from Lichess
-augment-clocks *args:
-    uv run scripts/data/augment_pgn_clocks.py {{args}}
-
 # Preprocess downloaded games into training dataset
 preprocess *args:
     uv run scripts/data/preprocess.py {{args}}

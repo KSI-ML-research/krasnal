@@ -1,7 +1,12 @@
 import pytest
 import torch
 
-from krasnal.inference.move_analysis import analyze_move, move_entropy, delay_to_seconds, ply_scaling
+from krasnal.inference.move_analysis import (
+    analyze_move,
+    delay_to_seconds,
+    move_entropy,
+    ply_scaling,
+)
 
 
 def test_compute_move_entropy_on_uniform_distribution():
