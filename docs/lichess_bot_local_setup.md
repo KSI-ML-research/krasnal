@@ -32,6 +32,6 @@ Lichess requires a few steps to set up a bot account.
 
 The bot passes `KRASNAL_MODEL_ARTIFACT_DIR` as an absolute path. The UCI entrypoint bootstraps `sys.path` so `import krasnal` works when lichess-bot runs `python ../src/krasnal/uci_engine/run.py` with cwd `lichess-bot/`.
 
-Heavy model loading runs **on the first `uci` line** (after the process has started reading stdin), so python-chess’s handshake does not wait on torch import + checkpoint I/O before the child process is considered alive.
+The `uci` handshake returns before heavy model loading. The provider is loaded on `isready` or the first command that needs it (`setoption`, `ucinewgame`, or `go`), so python-chess gets `uciok` without waiting on torch import + checkpoint I/O.
 
 In `config.yml`, set **`engine.silence_stderr: true`** to **show** the engine’s stderr (lichess-bot’s flag is inverted: `false` sends engine stderr to `/dev/null`). The UCI entrypoint always attaches loguru to stderr at **ERROR** (stack traces on failures); use **`KRASNAL_UCI_VERBOSE=1`** for DEBUG. Failures on the first `go` also emit chunked **`info string krasnal-uci …`** lines plus `bestmove (none)` (the bot then aborts or resigns).

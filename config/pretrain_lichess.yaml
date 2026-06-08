@@ -1,0 +1,20 @@
+defaults:
+  - pipeline
+  - model: small
+  - train: cuda
+  - eval@eval
+  - _self_
+
+outcome_conditioning:
+  enabled: false
+
+include_elo: false
+
+time_control_token:
+  enabled: false
+
+opponent_material:
+  enabled: false
+
+model:
+  use_clock_encodings: false

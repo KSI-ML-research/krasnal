@@ -42,7 +42,7 @@ def test_inference_session_feed_and_get_probs():
         clock_encoding_hidden=32,
     )
     model = GPT(config).to(device)
-    session = InferenceSession(model, device, outcome_token=WHITE_WON_ID)
+    session = InferenceSession(model, device)
 
     e2e4 = MOVE_TO_ID[WHITE_PREFIX + "e2e4"]
     session.feed_token(e2e4)
@@ -69,7 +69,7 @@ def test_inference_session_single_step():
         clock_encoding_hidden=32,
     )
     model = GPT(config).to(device)
-    session = InferenceSession(model, device, outcome_token=WHITE_WON_ID)
+    session = InferenceSession(model, device)
 
     e2e4 = MOVE_TO_ID[WHITE_PREFIX + "e2e4"]
     session.feed_token(e2e4)
@@ -96,6 +96,18 @@ def test_game_prefix_tokens_respects_outcome_conditioning_flag():
     assert with_outcome.context_tokens() == [*with_outcome.prefix_tokens(), *with_outcome.tokens]
 
 
+def test_game_prefix_tokens_can_skip_time_control_token():
+    game = Game(time_control_token_enabled=False)
+
+    assert game.prefix_tokens() == [GAME_START_ID, game.white_elo_token, game.black_elo_token]
+
+
+def test_game_prefix_tokens_can_skip_elo_tokens():
+    game = Game(elo_tokens_enabled=False, time_control_token_enabled=False)
+
+    assert game.prefix_tokens() == [GAME_START_ID]
+
+
 def test_sync_prefix_tokens_from_game_preserves_moves_without_outcome_conditioning():
     device = torch.device("cpu")
     config = GPTConfig(
@@ -108,7 +120,7 @@ def test_sync_prefix_tokens_from_game_preserves_moves_without_outcome_conditioni
         clock_encoding_hidden=32,
     )
     model = GPT(config).to(device)
-    session = InferenceSession(model, device, outcome_token=DRAW_ID)
+    session = InferenceSession(model, device)
 
     game = Game(outcome_conditioning_enabled=False)
     session.new_game(game)
@@ -265,7 +277,6 @@ def test_prepare_go_clocks_clears_kv_cache():
     session = InferenceSession(
         model,
         device,
-        outcome_token=WHITE_WON_ID,
         clock_initial_seconds=180,
     )
     session.feed_uci("e2e4", clock_active=180, clock_opponent=180)
@@ -290,7 +301,6 @@ def test_prepare_go_clocks_requires_wtime_and_btime():
     session = InferenceSession(
         model,
         device,
-        outcome_token=WHITE_WON_ID,
         clock_initial_seconds=180,
     )
     with pytest.raises(ValueError, match="wtime and btime"):
@@ -419,7 +429,7 @@ def test_inference_session_reuses_kv_cache_for_incremental_moves():
     torch.manual_seed(17)
     device = torch.device("cpu")
     model = _build_test_model(device)
-    session = InferenceSession(model, device, outcome_token=WHITE_WON_ID)
+    session = InferenceSession(model, device)
 
     initial_logits = session.get_raw_logits()
     assert session.kv_cache is not None

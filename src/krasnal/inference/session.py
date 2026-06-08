@@ -40,10 +40,11 @@ class InferenceSession:
         model: GPT,
         device: torch.device,
         game: Game | None = None,
-        outcome_token: int | None = None,
         white_elo_token: int = ELO_ABOVE_2200_ID,
         black_elo_token: int = ELO_ABOVE_2200_ID,
+        elo_tokens_enabled: bool = False,
         time_control_token: int = TC_UNKNOWN_ID,
+        time_control_token_enabled: bool = False,
         clock_initial_seconds: int | None = None,
     ):
         self.model = model
@@ -52,13 +53,12 @@ class InferenceSession:
         self._clock_initial_seconds = clock_initial_seconds
 
         if game is None:
-            if outcome_token is None:
-                raise ValueError("outcome_token must be provided when game is not supplied")
             game = Game(
                 white_elo_token=white_elo_token,
                 black_elo_token=black_elo_token,
+                elo_tokens_enabled=elo_tokens_enabled,
                 time_control_token=time_control_token,
-                target_outcome_token=outcome_token,
+                time_control_token_enabled=time_control_token_enabled,
             )
 
         self.new_game(game)

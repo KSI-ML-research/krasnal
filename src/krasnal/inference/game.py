@@ -21,7 +21,9 @@ from krasnal.tokens import (
 class Game:
     white_elo_token: int = ELO_ABOVE_2200_ID
     black_elo_token: int = ELO_ABOVE_2200_ID
+    elo_tokens_enabled: bool = True
     time_control_token: int = TC_UNKNOWN_ID
+    time_control_token_enabled: bool = True
     target_outcome_token: int = DRAW_ID
     outcome_conditioning_enabled: bool = False
     opponent_material_enabled: bool = False
@@ -36,10 +38,13 @@ class Game:
         self.board = bulletchess.Board()
 
     def prefix_tokens(self) -> list[int]:
-        prefix = [GAME_START_ID, self.time_control_token]
+        prefix = [GAME_START_ID]
+        if self.time_control_token_enabled:
+            prefix.append(self.time_control_token)
         if self.outcome_conditioning_enabled:
             prefix.append(self.target_outcome_token)
-        prefix.extend([self.white_elo_token, self.black_elo_token])
+        if self.elo_tokens_enabled:
+            prefix.extend([self.white_elo_token, self.black_elo_token])
         return prefix
 
     def context_tokens(self) -> list[int]:
