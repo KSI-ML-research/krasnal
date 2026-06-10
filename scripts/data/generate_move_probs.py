@@ -15,13 +15,15 @@ import argparse
 from pathlib import Path
 
 import polars as pl
+import torch
 
+from krasnal.config import CLOCK_IGNORE_ID
 from krasnal.inference.batch import StatelessBatchInferenceSession
 from krasnal.inference.game import Game
 from krasnal.inference.utils import load_model
-from krasnal.tokens import DRAW_ID
+from krasnal.tokens import DRAW_ID, load_move_vocab
 from krasnal.uci_engine.provider import ModelProvider
-from krasnal.utils import build_gpt_config_from_artifact, resolve_runtime_device
+from krasnal.utils import gpt_config_from_artifact_dict, resolve_runtime_device
 
 
 def parse_args() -> argparse.Namespace:
@@ -66,7 +68,18 @@ def main() -> None:
     device = resolve_runtime_device()
     print(f"Using device: {device}")
 
-    cfg = build_gpt_config_from_artifact(args.artifact_dir)
+    import json
+    cfg_path = args.artifact_dir / "config.json"
+    if not cfg_path.exists():
+        raise SystemExit(f"config.json not found in {args.artifact_dir}")
+    with open(cfg_path) as f:
+        cfg_dict = json.load(f)
+    cfg = gpt_config_from_artifact_dict(cfg_dict)
+    load_move_vocab(
+        Path("data/2_tokenized/move_vocab.json"),
+        piece_aware_moves=True,
+        side_prefixed_moves=True,
+    )
     model_path = args.model or (args.artifact_dir / "model.pt")
     if not model_path.exists():
         raise SystemExit(f"Checkpoint not found: {model_path}")
@@ -119,11 +132,18 @@ def main() -> None:
         print(f"Wrote selected rows to {args.output} with model_move_probs")
         return
 
-    # Build game states and full legal probability vectors.
+    # Build game states, clock sequences, and full legal probability vectors.
     # Rebuild each prefix Game instead of copying Game objects,
     # because bulletchess.Board can't be deep-copied/pickled safely.
     games: list[Game] = []
     mapping: list[tuple[int, int]] = []
+    active_sequences: list[list[int]] = []
+    opponent_sequences: list[list[int]] = []
+
+    cw_col = df["clocks_white"].to_list()
+    cb_col = df["clocks_black"].to_list()
+    ti_col = df["time_initial"].to_list()
+
     for row_idx, uci_raw in enumerate(df.get_column("uci_moves")):
         if uci_raw is None:
             continue
@@ -134,6 +154,10 @@ def main() -> None:
         else:
             continue
 
+        ti = int(ti_col[row_idx]) if ti_col[row_idx] is not None else CLOCK_IGNORE_ID
+        cw = [float(v) for v in cw_col[row_idx]] if cw_col[row_idx] is not None else []
+        cb = [float(v) for v in cb_col[row_idx]] if cb_col[row_idx] is not None else []
+
         for move_idx in range(len(moves)):
             prefix_game = Game()
             for prev_uci in moves[:move_idx]:
@@ -141,17 +165,51 @@ def main() -> None:
             games.append(prefix_game)
             mapping.append((row_idx, move_idx))
 
+            k = move_idx  # predicting move k
+
+            # Compute clock state at decision point
+            if k % 2 == 0:  # white to move
+                if k == 0:
+                    active_clock, opponent_clock = ti, ti
+                else:
+                    w_idx = (k - 2) // 2
+                    b_idx = (k - 2) // 2
+                    active_clock = int(cw[w_idx]) if w_idx < len(cw) else CLOCK_IGNORE_ID
+                    opponent_clock = int(cb[b_idx]) if b_idx < len(cb) else CLOCK_IGNORE_ID
+            else:  # black to move
+                w_idx = (k - 1) // 2
+                if k <= 1:
+                    active_clock = ti
+                else:
+                    b_idx = (k - 3) // 2
+                    active_clock = int(cb[b_idx]) if b_idx < len(cb) else CLOCK_IGNORE_ID
+                opponent_clock = int(cw[w_idx]) if w_idx < len(cw) else CLOCK_IGNORE_ID
+
+            ctx_tokens = prefix_game.context_tokens()
+            seq_len = len(ctx_tokens)
+            act_seq = [ti] * seq_len
+            opp_seq = [ti] * seq_len
+            act_seq[-1] = active_clock
+            opp_seq[-1] = opponent_clock
+            active_sequences.append(act_seq)
+            opponent_sequences.append(opp_seq)
+
     if not games:
         df = df.with_columns(pl.Series("model_move_probs", [[] for _ in range(df.height)]))
         df.write_parquet(args.output)
         print(f"Wrote selected rows to {args.output} with empty model_move_probs")
         return
-
-    probs_tensor = batcher.get_legal_probs_batch(games, batch_size=args.batch_size)
-    probs_cpu = probs_tensor.cpu().numpy()
+    legal_logits = batcher.get_legal_logits_batch(
+        games,
+        active_clock_sequences=active_sequences,
+        opponent_clock_sequences=opponent_sequences,
+        batch_size=args.batch_size,
+    )
+    legal_probs = torch.softmax(legal_logits, dim=-1).cpu().numpy()
     per_row: list[list[list[float]]] = [[] for _ in range(df.height)]
-    for (row_idx, _move_idx), prob_vec in zip(mapping, probs_cpu, strict=False):
-        per_row[row_idx].append([float(x) for x in prob_vec.tolist()])
+    for (row_idx, _move_idx), prob_vec in zip(mapping, legal_probs, strict=False):
+        probs_only = prob_vec[prob_vec > 0].tolist()
+        per_row[row_idx].append(probs_only)
 
     df = df.with_columns(pl.Series("model_move_probs", per_row))
     df.write_parquet(args.output)

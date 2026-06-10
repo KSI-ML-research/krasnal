@@ -39,7 +39,7 @@ _REQUIRED_COLUMNS = {
     "result",
 }
 
-_READ_COLUMNS = sorted(_REQUIRED_COLUMNS)
+_READ_COLUMNS = sorted({*_REQUIRED_COLUMNS, "model_move_probs"})
 
 
 def _bucket_time_initial(time_initial: float | int | None) -> str:
