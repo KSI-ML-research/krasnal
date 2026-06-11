@@ -21,7 +21,7 @@ from krasnal.config import CLOCK_IGNORE_ID
 from krasnal.inference.batch import StatelessBatchInferenceSession
 from krasnal.inference.game import Game
 from krasnal.inference.utils import load_model
-from krasnal.tokens import DRAW_ID, load_move_vocab
+from krasnal.tokens import DRAW_ID, MOVE_VOCAB_PATH, load_move_vocab
 from krasnal.uci_engine.provider import ModelProvider
 from krasnal.utils import gpt_config_from_artifact_dict, resolve_runtime_device
 
@@ -75,11 +75,18 @@ def main() -> None:
     with open(cfg_path) as f:
         cfg_dict = json.load(f)
     cfg = gpt_config_from_artifact_dict(cfg_dict)
-    load_move_vocab(
-        Path("data/2_tokenized/move_vocab.json"),
-        piece_aware_moves=True,
-        side_prefixed_moves=True,
-    )
+
+    piece_aware = bool(cfg_dict.get("piece_aware_moves", False))
+    side_prefixed = bool(cfg_dict.get("side_prefixed_moves", False))
+
+    vocab_candidates = [
+        args.artifact_dir / "move_vocab.json",
+        args.artifact_dir / "vocab.json",
+    ]
+    vocab_path = next((p for p in vocab_candidates if p.exists()), None)
+    if vocab_path is None:
+        vocab_path = MOVE_VOCAB_PATH
+    load_move_vocab(vocab_path, piece_aware_moves=piece_aware, side_prefixed_moves=side_prefixed)
     model_path = args.model or (args.artifact_dir / "model.pt")
     if not model_path.exists():
         raise SystemExit(f"Checkpoint not found: {model_path}")
@@ -207,7 +214,7 @@ def main() -> None:
     )
     legal_probs = torch.softmax(legal_logits, dim=-1).cpu().numpy()
     per_row: list[list[list[float]]] = [[] for _ in range(df.height)]
-    for (row_idx, _move_idx), prob_vec in zip(mapping, legal_probs, strict=False):
+    for (row_idx, _move_idx), prob_vec in zip(mapping, legal_probs, strict=True):
         probs_only = prob_vec[prob_vec > 0].tolist()
         per_row[row_idx].append(probs_only)
 

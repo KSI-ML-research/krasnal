@@ -85,7 +85,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--canonical",
         action="store_true",
-        help="Use/mark canonical config: residual + sign-log + log1p + max_depth=4 + no regularization",
+        help="Use canonical config: residual + sign-log + log1p + max_depth=4",
     )
     parser.add_argument(
         "--no-entropy-ablation",
@@ -190,17 +190,20 @@ def _entropy_feature_checks(clean: pl.DataFrame) -> dict[str, float]:
 
 
 def _heuristic_predictions(df: pl.DataFrame) -> np.ndarray:
-    ply_arr = df["ply"].to_numpy()
-    if "move_entropy" in df.columns:
+    if "entropy_x_ply_scaling" in df.columns:
+        raw = df["entropy_x_ply_scaling"].to_numpy().astype(np.float32, copy=False)
+    elif "move_entropy" in df.columns:
+        ply_arr = df["ply"].to_numpy()
         entropy_arr = df["move_entropy"].to_numpy().astype(np.float32, copy=False)
+        raw = np.array(
+            [ply_scaling(int(p)) * float(e) for p, e in zip(ply_arr, entropy_arr, strict=True)],
+            dtype=np.float32,
+        )
     else:
-        entropy_arr = np.ones_like(ply_arr, dtype=np.float32)
+        ply_arr = df["ply"].to_numpy()
+        raw = np.array([ply_scaling(int(p)) for p in ply_arr], dtype=np.float32)
 
-    preds = [
-        delay_to_seconds(ply_scaling(int(p)) * float(e))
-        for p, e in zip(ply_arr, entropy_arr, strict=False)
-    ]
-    return np.array(preds, dtype=np.float32)
+    return np.array([delay_to_seconds(float(r)) for r in raw], dtype=np.float32)
 
 
 def train_variant(
@@ -218,10 +221,6 @@ def train_variant(
     )
     x_val, y_val, val_df = _load_split(val_path, feature_columns, keep_columns=["move_entropy"])
     x_test, y_test, test_df = _load_split(test_path, feature_columns, keep_columns=["move_entropy"])
-
-    y_train_transformed = _transform_target(y_train, args.target_transform)
-    y_val_transformed = _transform_target(y_val, args.target_transform)
-    y_test_transformed = _transform_target(y_test, args.target_transform)
 
     mean_value = float(np.mean(y_train))
     median_value = float(np.median(y_train))
@@ -256,13 +255,12 @@ def train_variant(
             y_val_model = y_val - heuristic_val
             y_test_model = y_test - heuristic_test
     else:
-        y_train_model = y_train_transformed
-        y_val_model = y_val_transformed
-        y_test_model = y_test_transformed
+        y_train_model = _transform_target(y_train, args.target_transform)
+        y_val_model = _transform_target(y_val, args.target_transform)
+        y_test_model = _transform_target(y_test, args.target_transform)
 
     train_dmatrix = xgb.DMatrix(x_train, label=y_train_model)
     val_dmatrix = xgb.DMatrix(x_val, label=y_val_model)
-    xgb.DMatrix(x_test, label=y_test_model)
 
     params = {
         "objective": "reg:absoluteerror",
@@ -292,9 +290,6 @@ def train_variant(
     test_pred_raw = _predict_regressor(model, x_test)
 
     if args.target_mode == "residual":
-        heuristic_train = _heuristic_predictions(train_df)
-        heuristic_val = _heuristic_predictions(val_df)
-        heuristic_test = _heuristic_predictions(test_df)
         if args.target_transform == "log1p":
             train_residual_pred = _inverse_sign_log_transform(train_pred_raw)
             val_residual_pred = _inverse_sign_log_transform(val_pred_raw)
@@ -501,9 +496,8 @@ def main() -> None:
     print(json.dumps(results, indent=2, sort_keys=True))
     print(f"Saved model to {canonical_model_path}")
     if "no_entropy" in variants:
-        print(
-            f"Saved model to {args.output_dir / f'xgboost_baseline_no_entropy_{args.target_mode}.json'}"
-        )
+        suffix = f"xgboost_baseline_no_entropy_{args.target_mode}.json"
+        print(f"Saved model to {args.output_dir / suffix}")
     print(f"Saved metrics to {metrics_path}")
 
     # Update (or create) a stable `latest` symlink in the base output dir
