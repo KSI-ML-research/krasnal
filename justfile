@@ -97,7 +97,7 @@ bot-setup:
 # Notes:
 #   - model_path must be a directory with model.pt, config.json, move_vocab.json (written at run start + checkpoint save)
 #   - path is resolved relative to project root, then passed as absolute path
-bot-run model_path='':
+bot-run +model_path='':
     @if [ ! -x "lichess-bot/.venv/bin/python" ]; then \
         echo "Missing lichess-bot venv. Run: just bot-setup"; \
         exit 1; \
