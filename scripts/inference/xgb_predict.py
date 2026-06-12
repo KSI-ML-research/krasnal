@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from krasnal.move_time.xgboost import BASE_FEATURE_COLUMNS, ENTROPY_FEATURE_COLUMNS, predict_parquet
+from krasnal.move_time.xgboost import predict_parquet
 
 
 def main() -> None:
@@ -13,21 +13,13 @@ def main() -> None:
     parser.add_argument("--model", type=Path, required=True)
     parser.add_argument("--input", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
-    parser.add_argument("--no-entropy", action="store_true")
-    parser.add_argument("--target-mode", choices=["absolute", "residual"], default="residual")
     parser.add_argument("--target-transform", choices=["none", "log1p"], default="log1p")
     args = parser.parse_args()
 
-    if args.no_entropy:
-        feature_columns = BASE_FEATURE_COLUMNS
-    else:
-        feature_columns = BASE_FEATURE_COLUMNS + ENTROPY_FEATURE_COLUMNS
     output_path = predict_parquet(
         model_path=args.model,
         input_path=args.input,
         output_path=args.output,
-        feature_columns=feature_columns,
-        target_mode=args.target_mode,
         target_transform=args.target_transform,
     )
     print(output_path)
