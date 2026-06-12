@@ -1,7 +1,7 @@
 """XGBoost trainer and predictor for move-time estimation.
 
-Trains an XGBoost regressor on absolute move times (log1p-transformed)
-using clock-derived features (no model entropy, no heuristic residuals).
+Trains an XGBoost regressor on absolute move times using clock-derived
+features (no model entropy, no heuristic residuals).
 """
 
 from __future__ import annotations
@@ -36,7 +36,6 @@ FEATURE_COLUMNS = [
 ]
 TARGET_COLUMN = "target_move_time_seconds"
 CANONICAL_SETTINGS = {
-    "target_transform": "log1p",
     "max_depth": 4,
     "n_estimators": 500,
     "learning_rate": 0.05,
@@ -67,15 +66,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--reg-lambda", type=float, default=10.0)
     parser.add_argument("--random-state", type=int, default=42)
     parser.add_argument(
-        "--target-transform",
-        choices=["none", "log1p"],
-        default="log1p",
-        help="Transform the target before training and invert it after prediction.",
-    )
-    parser.add_argument(
         "--canonical",
         action="store_true",
-        help="Use tuned canonical config: log1p + max_depth=4.",
+        help="Use tuned canonical config: max_depth=4.",
     )
     return parser
 
@@ -122,18 +115,6 @@ def _heuristic_predictions(df: pl.DataFrame) -> np.ndarray:
     return np.array([delay_to_seconds(float(r)) for r in raw], dtype=np.float32)
 
 
-def _transform_target(values: np.ndarray, target_transform: str) -> np.ndarray:
-    if target_transform == "log1p":
-        return np.log1p(np.clip(values, a_min=0.0, a_max=None)).astype(np.float32, copy=False)
-    return values.astype(np.float32, copy=False)
-
-
-def _inverse_transform_target(values: np.ndarray, target_transform: str) -> np.ndarray:
-    if target_transform == "log1p":
-        return np.clip(np.expm1(values), a_min=0.0, a_max=None).astype(np.float32, copy=False)
-    return np.clip(values, a_min=0.0, a_max=None).astype(np.float32, copy=False)
-
-
 def _apply_canonical_overrides(args: argparse.Namespace) -> None:
     for key, value in CANONICAL_SETTINGS.items():
         setattr(args, key, value)
@@ -169,11 +150,8 @@ def train(
         "test": _metrics(y_test, _heuristic_predictions(test_df)),
     }
 
-    y_train_model = _transform_target(y_train, args.target_transform)
-    y_val_model = _transform_target(y_val, args.target_transform)
-
-    train_dmatrix = xgb.DMatrix(x_train, label=y_train_model)
-    val_dmatrix = xgb.DMatrix(x_val, label=y_val_model)
+    train_dmatrix = xgb.DMatrix(x_train, label=y_train)
+    val_dmatrix = xgb.DMatrix(x_val, label=y_val)
 
     params = {
         "objective": "reg:absoluteerror",
@@ -198,13 +176,9 @@ def train(
         verbose_eval=False,
     )
 
-    train_pred_raw = model.predict(xgb.DMatrix(x_train))
-    val_pred_raw = model.predict(xgb.DMatrix(x_val))
-    test_pred_raw = model.predict(xgb.DMatrix(x_test))
-
-    train_pred = _inverse_transform_target(train_pred_raw, args.target_transform)
-    val_pred = _inverse_transform_target(val_pred_raw, args.target_transform)
-    test_pred = _inverse_transform_target(test_pred_raw, args.target_transform)
+    train_pred = model.predict(xgb.DMatrix(x_train))
+    val_pred = model.predict(xgb.DMatrix(x_val))
+    test_pred = model.predict(xgb.DMatrix(x_test))
 
     results: dict[str, object] = {
         "paths": {
@@ -219,7 +193,6 @@ def train(
         },
         "features": FEATURE_COLUMNS,
         "target": TARGET_COLUMN,
-        "target_transform": args.target_transform,
         "baselines": {
             "mean": mean_results,
             "median": median_results,
@@ -253,6 +226,32 @@ def train(
     return results
 
 
+def predict_single(
+    model: xgb.Booster,
+    ply: int,
+    time_initial: int,
+    prev_clock_seconds: int,
+    clock_fraction_left: float,
+    is_in_check_before_move: bool,
+    total_pieces: int,
+) -> float:
+    """Predict move time in seconds for a single position using a loaded model."""
+    features = np.array(
+        [
+            [
+                ply,
+                time_initial,
+                prev_clock_seconds,
+                clock_fraction_left,
+                int(is_in_check_before_move),
+                total_pieces,
+            ]
+        ],
+        dtype=np.float32,
+    )
+    return float(model.predict(xgb.DMatrix(features))[0])
+
+
 def _feature_frame(df: pl.DataFrame) -> np.ndarray:
     missing = [col for col in FEATURE_COLUMNS if col not in df.columns]
     if missing:
@@ -266,14 +265,12 @@ def predict_frame(
     *,
     model_path: Path,
     frame: pl.DataFrame,
-    target_transform: str = "log1p",
 ) -> np.ndarray:
     clean = frame.drop_nulls(subset=FEATURE_COLUMNS)
     model = xgb.Booster()
     model.load_model(model_path)
     features = _feature_frame(clean)
-    raw_pred = model.predict(xgb.DMatrix(features))
-    return _inverse_transform_target(raw_pred, target_transform)
+    return model.predict(xgb.DMatrix(features))
 
 
 def predict_parquet(
@@ -281,14 +278,10 @@ def predict_parquet(
     model_path: Path,
     input_path: Path,
     output_path: Path,
-    target_transform: str = "log1p",
 ) -> Path:
-    frame = pl.read_parquet(input_path)
-    predictions = predict_frame(
-        model_path=model_path, frame=frame, target_transform=target_transform
-    )
-    clean = frame.drop_nulls(subset=FEATURE_COLUMNS)
-    result = clean.with_columns(pl.Series("predicted_move_time_seconds", predictions))
+    frame = pl.read_parquet(input_path).drop_nulls(subset=FEATURE_COLUMNS)
+    predictions = predict_frame(model_path=model_path, frame=frame)
+    result = frame.with_columns(pl.Series("predicted_move_time_seconds", predictions))
     output_path.parent.mkdir(parents=True, exist_ok=True)
     result.write_parquet(output_path)
     return output_path

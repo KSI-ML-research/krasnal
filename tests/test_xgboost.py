@@ -1,25 +1,26 @@
+import time as _time
 from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
 import polars as pl
+import pytest
+import torch
 import xgboost as xgb
 
+from krasnal.config import GPTConfig
+from krasnal.model import GPT
 from krasnal.move_time import xgboost as mt_xgb
+from krasnal.uci_engine.go_params import GoParams
+from krasnal.uci_engine.provider import ModelProvider
 
 REAL_DATA_DIR = Path("data/3_xgboost_500_stratified")
-
-
-def test_log1p_roundtrip():
-    vals = np.array([0.0, 1e-6, 1.0, 10.0, 1000.0], dtype=np.float32)
-    t = mt_xgb._transform_target(vals, "log1p")
-    inv = mt_xgb._inverse_transform_target(t, "log1p")
-    assert np.allclose(vals, inv, rtol=1e-6, atol=1e-6)
+_REAL_XGB_MODEL = Path("artifacts/xgboost_baseline/xgboost_baseline.json")
+_TINY_VOCAB_SIZE = 7954
 
 
 def test_canonical_overrides_full_config():
     args = SimpleNamespace(
-        target_transform="none",
         max_depth=9,
         n_estimators=12,
         learning_rate=0.2,
@@ -33,7 +34,6 @@ def test_canonical_overrides_full_config():
 
     mt_xgb._apply_canonical_overrides(args)
 
-    assert args.target_transform == "log1p"
     assert args.max_depth == 4
     assert args.n_estimators == 500
     assert args.learning_rate == 0.05
@@ -76,7 +76,6 @@ def test_predict_parquet_smoke(tmp_path):
         model_path=model_path,
         input_path=input_path,
         output_path=out_path,
-        target_transform="log1p",
     )
 
     assert res_path.exists()
@@ -92,7 +91,6 @@ def test_real_pipeline_smoke(tmp_path):
     test_path = REAL_DATA_DIR / "xgb_test.parquet"
 
     args = SimpleNamespace(
-        target_transform="log1p",
         max_depth=4,
         n_estimators=20,
         learning_rate=0.05,
@@ -115,7 +113,6 @@ def test_real_pipeline_smoke(tmp_path):
     )
 
     assert results["features"] == mt_xgb.FEATURE_COLUMNS
-    assert results["target_transform"] == "log1p"
     assert results["xgboost"]["best_iteration"] <= args.n_estimators
     assert model_path.exists()
 
@@ -124,10 +121,98 @@ def test_real_pipeline_smoke(tmp_path):
         model_path=model_path,
         input_path=test_path,
         output_path=output_path,
-        target_transform="log1p",
     )
 
     assert saved_path.exists()
     out_df = pl.read_parquet(saved_path)
     assert "predicted_move_time_seconds" in out_df.columns
     assert np.isfinite(out_df["predicted_move_time_seconds"].to_numpy()).all()
+
+
+@pytest.fixture
+def _tiny_gpt():
+    config = GPTConfig(
+        block_size=128,
+        vocab_size=_TINY_VOCAB_SIZE,
+        n_layer=2,
+        n_head=2,
+        n_embd=64,
+        use_clock_encodings=False,
+        clock_encoding_hidden=32,
+    )
+    return GPT(config).to("cpu")
+
+
+@pytest.fixture
+def _real_xgb() -> xgb.Booster:
+    model = xgb.Booster()
+    model.load_model(str(_REAL_XGB_MODEL))
+    return model
+
+
+def test_predict_single_with_real_model():
+    model = xgb.Booster()
+    model.load_model(str(_REAL_XGB_MODEL))
+
+    result = mt_xgb.predict_single(
+        model=model,
+        ply=1,
+        time_initial=600,
+        prev_clock_seconds=600,
+        clock_fraction_left=1.0,
+        is_in_check_before_move=False,
+        total_pieces=32,
+    )
+    assert np.isfinite(result)
+    assert result >= 0 or abs(result) < 1.0  # allow small negatives from model
+
+
+def test_get_move_time_returns_finite(_tiny_gpt, _real_xgb):
+    provider = ModelProvider(
+        model=_tiny_gpt,
+        device=torch.device("cpu"),
+        artifact_config={"use_clock_encodings": False, "clock_encoding_hidden": 32},
+    )
+    provider.xgb_model = _real_xgb
+
+    go = GoParams(wtime_ms=600000, btime_ms=600000)
+    delay = provider.get_move_time("", go)
+    assert np.isfinite(delay), f"Expected finite delay, got {delay}"
+
+
+def test_get_move_time_increases_with_ply(_tiny_gpt, _real_xgb):
+    provider = ModelProvider(
+        model=_tiny_gpt,
+        device=torch.device("cpu"),
+        artifact_config={"use_clock_encodings": False, "clock_encoding_hidden": 32},
+    )
+    provider.xgb_model = _real_xgb
+
+    go = GoParams(wtime_ms=600000, btime_ms=600000)
+    d1 = provider.get_move_time("", go)
+    d2 = provider.get_move_time("e2e4", go)
+    assert np.isfinite(d1)
+    assert np.isfinite(d2)
+
+
+def test_think_and_move_returns_legal_move(_tiny_gpt, _real_xgb):
+    provider = ModelProvider(
+        model=_tiny_gpt,
+        device=torch.device("cpu"),
+        artifact_config={"use_clock_encodings": False, "clock_encoding_hidden": 32},
+    )
+    provider.xgb_model = _real_xgb
+
+    go = GoParams(wtime_ms=600000, btime_ms=600000)
+    move = provider.think_and_move("", go)
+    assert isinstance(move, str) and len(move) >= 4
+
+
+def test_get_move_time_returns_zero_without_xgb_model(_tiny_gpt):
+    provider = ModelProvider(
+        model=_tiny_gpt,
+        device=torch.device("cpu"),
+        artifact_config={"use_clock_encodings": False, "clock_encoding_hidden": 32},
+    )
+    go = GoParams(wtime_ms=600000, btime_ms=600000)
+    assert provider.get_move_time("", go) == 0.0

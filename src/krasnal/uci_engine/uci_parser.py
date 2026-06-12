@@ -4,6 +4,7 @@ import sys
 from loguru import logger
 
 from krasnal.inference.exceptions import NoLegalMovesError
+from krasnal.uci_engine.go_params import parse_go_rest
 from krasnal.uci_engine.provider import ChessModelProvider, ModelProviderError
 
 
@@ -61,7 +62,7 @@ class UCIParser:
         self._send_info_chunks(info_body)
         self._send("bestmove (none)")
 
-    def _handle_cmd_go(self) -> None:
+    def _handle_cmd_go(self, rest: str) -> None:
         self._ensure_provider()
         if self._startup_error is not None:
             logger.error("go failed (startup): {}", self._startup_error)
@@ -72,8 +73,9 @@ class UCIParser:
             self._emit_bestmove_none("krasnal-uci internal error (no provider)")
             return
 
+        go = parse_go_rest(rest)
         try:
-            best = self.provider.get_best_move(self.current_moves)
+            best = self.provider.think_and_move(self.current_moves, go)
         except ModelProviderError as e:
             logger.error("go failed (ModelProviderError): {}", e)
             if e.__cause__ is not None:
@@ -115,7 +117,8 @@ class UCIParser:
         elif command.startswith("position"):
             self.current_moves = moves_from_position_command(command)
         elif command.startswith("go"):
-            self._handle_cmd_go()
+            rest = command[2:].strip()
+            self._handle_cmd_go(rest)
         elif command == "quit":
             sys.exit(0)
 

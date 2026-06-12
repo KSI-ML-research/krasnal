@@ -13,14 +13,12 @@ def main() -> None:
     parser.add_argument("--model", type=Path, required=True)
     parser.add_argument("--input", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
-    parser.add_argument("--target-transform", choices=["none", "log1p"], default="log1p")
     args = parser.parse_args()
 
     output_path = predict_parquet(
         model_path=args.model,
         input_path=args.input,
         output_path=args.output,
-        target_transform=args.target_transform,
     )
     print(output_path)
 

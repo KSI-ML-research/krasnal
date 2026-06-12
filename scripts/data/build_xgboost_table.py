@@ -1,6 +1,6 @@
 """Build move-level train/val/test parquet tables for XGBoost.
 
-Input files are game-level parquet files from data/1_filtered/ (produced by
+Input files are game-level parquet files (produced by
 download_games.py) with Aix clock columns (clocks_white, clocks_black,
 time_initial, time_increment). All columns in _REQUIRED_COLUMNS must be present.
 """
@@ -30,11 +30,6 @@ _REQUIRED_COLUMNS = {
     "time_initial",
     "time_increment",
     "ply_count",
-    "is_check",
-    "piece_moved",
-    "white_rating",
-    "black_rating",
-    "result",
 }
 
 _READ_COLUMNS = sorted(_REQUIRED_COLUMNS)
@@ -150,22 +145,6 @@ def _compute_prev_clock_seconds(
     return result
 
 
-def _compute_clock_diff_seconds(
-    move_clocks: list[float | None],
-) -> list[float | None]:
-    result: list[float | None] = []
-    for i in range(len(move_clocks)):
-        if i >= 2 and move_clocks[i - 2] is not None and move_clocks[i] is not None:
-            try:
-                diff = max(0.0, float(move_clocks[i - 2]) - float(move_clocks[i]))
-                result.append(diff)
-            except Exception:
-                result.append(None)
-        else:
-            result.append(None)
-    return result
-
-
 def _load_games(input_paths: list[Path]) -> pl.DataFrame:
     frames: list[pl.DataFrame] = []
     game_offset = 0
@@ -199,11 +178,9 @@ def _load_games(input_paths: list[Path]) -> pl.DataFrame:
             continue
 
         n_moves_list: list[int] = []
-        mc_list: list[list[float | None]] = []
         mt_list: list[list[float | None]] = []
         ply_lists: list[list[int]] = []
         prev_clock_lists: list[list[float | None]] = []
-        clock_diff_lists: list[list[float | None]] = []
 
         cw_rows = df["clocks_white"].to_list()
         cb_rows = df["clocks_black"].to_list()
@@ -216,19 +193,15 @@ def _load_games(input_paths: list[Path]) -> pl.DataFrame:
         ):
             if cw is None or cb is None:
                 n_moves_list.append(0)
-                mc_list.append([])
                 mt_list.append([])
                 ply_lists.append([])
                 prev_clock_lists.append([])
-                clock_diff_lists.append([])
                 continue
             if uci_str is None:
                 n_moves_list.append(0)
-                mc_list.append([])
                 mt_list.append([])
                 ply_lists.append([])
                 prev_clock_lists.append([])
-                clock_diff_lists.append([])
                 continue
 
             cw_clean = [float(v) if v is not None else None for v in cw]
@@ -242,30 +215,24 @@ def _load_games(input_paths: list[Path]) -> pl.DataFrame:
             mt = _compute_move_time_seconds(cw_clean, cb_clean, ti_val, tinc_val, n_moves)
             ply_list = list(range(n_moves))
             prev_clocks = _compute_prev_clock_seconds(mc)
-            clock_diffs = _compute_clock_diff_seconds(mc)
 
             n_moves_list.append(n_moves)
-            mc_list.append(mc)
             mt_list.append(mt)
             ply_lists.append(ply_list)
             prev_clock_lists.append(prev_clocks)
-            clock_diff_lists.append(clock_diffs)
 
         df = df.with_columns(
             pl.Series("ply_list", ply_lists, dtype=pl.List(pl.Int64)),
-            pl.Series("move_clocks_seconds", mc_list, dtype=pl.List(pl.Float64)),
             pl.Series("move_time_seconds", mt_list, dtype=pl.List(pl.Float64)),
             pl.Series("prev_clock_seconds", prev_clock_lists, dtype=pl.List(pl.Float64)),
-            pl.Series("clock_diff_seconds", clock_diff_lists, dtype=pl.List(pl.Float64)),
         )
 
         uci_rows = df["uci_moves"].to_list()
         ply_rows = df["ply_list"].to_list()
-        is_check_rows = df["is_check"].to_list()
         check_before: list[list[int | None]] = []
         piece_count_before: list[list[int | None]] = []
 
-        for uci_raw, ply_raw, is_check_raw in zip(uci_rows, ply_rows, is_check_rows, strict=True):
+        for uci_raw, ply_raw in zip(uci_rows, ply_rows, strict=True):
             n = len(ply_raw) if ply_raw is not None else 0
             if n == 0:
                 check_before.append([])
@@ -289,14 +256,6 @@ def _load_games(input_paths: list[Path]) -> pl.DataFrame:
             board = chess.Board()
             row_check: list[int | None] = []
             row_pieces: list[int | None] = []
-
-            if is_check_raw is None or len(is_check_raw) < n:
-                is_check_safe = [False] * n
-            else:
-                is_check_safe = list(is_check_raw)
-            is_check_safe = is_check_safe[:n]
-            while len(is_check_safe) < n:
-                is_check_safe.append(False)
 
             for ply_idx in range(n):
                 row_check.append(1 if board.is_check() else 0)
@@ -328,29 +287,23 @@ def _explode_to_moves(games: pl.DataFrame) -> pl.DataFrame:
         "game_idx",
         "time_initial",
         "ply_list",
-        "move_clocks_seconds",
         "move_time_seconds",
         "prev_clock_seconds",
-        "clock_diff_seconds",
         "is_in_check_before_move",
         "total_pieces_before_move",
     ]
     explode_columns = [
         "ply_list",
-        "move_clocks_seconds",
         "move_time_seconds",
         "prev_clock_seconds",
-        "clock_diff_seconds",
         "is_in_check_before_move",
         "total_pieces_before_move",
     ]
     rename_map = {
         "time_initial": "time_initial",
         "ply_list": "ply",
-        "move_clocks_seconds": "clock_after_seconds",
         "move_time_seconds": "target_move_time_seconds",
         "prev_clock_seconds": "prev_clock_seconds",
-        "clock_diff_seconds": "clock_diff_seconds",
         "is_in_check_before_move": "is_in_check_before_move",
         "total_pieces_before_move": "total_pieces",
     }
@@ -361,13 +314,10 @@ def _explode_to_moves(games: pl.DataFrame) -> pl.DataFrame:
         .rename(rename_map)
         .with_columns(
             [
-                (pl.col("ply") % 2).cast(pl.Int8).alias("side_to_move"),
                 pl.col("ply").cast(pl.Int32),
                 pl.col("time_initial").cast(pl.Float64),
-                pl.col("clock_after_seconds").cast(pl.Float64),
                 pl.col("target_move_time_seconds").cast(pl.Float64),
                 pl.col("prev_clock_seconds").cast(pl.Float64),
-                pl.col("clock_diff_seconds").cast(pl.Float64),
                 pl.col("is_in_check_before_move").cast(pl.Int8),
                 pl.col("total_pieces").cast(pl.Int16),
                 pl.when(pl.col("time_initial") > 0)
