@@ -1,8 +1,7 @@
 """Generate per-move model probabilities or entropy for selected games only.
 
-This script is intentionally scoped to a small set of games (for example the
-100 games under analysis). It can either:
-    - export full legal probability vectors per move, or
+Either:
+    - (defeault) export full legal probability vectors per move, or
     - export per-move entropy directly from the provider.
 
 The output is limited to the selected rows, so downstream builders can run only

@@ -35,7 +35,7 @@ BASE_FEATURE_COLUMNS = [
     "is_in_check_before_move",
     "total_pieces",
 ]
-ENTROPY_FEATURE_COLUMNS = ["move_entropy", "entropy_x_ply_scaling"]
+ENTROPY_FEATURE_COLUMNS = ["move_entropy"]
 TARGET_COLUMN = "target_move_time_seconds"
 TARGET_TRANSFORMS = ["none", "log1p"]
 CANONICAL_SETTINGS = {
@@ -190,17 +190,14 @@ def _entropy_feature_checks(clean: pl.DataFrame) -> dict[str, float]:
 
 
 def _heuristic_predictions(df: pl.DataFrame) -> np.ndarray:
-    if "entropy_x_ply_scaling" in df.columns:
-        raw = df["entropy_x_ply_scaling"].to_numpy().astype(np.float32, copy=False)
-    elif "move_entropy" in df.columns:
-        ply_arr = df["ply"].to_numpy()
+    ply_arr = df["ply"].to_numpy()
+    if "move_entropy" in df.columns:
         entropy_arr = df["move_entropy"].to_numpy().astype(np.float32, copy=False)
         raw = np.array(
             [ply_scaling(int(p)) * float(e) for p, e in zip(ply_arr, entropy_arr, strict=True)],
             dtype=np.float32,
         )
     else:
-        ply_arr = df["ply"].to_numpy()
         raw = np.array([ply_scaling(int(p)) for p in ply_arr], dtype=np.float32)
 
     return np.array([delay_to_seconds(float(r)) for r in raw], dtype=np.float32)

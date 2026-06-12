@@ -26,9 +26,9 @@ def move_entropy(legal_probs: torch.Tensor) -> float:
 def ply_scaling(ply: int) -> float:
     if ply < 0:
         ply = 0
-    coef = -0.0008
-    c = 1.5
-    return max(0.7, (coef * (float(ply) - 35) ** 2 + c))
+    coef = -0.0003
+    c = 0.30
+    return max(0.10, (coef * (float(ply) - 35) ** 2 + c))
 
 
 def delay(
