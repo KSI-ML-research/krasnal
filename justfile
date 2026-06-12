@@ -64,9 +64,9 @@ pretrain *args:
 
 
 
-# Train the canonical XGBoost move-time predictor (thin wrapper around scripts/training/train_xgboost.py)
+# Train the canonical XGBoost move-time predictor (thin wrapper around scripts/benchmarks/xgboost_baseline.py)
 train-xgboost *args:
-    uv run scripts/training/train_xgboost.py --canonical {{args}}
+    uv run scripts/benchmarks/xgboost_baseline.py --canonical {{args}}
 
 
 # Run XGBoost inference on a parquet input and write parquet output

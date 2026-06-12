@@ -13,16 +13,15 @@ def main() -> None:
     parser.add_argument("--model", type=Path, required=True)
     parser.add_argument("--input", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
-    parser.add_argument("--with-entropy", action="store_true")
+    parser.add_argument("--no-entropy", action="store_true")
     parser.add_argument("--target-mode", choices=["absolute", "residual"], default="residual")
     parser.add_argument("--target-transform", choices=["none", "log1p"], default="log1p")
     args = parser.parse_args()
 
-    feature_columns = (
-        BASE_FEATURE_COLUMNS + ENTROPY_FEATURE_COLUMNS
-        if args.with_entropy
-        else BASE_FEATURE_COLUMNS
-    )
+    if args.no_entropy:
+        feature_columns = BASE_FEATURE_COLUMNS
+    else:
+        feature_columns = BASE_FEATURE_COLUMNS + ENTROPY_FEATURE_COLUMNS
     output_path = predict_parquet(
         model_path=args.model,
         input_path=args.input,
