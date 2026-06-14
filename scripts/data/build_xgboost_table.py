@@ -3,6 +3,9 @@
 Input files are game-level parquet files (produced by
 download_games.py) with Aix clock columns (clocks_white, clocks_black,
 time_initial, time_increment). All columns in _REQUIRED_COLUMNS must be present.
+
+Pipeline:
+  load -> stratify-split -> explode to move-level -> filter implausible -> save
 """
 
 from __future__ import annotations
@@ -36,6 +39,7 @@ _READ_COLUMNS = sorted(_REQUIRED_COLUMNS)
 
 
 def _bucket_time_initial(time_initial: float | int | None) -> str:
+    """Bucket time_initial into a label for stratified splitting."""
     if time_initial is None:
         return "time_unknown"
     if time_initial < 600:
@@ -48,6 +52,7 @@ def _bucket_time_initial(time_initial: float | int | None) -> str:
 
 
 def _bucket_ply_count(ply_count: float | int | None) -> str:
+    """Bucket ply_count into a label for stratified splitting."""
     if ply_count is None:
         return "ply_unknown"
     if ply_count <= 30:
@@ -60,14 +65,20 @@ def _bucket_ply_count(ply_count: float | int | None) -> str:
 
 
 def _stable_shuffle_key(game_idx: pl.Expr, seed: int = 42) -> pl.Expr:
+    """Deterministic shuffle key via LCG; same seed = same split across runs."""
     return ((game_idx.cast(pl.Int64) * 1103515245) + seed) % 2_147_483_647
 
 
 def _interleave_clocks(
-    clocks_white: list[float] | None,
-    clocks_black: list[float] | None,
+    clocks_white: list[float | None] | None,
+    clocks_black: list[float | None] | None,
     n_moves: int,
 ) -> list[float | None]:
+    """Merge white/black clock lists into one per-ply list.
+
+    ply=0 -> clocks_white[0], ply=1 -> clocks_black[0], ply=2 -> clocks_white[1], …
+    Returns None for missing entries.
+    """
     if clocks_white is None or clocks_black is None:
         return [None] * n_moves
     result: list[float | None] = []
@@ -90,12 +101,19 @@ def _interleave_clocks(
 
 
 def _compute_move_time_seconds(
-    clocks_white: list[float] | None,
-    clocks_black: list[float] | None,
+    clocks_white: list[float | None] | None,
+    clocks_black: list[float | None] | None,
     time_initial: float,
     time_increment: float,
     n_moves: int,
 ) -> list[float | None]:
+    """Derive per-move time spent (seconds) from clock series.
+
+    Formula per ply (example for white):
+      time_spent = prev_clock - current_clock + increment
+    where prev_clock starts at time_initial for the first white move,
+    then tracks the previous clock value for that colour.  Clamped ≥ 0.
+    """
     if clocks_white is None or clocks_black is None:
         return [None] * max(n_moves, 0)
     result: list[float | None] = []
@@ -136,6 +154,12 @@ def _compute_move_time_seconds(
 def _compute_prev_clock_seconds(
     move_clocks: list[float | None],
 ) -> list[float | None]:
+    """Extract the clock value from 2 plies ago (= last time this colour moved).
+
+    The interleaved clock at index i is the clock *after* the move at ply
+    i.  The previous clock for the same colour is at i-2.  Returns
+    None for ply 0 and 1 (no prior clock of that colour).
+    """
     result: list[float | None] = []
     for i in range(len(move_clocks)):
         if i >= 2:
@@ -146,6 +170,13 @@ def _compute_prev_clock_seconds(
 
 
 def _load_games(input_paths: list[Path]) -> pl.DataFrame:
+    """Read filtered games, compute clock-derived list-columns per game.
+
+    For each input parquet: validate columns, filter null games,
+    then row-by-row derive interleaved clocks, move times, ply lists,
+    check flags and piece counts.  Returns one DataFrame with game-level
+    list-columns keyed by game_idx.
+    """
     frames: list[pl.DataFrame] = []
     game_offset = 0
 
@@ -156,29 +187,35 @@ def _load_games(input_paths: list[Path]) -> pl.DataFrame:
 
         df = pl.read_parquet(path, columns=_READ_COLUMNS)
 
+        # skip the file if any columns are missing
         missing = _REQUIRED_COLUMNS.difference(df.columns)
         if missing:
             logger.warning("Skipping {} (missing columns: {})", path, sorted(missing))
             continue
 
-        clock_missing_count = df.filter(
-            pl.col("clocks_white").is_null() | pl.col("clocks_black").is_null()
-        ).height
-        if clock_missing_count > 0:
+        null_mask = (
+            pl.col("clocks_white").is_null()
+            | pl.col("clocks_black").is_null()
+            | pl.col("uci_moves").is_null()
+            | pl.col("time_initial").is_null()
+            | pl.col("time_increment").is_null()
+        )
+
+        # warning if and how many rows (games) are missing then skips them
+        null_count = df.filter(null_mask).height
+        if null_count > 0:
             logger.warning(
-                "{} has {} games with null clock columns; skipping those rows",
+                "{}: skipping {} games with null values in required columns",
                 path.name,
-                clock_missing_count,
+                null_count,
             )
-
-        df = df.filter(pl.col("clocks_white").is_not_null() & pl.col("clocks_black").is_not_null())
-
+        df = df.filter(~null_mask)
         if df.height == 0:
-            logger.warning("No games with clock data in {}, skipping", path)
+            logger.warning("No valid games in {}, skipping", path)
             continue
 
         n_moves_list: list[int] = []
-        mt_list: list[list[float | None]] = []
+        mt_list: list[list[float | None]] = []  # move-time list
         ply_lists: list[list[int]] = []
         prev_clock_lists: list[list[float | None]] = []
 
@@ -188,28 +225,21 @@ def _load_games(input_paths: list[Path]) -> pl.DataFrame:
         tinc_vals = df["time_increment"].to_list()
         uci_rows = df["uci_moves"].to_list()
 
+        # count the time for each move
         for cw, cb, ti, tinc, uci_str in zip(
             cw_rows, cb_rows, ti_vals, tinc_vals, uci_rows, strict=True
         ):
-            if cw is None or cb is None:
-                n_moves_list.append(0)
-                mt_list.append([])
-                ply_lists.append([])
-                prev_clock_lists.append([])
-                continue
-            if uci_str is None:
-                n_moves_list.append(0)
-                mt_list.append([])
-                ply_lists.append([])
-                prev_clock_lists.append([])
-                continue
-
             cw_clean = [float(v) if v is not None else None for v in cw]
             cb_clean = [float(v) if v is not None else None for v in cb]
-            ti_val = float(ti) if ti is not None else 0.0
-            tinc_val = float(tinc) if tinc is not None else 0.0
-            moves_str = str(uci_str)
-            n_moves = len(moves_str.split())
+            ti_val = float(ti)
+            tinc_val = float(tinc)
+
+            if isinstance(uci_str, list):
+                moves_str = [str(m) for m in uci_str]
+                n_moves = len(moves_str)
+            else:
+                moves_str = str(uci_str)
+                n_moves = len(moves_str.split())
 
             mc = _interleave_clocks(cw_clean, cb_clean, n_moves)
             mt = _compute_move_time_seconds(cw_clean, cb_clean, ti_val, tinc_val, n_moves)
@@ -232,6 +262,7 @@ def _load_games(input_paths: list[Path]) -> pl.DataFrame:
         check_before: list[list[int | None]] = []
         piece_count_before: list[list[int | None]] = []
 
+        # looking for checks and number of piecies
         for uci_raw, ply_raw in zip(uci_rows, ply_rows, strict=True):
             n = len(ply_raw) if ply_raw is not None else 0
             if n == 0:
@@ -239,15 +270,12 @@ def _load_games(input_paths: list[Path]) -> pl.DataFrame:
                 piece_count_before.append([])
                 continue
 
-            if uci_raw is None:
-                check_before.append([None] * n)
-                piece_count_before.append([None] * n)
-                continue
-
             if isinstance(uci_raw, str):
                 move_tokens = uci_raw.split()
             elif isinstance(uci_raw, list):
                 move_tokens = [str(m) for m in uci_raw]
+            # maintaining the length the same as other columns 
+            # (eplode_to_moves requires lists in one row to have the same length)
             else:
                 check_before.append([None] * n)
                 piece_count_before.append([None] * n)
@@ -283,6 +311,12 @@ def _load_games(input_paths: list[Path]) -> pl.DataFrame:
 
 
 def _explode_to_moves(games: pl.DataFrame) -> pl.DataFrame:
+    """Explode game-level list-columns into move-level rows.
+
+    Each input row (one game) with list-columns becomes N rows (one per ply).
+    Derives clock_fraction_left = prev_clock_seconds / time_initial.
+    Drops rows where the target move time is null.
+    """
     select_columns = [
         "game_idx",
         "time_initial",
@@ -300,11 +334,8 @@ def _explode_to_moves(games: pl.DataFrame) -> pl.DataFrame:
         "total_pieces_before_move",
     ]
     rename_map = {
-        "time_initial": "time_initial",
         "ply_list": "ply",
         "move_time_seconds": "target_move_time_seconds",
-        "prev_clock_seconds": "prev_clock_seconds",
-        "is_in_check_before_move": "is_in_check_before_move",
         "total_pieces_before_move": "total_pieces",
     }
 
@@ -333,6 +364,16 @@ def _explode_to_moves(games: pl.DataFrame) -> pl.DataFrame:
 
 
 def _filter_implausible_move_times(moves: pl.DataFrame) -> pl.DataFrame:
+    """Remove move-time rows where the target is unreasonably large.
+
+    Keeps rows where:
+    - target_move_time_seconds ≥ 0
+    - target_move_time_seconds ≤ prev_clock_seconds + MAX_TIME_OVER_CLOCK_SECONDS
+    - both target and prev_clock are non-null
+
+    Note: this implicitly drops ply 0 and 1 (first white/black moves) because
+    prev_clock_seconds is None for those (no prior clock of that colour).
+    """
     if "prev_clock_seconds" not in moves.columns or "target_move_time_seconds" not in moves.columns:
         return moves
 
@@ -360,6 +401,12 @@ def _filter_implausible_move_times(moves: pl.DataFrame) -> pl.DataFrame:
 
 
 def _split_games(games: pl.DataFrame) -> tuple[pl.DataFrame, pl.DataFrame, pl.DataFrame]:
+    """Stratified train/val/test split by time_initial x ply_count buckets.
+
+    Deterministic shuffle via LCG key.  Within each stratum the games are
+    sorted by the shuffle key and sliced 70/15/15.  Returns three DataFrames
+    at the game level (not yet exploded to moves).
+    """
     required = {"game_idx", "time_initial", "ply_count"}
     missing = required.difference(games.columns)
     if missing:
@@ -418,6 +465,7 @@ def _split_games(games: pl.DataFrame) -> tuple[pl.DataFrame, pl.DataFrame, pl.Da
 
 @hydra.main(version_base=None, config_path="../../config", config_name="preprocess")
 def main(cfg: DictConfig) -> None:
+    """Entry point: load games, stratify-split, explode to moves, filter, save."""
     input_raw = str(cfg.get("xgb_input_dir", str(RAW_UCI_DIR)))
     input_dir = Path(input_raw)
     output_dir = Path(str(cfg.get("xgboost_output_dir", "data/3_xgboost")))
