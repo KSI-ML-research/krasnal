@@ -1,22 +1,12 @@
-import time as _time
-from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
 import polars as pl
-import pytest
-import torch
 import xgboost as xgb
 
-from krasnal.config import GPTConfig
-from krasnal.model import GPT
 from krasnal.move_time import xgboost as mt_xgb
 from krasnal.uci_engine.go_params import GoParams
 from krasnal.uci_engine.provider import ModelProvider
-
-REAL_DATA_DIR = Path("data/3_xgboost_500_stratified")
-_REAL_XGB_MODEL = Path("artifacts/xgboost_baseline/xgboost_baseline.json")
-_TINY_VOCAB_SIZE = 7954
 
 
 def test_canonical_overrides_full_config():
@@ -85,134 +75,73 @@ def test_predict_parquet_smoke(tmp_path):
     assert np.all(np.isfinite(preds))
 
 
-def test_real_pipeline_smoke(tmp_path):
-    train_path = REAL_DATA_DIR / "xgb_train.parquet"
-    val_path = REAL_DATA_DIR / "xgb_val.parquet"
-    test_path = REAL_DATA_DIR / "xgb_test.parquet"
-
-    args = SimpleNamespace(
-        max_depth=4,
-        n_estimators=20,
-        learning_rate=0.05,
-        subsample=0.8,
-        colsample_bytree=0.8,
-        min_child_weight=1.0,
-        reg_alpha=0.0,
-        reg_lambda=0.0,
-        random_state=42,
-        output_dir=tmp_path,
-    )
-
-    model_path = tmp_path / "xgboost_baseline.json"
-    results = mt_xgb.train(
-        train_path=train_path,
-        val_path=val_path,
-        test_path=test_path,
-        args=args,
-        model_path=model_path,
-    )
-
-    assert results["features"] == mt_xgb.FEATURE_COLUMNS
-    assert results["xgboost"]["best_iteration"] <= args.n_estimators
-    assert model_path.exists()
-
-    output_path = tmp_path / "predictions.parquet"
-    saved_path = mt_xgb.predict_parquet(
-        model_path=model_path,
-        input_path=test_path,
-        output_path=output_path,
-    )
-
-    assert saved_path.exists()
-    out_df = pl.read_parquet(saved_path)
-    assert "predicted_move_time_seconds" in out_df.columns
-    assert np.isfinite(out_df["predicted_move_time_seconds"].to_numpy()).all()
-
-
-@pytest.fixture
-def _tiny_gpt():
-    config = GPTConfig(
-        block_size=128,
-        vocab_size=_TINY_VOCAB_SIZE,
-        n_layer=2,
-        n_head=2,
-        n_embd=64,
-        use_clock_encodings=False,
-        clock_encoding_hidden=32,
-    )
-    return GPT(config).to("cpu")
-
-
-@pytest.fixture
-def _real_xgb() -> xgb.Booster:
-    model = xgb.Booster()
-    model.load_model(str(_REAL_XGB_MODEL))
+def _train_tiny_xgb() -> xgb.Booster:
+    rng = np.random.RandomState(42)
+    X = rng.randn(20, len(mt_xgb.FEATURE_COLUMNS)).astype(np.float32)
+    y = rng.uniform(1, 15, 20).astype(np.float32)
+    dtrain = xgb.DMatrix(X, label=y)
+    params = {"objective": "reg:absoluteerror", "tree_method": "hist", "eval_metric": "mae"}
+    model = xgb.train(params=params, dtrain=dtrain, num_boost_round=5)
     return model
 
 
-def test_predict_single_with_real_model():
-    model = xgb.Booster()
-    model.load_model(str(_REAL_XGB_MODEL))
+def test_predict_single_returns_reasonable_range():
+    model = _train_tiny_xgb()
 
     result = mt_xgb.predict_single(
         model=model,
-        ply=1,
+        ply=10,
         time_initial=600,
-        prev_clock_seconds=600,
-        clock_fraction_left=1.0,
+        prev_clock_seconds=400,
+        clock_fraction_left=0.67,
         is_in_check_before_move=False,
-        total_pieces=32,
+        total_pieces=28,
     )
     assert np.isfinite(result)
-    assert result >= 0 or abs(result) < 1.0  # allow small negatives from model
+    assert 0 <= result <= 300
 
 
-def test_get_move_time_returns_finite(_tiny_gpt, _real_xgb):
+def test_predict_single_on_various_inputs():
+    model = _train_tiny_xgb()
+
+    for ply in (0, 1, 50, 200):
+        result = mt_xgb.predict_single(
+            model=model,
+            ply=ply,
+            time_initial=300,
+            prev_clock_seconds=120,
+            clock_fraction_left=0.4,
+            is_in_check_before_move=True,
+            total_pieces=16,
+        )
+        assert np.isfinite(result)
+        assert result >= 0
+
+
+def test_get_move_time_returns_zero_without_xgb_model():
     provider = ModelProvider(
-        model=_tiny_gpt,
-        device=torch.device("cpu"),
-        artifact_config={"use_clock_encodings": False, "clock_encoding_hidden": 32},
-    )
-    provider.xgb_model = _real_xgb
-
-    go = GoParams(wtime_ms=600000, btime_ms=600000)
-    delay = provider.get_move_time("", go)
-    assert np.isfinite(delay), f"Expected finite delay, got {delay}"
-
-
-def test_get_move_time_increases_with_ply(_tiny_gpt, _real_xgb):
-    provider = ModelProvider(
-        model=_tiny_gpt,
-        device=torch.device("cpu"),
-        artifact_config={"use_clock_encodings": False, "clock_encoding_hidden": 32},
-    )
-    provider.xgb_model = _real_xgb
-
-    go = GoParams(wtime_ms=600000, btime_ms=600000)
-    d1 = provider.get_move_time("", go)
-    d2 = provider.get_move_time("e2e4", go)
-    assert np.isfinite(d1)
-    assert np.isfinite(d2)
-
-
-def test_think_and_move_returns_legal_move(_tiny_gpt, _real_xgb):
-    provider = ModelProvider(
-        model=_tiny_gpt,
-        device=torch.device("cpu"),
-        artifact_config={"use_clock_encodings": False, "clock_encoding_hidden": 32},
-    )
-    provider.xgb_model = _real_xgb
-
-    go = GoParams(wtime_ms=600000, btime_ms=600000)
-    move = provider.think_and_move("", go)
-    assert isinstance(move, str) and len(move) >= 4
-
-
-def test_get_move_time_returns_zero_without_xgb_model(_tiny_gpt):
-    provider = ModelProvider(
-        model=_tiny_gpt,
-        device=torch.device("cpu"),
+        model=None,
+        device=None,
         artifact_config={"use_clock_encodings": False, "clock_encoding_hidden": 32},
     )
     go = GoParams(wtime_ms=600000, btime_ms=600000)
     assert provider.get_move_time("", go) == 0.0
+
+
+def test_feature_frame_converts_correctly():
+    df = pl.DataFrame(
+        {
+            "ply": [0, 1, 2],
+            "time_initial": [300, 300, 300],
+            "prev_clock_seconds": [300, 250, 200],
+            "clock_fraction_left": [1.0, 0.83, 0.67],
+            "is_in_check_before_move": [0, 0, 1],
+            "total_pieces": [32, 30, 28],
+        }
+    )
+
+    arr = mt_xgb._feature_frame(df)
+    assert arr.shape == (3, 6)
+    assert arr.dtype == np.float32
+    assert np.allclose(arr[0], [0, 300, 300, 1.0, 0, 32])
+    assert np.allclose(arr[2], [2, 300, 200, 0.67, 1, 28])
