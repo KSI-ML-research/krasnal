@@ -84,11 +84,11 @@ bot-run +model_path='':
         exit 1; \
     fi
     @if [ "$(uname)" = "Darwin" ]; then \
-        cp config/config.yml.example lichess-bot/config.yml && \
+        cp config/lichess_config.yml lichess-bot/config.yml && \
         sed -i '' "s|TOKEN_PLACEHOLDER|${LICHESS_BOT_TOKEN}|g" lichess-bot/config.yml && \
         sed -i '' "s|ENGINE_INTERPRETER_PLACEHOLDER|../.venv/bin/python|g" lichess-bot/config.yml; \
     else \
-        cp config/config.yml.example lichess-bot/config.yml && \
+        cp config/lichess_config.yml lichess-bot/config.yml && \
         sed -i "s|TOKEN_PLACEHOLDER|${LICHESS_BOT_TOKEN}|g" lichess-bot/config.yml && \
         sed -i "s|ENGINE_INTERPRETER_PLACEHOLDER|../.venv/bin/python|g" lichess-bot/config.yml; \
     fi
