@@ -50,6 +50,14 @@ def test_delay_to_seconds_rejects_invalid_arguments():
         delay_to_seconds(1.0, scale_factor=0.0)
 
 
+def test_ply_scaling_at_peak():
+    assert ply_scaling(35) == pytest.approx(0.30, abs=1e-4)
+
+
+def test_ply_scaling_at_large_ply():
+    assert ply_scaling(200) == pytest.approx(0.10, abs=1e-4)
+
+
 def test_analyze_move_returns_entropy_and_delay():
     probs = torch.tensor([0.2, 0.3, 0.5])
     ply = 5

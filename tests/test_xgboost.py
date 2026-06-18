@@ -1,7 +1,9 @@
+from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
 import polars as pl
+import pytest
 import xgboost as xgb
 
 from krasnal.move_time import xgboost as mt_xgb
@@ -9,33 +11,8 @@ from krasnal.uci_engine.go_params import GoParams
 from krasnal.uci_engine.provider import ModelProvider
 
 
-def test_canonical_overrides_full_config():
-    args = SimpleNamespace(
-        max_depth=9,
-        n_estimators=12,
-        learning_rate=0.2,
-        subsample=0.5,
-        colsample_bytree=0.6,
-        min_child_weight=3.0,
-        reg_alpha=1.0,
-        reg_lambda=2.0,
-        random_state=7,
-    )
-
-    mt_xgb._apply_canonical_overrides(args)
-
-    assert args.max_depth == 4
-    assert args.n_estimators == 500
-    assert args.learning_rate == 0.05
-    assert args.subsample == 0.8
-    assert args.colsample_bytree == 0.8
-    assert args.min_child_weight == 1.0
-    assert args.reg_alpha == 0.0
-    assert args.reg_lambda == 0.0
-    assert args.random_state == 42
-
-
 def test_predict_parquet_smoke(tmp_path):
+    """Tests parquet -> model -> prediction -> parquet pipeline"""
     n = 3
     df = pl.DataFrame(
         {
@@ -76,6 +53,7 @@ def test_predict_parquet_smoke(tmp_path):
 
 
 def _train_tiny_xgb() -> xgb.Booster:
+    """Model for other tests"""
     rng = np.random.RandomState(42)
     X = rng.randn(20, len(mt_xgb.FEATURE_COLUMNS)).astype(np.float32)
     y = rng.uniform(1, 15, 20).astype(np.float32)
@@ -86,6 +64,7 @@ def _train_tiny_xgb() -> xgb.Booster:
 
 
 def test_predict_single_returns_reasonable_range():
+    """Tests that predict_single doesn't return NaN or Inf"""
     model = _train_tiny_xgb()
 
     result = mt_xgb.predict_single(
@@ -102,6 +81,8 @@ def test_predict_single_returns_reasonable_range():
 
 
 def test_predict_single_on_various_inputs():
+    """Similar to test_predict_single_returns_reasonable_range
+    but tests that on different game phases"""
     model = _train_tiny_xgb()
 
     for ply in (0, 1, 50, 200):
@@ -119,6 +100,7 @@ def test_predict_single_on_various_inputs():
 
 
 def test_get_move_time_returns_zero_without_xgb_model():
+    """If xgb isn't loaded the predict time should be 0"""
     provider = ModelProvider(
         model=None,
         device=None,
@@ -145,3 +127,160 @@ def test_feature_frame_converts_correctly():
     assert arr.dtype == np.float32
     assert np.allclose(arr[0], [0, 300, 300, 1.0, 0, 32])
     assert np.allclose(arr[2], [2, 300, 200, 0.67, 1, 28])
+
+
+def _make_synthetic_parquet(path: Path, n: int = 500, seed: int = 42) -> None:
+    rng = np.random.RandomState(seed)
+    df = pl.DataFrame(
+        {
+            "ply": rng.randint(1, 121, n),
+            "time_initial": rng.choice([180, 300, 600], n),
+            "prev_clock_seconds": rng.uniform(10, 600, n).astype(np.float32),
+            "clock_fraction_left": rng.uniform(0.01, 1.0, n).astype(np.float32),
+            "is_in_check_before_move": rng.randint(0, 2, n),
+            "total_pieces": rng.randint(4, 33, n),
+        }
+    )
+    raw = (
+        1.0
+        + 1.5 * df["is_in_check_before_move"].to_numpy().astype(np.float32)
+        + 0.08 * df["total_pieces"].to_numpy().astype(np.float32)
+        - 2.0 * df["clock_fraction_left"].to_numpy().astype(np.float32)
+        + rng.normal(0, 0.15, n).astype(np.float32)
+    )
+    target = np.clip(raw, 0.1, 30.0)
+    df = df.with_columns(pl.Series(mt_xgb.TARGET_COLUMN, target))
+    df.write_parquet(str(path))
+
+
+def test_train_returns_expected_structure(tmp_path):
+    for name in ("train", "val", "test"):
+        _make_synthetic_parquet(tmp_path / f"{name}.parquet", n=100)
+
+    args = SimpleNamespace(
+        max_depth=3, n_estimators=20, learning_rate=0.2,
+        subsample=1.0, colsample_bytree=1.0,
+        min_child_weight=1.0, reg_alpha=0.0, reg_lambda=0.0,
+        random_state=42,
+    )
+    result = mt_xgb.train(
+        train_path=tmp_path / "train.parquet",
+        val_path=tmp_path / "val.parquet",
+        test_path=tmp_path / "test.parquet",
+        args=args,
+    )
+
+    assert set(result) >= {"paths", "rows", "baselines", "xgboost"}
+    assert set(result["xgboost"]) >= {"train", "val", "test", "params"}
+    assert result["rows"]["train"] == 100
+    assert result["rows"]["val"] == 100
+    assert result["rows"]["test"] == 100
+
+
+def test_xgboost_beats_constant_baselines(tmp_path):
+    for name in ("train", "val", "test"):
+        _make_synthetic_parquet(tmp_path / f"{name}.parquet", n=200, seed=hash(name) % 2**31)
+
+    args = SimpleNamespace(
+        max_depth=4, n_estimators=50, learning_rate=0.15,
+        subsample=0.8, colsample_bytree=0.8,
+        min_child_weight=1.0, reg_alpha=0.0, reg_lambda=0.0,
+        random_state=42,
+    )
+    result = mt_xgb.train(
+        train_path=tmp_path / "train.parquet",
+        val_path=tmp_path / "val.parquet",
+        test_path=tmp_path / "test.parquet",
+        args=args,
+    )
+
+    xgb_mae = result["xgboost"]["test"]["mae"]
+    mean_mae = result["baselines"]["mean"]["test"]["mae"]
+    med_mae = result["baselines"]["median"]["test"]["mae"]
+
+    assert xgb_mae < mean_mae, f"XGBoost MAE {xgb_mae:.3f} ≥ mean MAE {mean_mae:.3f}"
+    assert xgb_mae < med_mae, f"XGBoost MAE {xgb_mae:.3f} ≥ median MAE {med_mae:.3f}"
+
+
+def test_train_saves_model(tmp_path):
+    for name in ("train", "val", "test"):
+        _make_synthetic_parquet(tmp_path / f"{name}.parquet", n=100)
+
+    model_path = tmp_path / "model.json"
+    args = SimpleNamespace(
+        max_depth=3, n_estimators=20, learning_rate=0.2,
+        subsample=1.0, colsample_bytree=1.0,
+        min_child_weight=1.0, reg_alpha=0.0, reg_lambda=0.0,
+        random_state=42,
+    )
+    mt_xgb.train(
+        train_path=tmp_path / "train.parquet",
+        val_path=tmp_path / "val.parquet",
+        test_path=tmp_path / "test.parquet",
+        args=args,
+        model_path=model_path,
+    )
+
+    assert model_path.exists()
+    model = xgb.Booster()
+    model.load_model(str(model_path))
+
+
+def test_load_split_raises_on_missing_column(tmp_path):
+    df = pl.DataFrame({"ply": [1], "time_initial": [300]})
+    path = tmp_path / "bad.parquet"
+    df.write_parquet(str(path))
+    with pytest.raises(ValueError, match="missing required columns"):
+        mt_xgb._load_split(path)
+
+
+def test_load_split_raises_on_empty(tmp_path):
+    cols = mt_xgb.FEATURE_COLUMNS + [mt_xgb.TARGET_COLUMN]
+    df = pl.DataFrame({c: [] for c in cols})
+    path = tmp_path / "empty.parquet"
+    df.write_parquet(str(path))
+    with pytest.raises(ValueError, match="non-null rows"):
+        mt_xgb._load_split(path)
+
+
+def test_train_then_predict_on_new_data(tmp_path):
+    for name in ("train", "val", "test"):
+        _make_synthetic_parquet(tmp_path / f"{name}.parquet", n=200, seed=hash(name) % 2**31)
+
+    model_path = tmp_path / "model.json"
+    args = SimpleNamespace(
+        max_depth=3, n_estimators=30, learning_rate=0.2,
+        subsample=1.0, colsample_bytree=1.0,
+        min_child_weight=1.0, reg_alpha=0.0, reg_lambda=0.0,
+        random_state=42,
+    )
+    mt_xgb.train(
+        train_path=tmp_path / "train.parquet",
+        val_path=tmp_path / "val.parquet",
+        test_path=tmp_path / "test.parquet",
+        args=args,
+        model_path=model_path,
+    )
+
+    new_df = pl.DataFrame(
+        {
+            "ply": [10, 60, 100],
+            "time_initial": [300, 600, 180],
+            "prev_clock_seconds": [250, 300, 30],
+            "clock_fraction_left": [0.83, 0.50, 0.17],
+            "is_in_check_before_move": [0, 1, 0],
+            "total_pieces": [32, 20, 8],
+        }
+    )
+    new_df.write_parquet(str(tmp_path / "new.parquet"))
+
+    out_path = mt_xgb.predict_parquet(
+        model_path=model_path,
+        input_path=tmp_path / "new.parquet",
+        output_path=tmp_path / "out.parquet",
+    )
+
+    result = pl.read_parquet(out_path)
+    assert "predicted_move_time_seconds" in result.columns
+    assert result["predicted_move_time_seconds"].is_finite().all()
+    assert (result["predicted_move_time_seconds"] >= 0).all()

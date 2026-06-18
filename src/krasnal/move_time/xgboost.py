@@ -1,7 +1,7 @@
 """XGBoost trainer and predictor for move-time estimation.
 
 Trains an XGBoost regressor on absolute move times using clock-derived
-features (no model entropy, no heuristic residuals).
+features.
 """
 
 from __future__ import annotations
@@ -35,17 +35,6 @@ FEATURE_COLUMNS = [
     "total_pieces",
 ]
 TARGET_COLUMN = "target_move_time_seconds"
-CANONICAL_SETTINGS = {
-    "max_depth": 4,
-    "n_estimators": 500,
-    "learning_rate": 0.05,
-    "subsample": 0.8,
-    "colsample_bytree": 0.8,
-    "min_child_weight": 1.0,
-    "reg_alpha": 0.0,
-    "reg_lambda": 0.0,
-    "random_state": 42,
-}
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -56,20 +45,15 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--val", type=Path, default=DEFAULT_VAL_PATH)
     parser.add_argument("--test", type=Path, default=DEFAULT_TEST_PATH)
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
-    parser.add_argument("--max-depth", type=int, default=5)
+    parser.add_argument("--max-depth", type=int, default=4)
     parser.add_argument("--n-estimators", type=int, default=500)
     parser.add_argument("--learning-rate", type=float, default=0.05)
     parser.add_argument("--subsample", type=float, default=0.8)
     parser.add_argument("--colsample-bytree", type=float, default=0.8)
     parser.add_argument("--min-child-weight", type=float, default=1.0)
     parser.add_argument("--reg-alpha", type=float, default=0.0)
-    parser.add_argument("--reg-lambda", type=float, default=10.0)
+    parser.add_argument("--reg-lambda", type=float, default=0.0)
     parser.add_argument("--random-state", type=int, default=42)
-    parser.add_argument(
-        "--canonical",
-        action="store_true",
-        help="Use tuned canonical config: max_depth=4.",
-    )
     return parser
 
 
@@ -115,9 +99,21 @@ def _heuristic_predictions(df: pl.DataFrame) -> np.ndarray:
     return np.array([delay_to_seconds(float(r)) for r in raw], dtype=np.float32)
 
 
-def _apply_canonical_overrides(args: argparse.Namespace) -> None:
-    for key, value in CANONICAL_SETTINGS.items():
-        setattr(args, key, value)
+def _build_xgb_params(args: argparse.Namespace) -> dict[str, object]:
+    return {
+        "objective": "reg:absoluteerror",
+        "tree_method": "hist",
+        "max_depth": args.max_depth,
+        "eta": args.learning_rate,
+        "subsample": args.subsample,
+        "colsample_bytree": args.colsample_bytree,
+        "min_child_weight": args.min_child_weight,
+        "alpha": args.reg_alpha,
+        "lambda": args.reg_lambda,
+        "seed": args.random_state,
+        "nthread": os.cpu_count() or 1,
+        "eval_metric": "mae",
+    }
 
 
 def train(
@@ -153,22 +149,8 @@ def train(
     train_dmatrix = xgb.DMatrix(x_train, label=y_train)
     val_dmatrix = xgb.DMatrix(x_val, label=y_val)
 
-    params = {
-        "objective": "reg:absoluteerror",
-        "tree_method": "hist",
-        "max_depth": args.max_depth,
-        "eta": args.learning_rate,
-        "subsample": args.subsample,
-        "colsample_bytree": args.colsample_bytree,
-        "min_child_weight": args.min_child_weight,
-        "alpha": args.reg_alpha,
-        "lambda": args.reg_lambda,
-        "seed": args.random_state,
-        "nthread": os.cpu_count() or 1,
-        "eval_metric": "mae",
-    }
     model = xgb.train(
-        params=params,
+        params=_build_xgb_params(args),
         dtrain=train_dmatrix,
         num_boost_round=args.n_estimators,
         evals=[(train_dmatrix, "train"), (val_dmatrix, "val")],
@@ -279,7 +261,7 @@ def predict_parquet(
     input_path: Path,
     output_path: Path,
 ) -> Path:
-    frame = pl.read_parquet(input_path).drop_nulls(subset=FEATURE_COLUMNS)
+    frame = pl.read_parquet(input_path)
     predictions = predict_frame(model_path=model_path, frame=frame)
     result = frame.with_columns(pl.Series("predicted_move_time_seconds", predictions))
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -289,13 +271,10 @@ def predict_parquet(
 
 def main() -> None:
     args = build_parser().parse_args()
-    if getattr(args, "canonical", False):
-        print("Applying canonical model overrides:", CANONICAL_SETTINGS)
-        _apply_canonical_overrides(args)
 
     base_output_dir = args.output_dir
     base_output_dir.mkdir(parents=True, exist_ok=True)
-    run_ts = datetime.utcnow().strftime("%Y%m%dT%H%M%SZ")
+    run_ts = datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     run_dir = base_output_dir / run_ts
     run_dir.mkdir(parents=True, exist_ok=True)
     args.output_dir = run_dir
