@@ -148,6 +148,7 @@ def train(
 
     train_dmatrix = xgb.DMatrix(x_train, label=y_train)
     val_dmatrix = xgb.DMatrix(x_val, label=y_val)
+    test_dmatrix = xgb.DMatrix(x_test, label=y_test)
 
     model = xgb.train(
         params=_build_xgb_params(args),
@@ -158,9 +159,9 @@ def train(
         verbose_eval=False,
     )
 
-    train_pred = model.predict(xgb.DMatrix(x_train))
-    val_pred = model.predict(xgb.DMatrix(x_val))
-    test_pred = model.predict(xgb.DMatrix(x_test))
+    train_pred = model.predict(train_dmatrix)
+    val_pred = model.predict(val_dmatrix)
+    test_pred = model.predict(test_dmatrix)
 
     results: dict[str, object] = {
         "paths": {
