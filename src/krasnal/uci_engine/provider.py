@@ -251,9 +251,7 @@ class ModelProvider(ChessModelProvider):
 
         ply = len(session.game.moves_uci)
         prev_clock_seconds = side_seconds
-        clock_fraction_left = (
-            min(1.0, prev_clock_seconds / time_initial) if time_initial > 0 else 0.0
-        )
+        clock_fraction_left = (prev_clock_seconds / time_initial) if time_initial > 0 else 0.0
         is_in_check = int(session.game.board in bulletchess.CHECK)
         fen_pieces = session.game.board.fen().split()[0]
         total_pieces = sum(1 for c in fen_pieces if c.isalpha())
