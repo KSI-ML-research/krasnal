@@ -30,10 +30,12 @@ export WANDB_RUN_GROUP=${RUN_GROUP:-krasnal-ablation}
 export WANDB_NAME="${RUN_NAME}-${SLURM_JOB_ID}"
 
 echo "Running ablation: $RUN_NAME"
+echo "Config: ${RUN_CONFIG_NAME:-pretrain}"
 echo "Overrides: $RUN_OVERRIDES"
 echo "Tokenized dir: ${KRASNAL_TOKENIZED_DIR:-data/2_tokenized}"
 
 uv run torchrun --standalone --nproc_per_node="${RUN_NPROC:-1}" scripts/training/pretrain.py \
+    ${RUN_CONFIG_NAME:+--config-name "$RUN_CONFIG_NAME"} \
     train=cuda \
     train.num_workers="${RUN_NUM_WORKERS:-4}" \
     $RUN_OVERRIDES

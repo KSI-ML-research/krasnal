@@ -97,15 +97,15 @@ def test_maia_eval_sample_sql_caps_per_bin(tmp_path):
     assert count == EVAL_GAMES_PER_BIN
 
 
-def test_maia_eval_sample_sql_uses_maia_rating_range(tmp_path):
+def test_maia_eval_sample_sql_respects_min_elo(tmp_path):
     path = tmp_path / "rating_range.parquet"
     pl.DataFrame(
         {
-            "lichess_id": ["too_low", "maia_low", "maia_high", "too_high"],
+            "lichess_id": ["too_low", "eligible_low", "eligible_high", "high_elo"],
             "clocks_white": [[40]] * 4,
             "clocks_black": [[40]] * 4,
-            "white_rating": [1050, 1150, 1950, 2050],
-            "black_rating": [1050, 1150, 1950, 2050],
+            "white_rating": [1050, 1150, 1950, 2250],
+            "black_rating": [1050, 1150, 1950, 2250],
         }
     ).write_parquet(path)
 
@@ -115,4 +115,25 @@ def test_maia_eval_sample_sql_uses_maia_rating_range(tmp_path):
         con.execute(f"SELECT * FROM ({maia_eval_sample_sql(inner, seed=1)})").df()
     )
 
-    assert sampled["lichess_id"].to_list() == ["maia_low", "maia_high"]
+    assert sampled["lichess_id"].to_list() == ["eligible_low", "eligible_high", "high_elo"]
+
+
+def test_maia_eval_sample_sql_collapses_2200_plus_into_one_bin(tmp_path):
+    path = tmp_path / "high_elo.parquet"
+    pl.DataFrame(
+        {
+            "lichess_id": ["bin_2200", "bin_2400", "mismatch"],
+            "clocks_white": [[40]] * 3,
+            "clocks_black": [[40]] * 3,
+            "white_rating": [2250, 2450, 2250],
+            "black_rating": [2280, 2480, 2100],
+        }
+    ).write_parquet(path)
+
+    con = duckdb.connect()
+    inner = f"SELECT * FROM '{path}'"
+    sampled = pl.from_pandas(
+        con.execute(f"SELECT * FROM ({maia_eval_sample_sql(inner, seed=1, games_per_bin=10)})").df()
+    )
+
+    assert sampled["lichess_id"].to_list() == ["bin_2200", "bin_2400"]

@@ -26,7 +26,10 @@ from krasnal.tokens import (
     WHATS_ON_SQUARE_TOKEN_IDS,
     WHITE_WON_ID,
     YES_CHECK_ID,
+    get_elo_bucket,
 )
+
+_TOKEN_NAME_BY_ELO_ID = {token_id: name for name, token_id in ELO_TOKENS.items()}
 
 # Declarative counter definitions for token mix analysis.
 # Each entry is (counter_name, single_token_id | frozenset_of_ids).
@@ -70,6 +73,45 @@ def merge_token_mix_raw(
     if acc is None:
         return part
     return {k: acc.get(k, 0) + v for k, v in part.items()}
+
+
+def empty_elo_rating_counts() -> dict[str, int]:
+    return {name: 0 for name in ELO_TOKENS}
+
+
+def elo_rating_counts_for_players(
+    white_ratings: list[int],
+    black_ratings: list[int],
+) -> dict[str, int]:
+    counts = empty_elo_rating_counts()
+    for rating in white_ratings:
+        counts[_TOKEN_NAME_BY_ELO_ID[get_elo_bucket(int(rating))]] += 1
+    for rating in black_ratings:
+        counts[_TOKEN_NAME_BY_ELO_ID[get_elo_bucket(int(rating))]] += 1
+    return counts
+
+
+def elo_game_counts_by_white(white_ratings: list[int]) -> dict[str, int]:
+    counts = empty_elo_rating_counts()
+    for rating in white_ratings:
+        counts[_TOKEN_NAME_BY_ELO_ID[get_elo_bucket(int(rating))]] += 1
+    return counts
+
+
+def merge_elo_rating_counts(
+    acc: dict[str, int] | None,
+    part: dict[str, int],
+) -> dict[str, int]:
+    if acc is None:
+        return part
+    return {name: acc.get(name, 0) + part.get(name, 0) for name in ELO_TOKENS}
+
+
+def elo_distribution_pcts(counts: dict[str, int]) -> dict[str, float]:
+    total = sum(counts.values())
+    if total == 0:
+        return {name: 0.0 for name in ELO_TOKENS}
+    return {name: counts[name] / total * 100.0 for name in ELO_TOKENS}
 
 
 def token_mix_from_raw_sums(raw: dict[str, int]) -> dict[str, float]:
@@ -188,6 +230,7 @@ def log_preprocess_to_wandb(
     train_window_rows: int,
     eval_rows: int,
     over_block_size_count: int,
+    train_elo_counts: dict[str, int] | None = None,
     eval_elo_bins: dict[str, int] | None = None,
 ) -> None:
     """Log dataset statistics to a W&B run tagged 'preprocess'."""
@@ -218,9 +261,10 @@ def log_preprocess_to_wandb(
     wandb.summary["dataset/input_token_pct/game_start"] = token_mix["game_start_pct"]
     wandb.summary["dataset/input_token_pct/game_end"] = token_mix["game_end_pct"]
 
-    total_elo = sum(token_mix.get(f"elo_{b}_count", 0) for b in ELO_TOKENS)
+    train_elo = train_elo_counts or {}
+    total_elo = sum(train_elo.values())
     for bucket_name in ELO_TOKENS:
-        count = token_mix.get(f"elo_{bucket_name}_count", 0)
+        count = train_elo.get(bucket_name, 0)
         pct = (count / total_elo * 100.0) if total_elo > 0 else 0.0
         wandb.summary[f"dataset/elo/{bucket_name}"] = pct
 

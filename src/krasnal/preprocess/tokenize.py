@@ -445,10 +445,17 @@ def process_one_shard(
     str | None,
     dict[str, int] | None,
     dict[int, int] | None,
+    dict[str, int] | None,
     int,
 ]:
     """Multiprocess worker: tokenize one shard and write eval Parquet or packed train shards."""
-    from .stats import token_mix_raw_from_counts
+    from .stats import (
+        elo_game_counts_by_white,
+        elo_rating_counts_for_players,
+        empty_elo_rating_counts,
+        merge_elo_rating_counts,
+        token_mix_raw_from_counts,
+    )
 
     dest = eval_output_path.name if is_eval else train_output_dir.name
     logger.info("Started processing {} -> {}", parquet_path.name, dest)
@@ -467,6 +474,7 @@ def process_one_shard(
     invalid_clock_skips = 0
     id_counts: Counter[int] | None = Counter() if collect_stats else None
     length_counts: Counter[int] | None = Counter() if collect_stats else None
+    elo_counts: dict[str, int] | None = empty_elo_rating_counts() if collect_stats else None
 
     eval_batches = []
     if is_eval:
@@ -482,14 +490,26 @@ def process_one_shard(
         batch_size=batch_size,
         columns=_raw_columns(cfg),
     ):
+        batch_df = pl.from_arrow(batch)
         (token_rows, active_rows, opponent_rows), skipped = _tokenize_batch(
-            pl.from_arrow(batch),
+            batch_df,
             cfg,
             p_no,
         )
         invalid_clock_skips += skipped
         if not token_rows:
             continue
+
+        if elo_counts is not None:
+            white_ratings = batch_df.get_column("white_rating").to_list()
+            if is_eval:
+                part = elo_game_counts_by_white(white_ratings)
+            else:
+                part = elo_rating_counts_for_players(
+                    white_ratings,
+                    batch_df.get_column("black_rating").to_list(),
+                )
+            elo_counts = merge_elo_rating_counts(elo_counts, part)
 
         if id_counts is not None:
             id_counts.update(tid for row in token_rows for tid in row)
@@ -535,6 +555,7 @@ def process_one_shard(
             str(eval_output_path),
             token_mix_raw_from_counts(dict(id_counts)) if id_counts else None,
             dict(length_counts) if length_counts else None,
+            elo_counts,
             rows,
         )
 
@@ -549,5 +570,6 @@ def process_one_shard(
         None,
         token_mix_raw_from_counts(dict(id_counts)) if id_counts else None,
         dict(length_counts) if length_counts else None,
+        elo_counts,
         rows,
     )

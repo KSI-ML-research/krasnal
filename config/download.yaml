@@ -28,4 +28,3 @@ eval:
   month: "2019-12"
   games_per_bin: 10000
   min_elo: 1100
-  max_elo: 1999

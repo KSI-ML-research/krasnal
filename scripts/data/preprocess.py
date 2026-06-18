@@ -25,7 +25,9 @@ from krasnal.config import (
 from krasnal.preprocess import (
     PreprocessConfig,
     build_what_is_on_baseline_counts,
+    elo_distribution_pcts,
     log_preprocess_to_wandb,
+    merge_elo_rating_counts,
     merge_seq_len_raw,
     merge_token_mix_raw,
     process_one_shard,
@@ -170,6 +172,8 @@ def main(cfg: DictConfig) -> None:
     invalid_clock_skips = 0
     mix_raw: dict[str, int] | None = None
     seq_len_raw: dict[int, int] | None = None
+    train_elo_counts: dict[str, int] | None = None
+    eval_elo_counts: dict[str, int] | None = None
     train_shards: list[tuple[str, int]] = []
     eval_parts: list[Path] = []
     max_workers = int(cfg.preprocess_workers)
@@ -219,6 +223,7 @@ def main(cfg: DictConfig) -> None:
                     eval_path,
                     shard_mix,
                     shard_lengths,
+                    shard_elo_counts,
                     output_rows,
                 ) = future.result()
                 total_games += count
@@ -226,6 +231,17 @@ def main(cfg: DictConfig) -> None:
                 if report_enabled:
                     mix_raw = merge_token_mix_raw(mix_raw, shard_mix)
                     seq_len_raw = merge_seq_len_raw(seq_len_raw, shard_lengths)
+                    if shard_elo_counts is not None:
+                        if eval_path is not None:
+                            eval_elo_counts = merge_elo_rating_counts(
+                                eval_elo_counts,
+                                shard_elo_counts,
+                            )
+                        else:
+                            train_elo_counts = merge_elo_rating_counts(
+                                train_elo_counts,
+                                shard_elo_counts,
+                            )
                 if eval_path is not None:
                     eval_parts.append(Path(eval_path))
                 elif shard_train_shards:
@@ -294,12 +310,11 @@ def main(cfg: DictConfig) -> None:
                 token_mix[count_key],
             )
         logger.info("ELO Bucket Distribution:")
-        total_elo = sum(token_mix[f"elo_{b}_count"] for b in ELO_TOKENS)
-        if total_elo > 0:
+        if train_elo_counts and sum(train_elo_counts.values()) > 0:
+            train_elo_pcts = elo_distribution_pcts(train_elo_counts)
             for bucket_name in ELO_TOKENS:
-                count = token_mix[f"elo_{bucket_name}_count"]
-                pct = (count / total_elo) * 100.0
-                logger.info("  {}: {:.2f}%", bucket_name, pct)
+                if train_elo_counts[bucket_name] > 0:
+                    logger.info("  {}: {:.2f}%", bucket_name, train_elo_pcts[bucket_name])
         logger.info("Time Control Bucket Distribution:")
         total_tc = sum(token_mix[f"tc_{b}_count"] for b in TC_TOKENS)
         if total_tc > 0:
@@ -356,21 +371,10 @@ def main(cfg: DictConfig) -> None:
         eval_rows,
     )
 
-    elo_counts: dict[str, int] = {}
     if report_enabled:
-        if eval_rows > 0:
-            eval_df = pl.read_parquet(EVAL_DATASET_PATH)
+        if eval_rows > 0 and eval_elo_counts:
             logger.info("Eval Dataset Elo Bin Distribution ({} games):", eval_rows)
-            from krasnal.tokens import ELO_TOKENS as ELO_MAP
-
-            elo_id_to_name = {v: k for k, v in ELO_MAP.items()}
-            elo_counts = {name: 0 for name in ELO_MAP}
-            for token_ids in eval_df["token_ids"].to_list():
-                for tid in token_ids:
-                    if tid in elo_id_to_name:
-                        elo_counts[elo_id_to_name[tid]] += 1
-                        break
-            for bucket_name, count in elo_counts.items():
+            for bucket_name, count in eval_elo_counts.items():
                 if count > 0:
                     logger.info("  {}: {} games", bucket_name, count)
         run_clock_report(EVAL_DATASET_PATH)
@@ -382,7 +386,10 @@ def main(cfg: DictConfig) -> None:
             train_window_rows=train_window_rows,
             eval_rows=eval_rows,
             over_block_size_count=over_block_size_count,
-            eval_elo_bins={k: v for k, v in elo_counts.items() if v > 0} if eval_rows > 0 else {},
+            train_elo_counts=train_elo_counts,
+            eval_elo_bins={k: v for k, v in (eval_elo_counts or {}).items() if v > 0}
+            if eval_rows > 0
+            else {},
         )
 
 

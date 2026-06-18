@@ -148,11 +148,11 @@ def submit_train(preprocess_job_id: str, *, submit: bool) -> str:
                     "KRASNAL_ARTIFACT_DIR": ARTIFACT_DIR,
                     "RUN_GROUP": NAME,
                     "RUN_NAME": run_name,
+                    "RUN_CONFIG_NAME": "pretrain_lichess",
                     "RUN_NPROC": str(TRAIN_GPUS),
                     "RUN_NUM_WORKERS": str(TRAIN_WORKERS),
                     "RUN_OVERRIDES": (
-                        f"--config-name pretrain_lichess model={MODEL} "
-                        f"train.epochs=1.0 train.batch_size={BATCH_SIZE} seed={SEED}"
+                        f"model={MODEL} train.epochs=1.0 train.batch_size={BATCH_SIZE} seed={SEED}"
                     ),
                 }
             ),
@@ -163,7 +163,7 @@ def submit_train(preprocess_job_id: str, *, submit: bool) -> str:
 
 
 def main() -> None:
-    parser = ArgumentParser(description="Schedule one 32M Lichess pretraining run.")
+    parser = ArgumentParser(description="Schedule one Lichess pretraining run.")
     parser.add_argument("--submit", action="store_true", help="Actually call sbatch.")
     args = parser.parse_args()
 

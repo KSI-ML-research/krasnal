@@ -38,3 +38,6 @@ metrics:
   - acc_elo_1700_1799
   - acc_elo_1800_1899
   - acc_elo_1900_1999
+  - acc_elo_2000_2099
+  - acc_elo_2100_2199
+  - acc_elo_above_2200

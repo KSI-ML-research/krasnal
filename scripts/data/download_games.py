@@ -322,7 +322,6 @@ def filter_month(
                 seed=eval_seed,
                 games_per_bin=eval_games_per_bin,
                 min_elo=min_elo,
-                max_elo=max_elo,
             ),
         )
         logger.info(
@@ -384,14 +383,13 @@ def filter_month(
     return total
 
 
-def _eval_sampling_params(cfg: DictConfig) -> tuple[str, int, int, int, int]:
+def _eval_sampling_params(cfg: DictConfig) -> tuple[str, int, int, int]:
     eval_cfg = cfg.get("eval", {})
     month = str(eval_cfg.get("month", EVAL_MONTH))
     games_per_bin = int(eval_cfg.get("games_per_bin", EVAL_GAMES_PER_BIN))
     min_elo = int(eval_cfg.get("min_elo", 1100))
-    max_elo = int(eval_cfg.get("max_elo", 1999))
     seed = int(cfg.get("seed", 0))
-    return month, seed, games_per_bin, min_elo, max_elo
+    return month, seed, games_per_bin, min_elo
 
 
 @hydra.main(version_base=None, config_path="../../config", config_name="download")
@@ -419,16 +417,13 @@ def main(cfg: DictConfig) -> None:
     logger.info(f"Training Elo range: {elo_range}")
     logger.info(f"Min estimated duration: {min_estimated_duration}s")
     logger.info(f"Filter chunk games: {chunk_games:,}")
-    eval_month, eval_seed, eval_games_per_bin, eval_min_elo, eval_max_elo = _eval_sampling_params(
-        cfg
-    )
+    eval_month, eval_seed, eval_games_per_bin, eval_min_elo = _eval_sampling_params(cfg)
     logger.info(
-        "Eval holdout: month={}, up to {} games/bin, seed={}, Elo={}-{}",
+        "Eval holdout: month={}, up to {} games/bin, seed={}, min Elo={}+",
         eval_month,
         eval_games_per_bin,
         eval_seed,
         eval_min_elo,
-        eval_max_elo,
     )
 
     hf_transfer_status = (
@@ -463,7 +458,7 @@ def main(cfg: DictConfig) -> None:
 
         try:
             month_min_elo = eval_min_elo if month == eval_month else min_elo
-            month_max_elo = eval_max_elo if month == eval_month else max_elo
+            month_max_elo = None if month == eval_month else max_elo
             count = filter_month(
                 parquet_path,
                 month,
@@ -512,7 +507,7 @@ def main(cfg: DictConfig) -> None:
                 RAW_UCI_DIR,
                 con2,
                 eval_min_elo,
-                eval_max_elo,
+                None,
                 min_estimated_duration,
                 max_games=eval_games_per_bin,
                 chunk_games=chunk_games,
