@@ -12,7 +12,7 @@ import json
 import os
 import shutil
 import subprocess
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 import numpy as np
@@ -274,7 +274,7 @@ def main() -> None:
 
     base_output_dir = args.output_dir
     base_output_dir.mkdir(parents=True, exist_ok=True)
-    run_ts = datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    run_ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     run_dir = base_output_dir / run_ts
     run_dir.mkdir(parents=True, exist_ok=True)
     args.output_dir = run_dir
