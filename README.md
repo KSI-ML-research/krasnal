@@ -66,8 +66,8 @@ committed to the repository.
 The UCI engine can be run locally through `lichess-bot`.
 
 ```bash
-just bot-setup
-just bot-run artifacts/path/to/model
+make bot-setup
+make bot-run MODEL_PATH=artifacts/path/to/model
 ```
 
 See `docs/lichess_bot_local_setup.md` for details.

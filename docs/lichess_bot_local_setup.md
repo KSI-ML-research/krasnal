@@ -2,7 +2,7 @@
 
 You can run our bot from your machine.
 
-Lichess recipes are defined directly in the root `justfile`.
+Lichess bot recipes are defined in `Makefile` (not the justfile).
 
 Read docs/bot_implementation_plan.md for architecture details.
 
@@ -16,19 +16,19 @@ Lichess requires a few steps to set up a bot account.
 2. Create a .env file by copying the .env.example file. Update the LICHESS_BOT_TOKEN in .env file with the actual token from lichess.
 3. setup lichess-bot (code responsible for integration with lichess api)
 ```bash
-   just bot-setup
+   make bot-setup
    ```
 4. run the actual bot. As long as this process is running, you can play the bot on lichess
 ```bash
-   just bot-run
+   make bot-run MODEL_PATH=artifacts/pretrain/...
    ```
 
 5. optionally clean up the local setup
 ```bash
-   just bot-clean
+   make bot-clean
    ```
 
-### Engine subprocess (`just bot-run artifacts/...`)
+### Engine subprocess (`make bot-run MODEL_PATH=artifacts/...`)
 
 The bot passes `KRASNAL_MODEL_ARTIFACT_DIR` as an absolute path. The UCI entrypoint bootstraps `sys.path` so `import krasnal` works when lichess-bot runs `python ../src/krasnal/uci_engine/run.py` with cwd `lichess-bot/`.
 
