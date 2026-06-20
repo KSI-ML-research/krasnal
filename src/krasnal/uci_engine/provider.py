@@ -255,6 +255,7 @@ class ModelProvider(ChessModelProvider):
         is_in_check = int(session.game.board in bulletchess.CHECK)
         fen_pieces = session.game.board.fen().split()[0]
         total_pieces = sum(1 for c in fen_pieces if c.isalpha())
+        num_legal_moves = len(session.game.board.legal_moves())
 
         return predict_single(
             model=self.xgb_model,
@@ -264,6 +265,7 @@ class ModelProvider(ChessModelProvider):
             clock_fraction_left=clock_fraction_left,
             is_in_check_before_move=is_in_check,
             total_pieces=total_pieces,
+            num_legal_moves=num_legal_moves,
         )
 
     def think_and_move(self, uci_moves: str, go: GoParams) -> str:

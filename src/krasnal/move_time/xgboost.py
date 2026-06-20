@@ -33,6 +33,7 @@ FEATURE_COLUMNS = [
     "clock_fraction_left",
     "is_in_check_before_move",
     "total_pieces",
+    "num_legal_moves",
 ]
 TARGET_COLUMN = "target_move_time_seconds"
 
@@ -217,6 +218,7 @@ def predict_single(
     clock_fraction_left: float,
     is_in_check_before_move: bool,
     total_pieces: int,
+    num_legal_moves: int = 20,
 ) -> float:
     """Predict move time in seconds for a single position using a loaded model."""
     features = np.array(
@@ -228,6 +230,7 @@ def predict_single(
                 clock_fraction_left,
                 int(is_in_check_before_move),
                 total_pieces,
+                num_legal_moves,
             ]
         ],
         dtype=np.float32,

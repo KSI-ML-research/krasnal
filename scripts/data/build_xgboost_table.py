@@ -261,6 +261,7 @@ def _load_games(input_paths: list[Path]) -> pl.DataFrame:
         ply_rows = df["ply_list"].to_list()
         check_before: list[list[int | None]] = []
         piece_count_before: list[list[int | None]] = []
+        legal_count_before: list[list[int | None]] = []
 
         # looking for checks and number of piecies
         for uci_raw, ply_raw in zip(uci_rows, ply_rows, strict=True):
@@ -268,36 +269,42 @@ def _load_games(input_paths: list[Path]) -> pl.DataFrame:
             if n == 0:
                 check_before.append([])
                 piece_count_before.append([])
+                legal_count_before.append([])
                 continue
 
             if isinstance(uci_raw, str):
                 move_tokens = uci_raw.split()
             elif isinstance(uci_raw, list):
                 move_tokens = [str(m) for m in uci_raw]
-            # maintaining the length the same as other columns 
+            # maintaining the length the same as other columns
             # (eplode_to_moves requires lists in one row to have the same length)
             else:
                 check_before.append([None] * n)
                 piece_count_before.append([None] * n)
+                legal_count_before.append([None] * n)
                 continue
 
             board = chess.Board()
             row_check: list[int | None] = []
             row_pieces: list[int | None] = []
+            row_legal: list[int | None] = []
 
             for ply_idx in range(n):
                 row_check.append(1 if board.is_check() else 0)
                 row_pieces.append(len(board.piece_map()))
+                row_legal.append(len(list(board.legal_moves)))
                 if ply_idx < len(move_tokens):
                     with contextlib.suppress(Exception):
                         board.push_uci(move_tokens[ply_idx])
 
             check_before.append(row_check)
             piece_count_before.append(row_pieces)
+            legal_count_before.append(row_legal)
 
         df = df.with_columns(
             pl.Series("is_in_check_before_move", check_before, dtype=pl.List(pl.Int8)),
             pl.Series("total_pieces_before_move", piece_count_before, dtype=pl.List(pl.Int16)),
+            pl.Series("num_legal_moves", legal_count_before, dtype=pl.List(pl.Int16)),
         )
 
         df = df.with_row_index("game_idx", offset=game_offset)
@@ -325,6 +332,7 @@ def _explode_to_moves(games: pl.DataFrame) -> pl.DataFrame:
         "prev_clock_seconds",
         "is_in_check_before_move",
         "total_pieces_before_move",
+        "num_legal_moves",
     ]
     explode_columns = [
         "ply_list",
@@ -332,6 +340,7 @@ def _explode_to_moves(games: pl.DataFrame) -> pl.DataFrame:
         "prev_clock_seconds",
         "is_in_check_before_move",
         "total_pieces_before_move",
+        "num_legal_moves",
     ]
     rename_map = {
         "ply_list": "ply",
@@ -351,6 +360,7 @@ def _explode_to_moves(games: pl.DataFrame) -> pl.DataFrame:
                 pl.col("prev_clock_seconds").cast(pl.Float64),
                 pl.col("is_in_check_before_move").cast(pl.Int8),
                 pl.col("total_pieces").cast(pl.Int16),
+                pl.col("num_legal_moves").cast(pl.Int16),
                 pl.when(pl.col("time_initial") > 0)
                 .then(pl.col("prev_clock_seconds") / pl.col("time_initial"))
                 .otherwise(None)

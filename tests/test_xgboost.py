@@ -22,6 +22,7 @@ def test_predict_parquet_smoke(tmp_path):
             "clock_fraction_left": [0.5, 0.5, 0.5],
             "is_in_check_before_move": [0, 0, 0],
             "total_pieces": [30, 30, 30],
+            "num_legal_moves": [20, 20, 20],
         }
     )
 
@@ -75,6 +76,7 @@ def test_predict_single_returns_reasonable_range():
         clock_fraction_left=0.67,
         is_in_check_before_move=False,
         total_pieces=28,
+        num_legal_moves=20,
     )
     assert np.isfinite(result)
     assert 0 <= result <= 300
@@ -94,6 +96,7 @@ def test_predict_single_on_various_inputs():
             clock_fraction_left=0.4,
             is_in_check_before_move=True,
             total_pieces=16,
+            num_legal_moves=20,
         )
         assert np.isfinite(result)
         assert result >= 0
@@ -119,14 +122,15 @@ def test_feature_frame_converts_correctly():
             "clock_fraction_left": [1.0, 0.83, 0.67],
             "is_in_check_before_move": [0, 0, 1],
             "total_pieces": [32, 30, 28],
+            "num_legal_moves": [20, 20, 20],
         }
     )
 
     arr = mt_xgb._feature_frame(df)
-    assert arr.shape == (3, 6)
+    assert arr.shape == (3, 7)
     assert arr.dtype == np.float32
-    assert np.allclose(arr[0], [0, 300, 300, 1.0, 0, 32])
-    assert np.allclose(arr[2], [2, 300, 200, 0.67, 1, 28])
+    assert np.allclose(arr[0], [0, 300, 300, 1.0, 0, 32, 20])
+    assert np.allclose(arr[2], [2, 300, 200, 0.67, 1, 28, 20])
 
 
 def _make_synthetic_parquet(path: Path, n: int = 500, seed: int = 42) -> None:
@@ -139,6 +143,7 @@ def _make_synthetic_parquet(path: Path, n: int = 500, seed: int = 42) -> None:
             "clock_fraction_left": rng.uniform(0.01, 1.0, n).astype(np.float32),
             "is_in_check_before_move": rng.randint(0, 2, n),
             "total_pieces": rng.randint(4, 33, n),
+            "num_legal_moves": rng.randint(3, 50, n),
         }
     )
     raw = (
@@ -235,7 +240,7 @@ def test_load_split_raises_on_missing_column(tmp_path):
 
 
 def test_load_split_raises_on_empty(tmp_path):
-    cols = mt_xgb.FEATURE_COLUMNS + [mt_xgb.TARGET_COLUMN]
+    cols = [*mt_xgb.FEATURE_COLUMNS, mt_xgb.TARGET_COLUMN]
     df = pl.DataFrame({c: [] for c in cols})
     path = tmp_path / "empty.parquet"
     df.write_parquet(str(path))
@@ -270,6 +275,7 @@ def test_train_then_predict_on_new_data(tmp_path):
             "clock_fraction_left": [0.83, 0.50, 0.17],
             "is_in_check_before_move": [0, 1, 0],
             "total_pieces": [32, 20, 8],
+            "num_legal_moves": [20, 30, 15],
         }
     )
     new_df.write_parquet(str(tmp_path / "new.parquet"))
