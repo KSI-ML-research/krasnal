@@ -42,11 +42,11 @@ def test_delay_to_seconds_grows_with_delay():
 
 
 def test_delay_to_seconds_rejects_invalid_arguments():
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="base_delay must be non-negative"):
         delay_to_seconds(1.0, base_delay=-0.1)
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="max_delay must be greater than or equal to base_delay"):
         delay_to_seconds(1.0, base_delay=2.0, max_delay=1.0)
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="scale_factor must be positive"):
         delay_to_seconds(1.0, scale_factor=0.0)
 
 
