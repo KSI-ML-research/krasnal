@@ -2,22 +2,26 @@ from __future__ import annotations
 
 import os
 import random
+import time as _time
 from abc import ABC, abstractmethod
 from pathlib import Path
 
 import bulletchess
 import torch
+import xgboost as xgb
 from loguru import logger
 
 from krasnal.inference import Game, InferenceSession, load_model
 from krasnal.inference.exceptions import NoLegalMovesError
 from krasnal.inference.sampling import sample_token
+from krasnal.move_time.xgboost import predict_single
 from krasnal.tokens import (
     legal_token_ids,
     load_move_vocab,
     normalize_history_uci_moves,
     to_uci,
 )
+from krasnal.uci_engine.go_params import GoParams
 from krasnal.utils import (
     gpt_config_from_artifact_dict,
     read_model_config_json,
@@ -41,6 +45,11 @@ class ChessModelProvider(ABC):
     @abstractmethod
     def get_best_move(self, uci_moves: str) -> str:
         """Return best move UCI for the given move list string."""
+
+    def think_and_move(self, uci_moves: str, _go: GoParams) -> str:
+        """Return best move after waiting for the predicted thinking time."""
+        # Default: no delay
+        return self.get_best_move(uci_moves)
 
 
 class RandomMockProvider(ChessModelProvider):
@@ -93,6 +102,8 @@ class ModelProvider(ChessModelProvider):
         self.top_p = float(os.environ.get("KRASNAL_TOP_P", "1.0"))
         self.session: InferenceSession | None = None
         self.artifact_config = artifact_config or {}
+        self.xgb_model: xgb.Booster | None = None
+        self._time_initial_seconds: int | None = None
 
     @classmethod
     def from_artifact_dir(
@@ -130,12 +141,24 @@ class ModelProvider(ChessModelProvider):
         gpt_config = gpt_config_from_artifact_dict(artifact_config)
         runtime_device = device or resolve_runtime_device()
         model = load_model(str(artifact_dir / "model.pt"), runtime_device, gpt_config)
-        return cls(
+
+        provider = cls(
             model=model,
             device=runtime_device,
             artifact_dir=artifact_dir,
             artifact_config=artifact_config,
         )
+
+        xgb_path = artifact_dir / "xgboost_baseline.json"
+        if xgb_path.is_file():
+            xgb_model = xgb.Booster()
+            xgb_model.load_model(str(xgb_path))
+            provider.xgb_model = xgb_model
+            logger.info("Loaded XGBoost move-time model from {}", xgb_path)
+        else:
+            logger.warning("No XGBoost model found at {}", xgb_path)
+
+        return provider
 
     def _build_game(self) -> Game:
         return Game(
@@ -150,6 +173,7 @@ class ModelProvider(ChessModelProvider):
             self.device,
             game=self._build_game(),
         )
+        self._time_initial_seconds = None
 
     def _sync_session_history(self, move_list: list[str]) -> InferenceSession:
         if self.session is None:
@@ -203,3 +227,53 @@ class ModelProvider(ChessModelProvider):
         except Exception as exc:
             logger.exception("ModelProvider.get_best_move failed")
             raise ModelProviderError(f"{type(exc).__name__}: {exc}") from exc
+
+    def get_move_time(self, uci_moves: str, go: GoParams) -> float:
+        """Predict thinking time in seconds using XGBoost (falls back to 0.0)."""
+        if self.xgb_model is None:
+            return 0.0
+
+        move_list = normalize_history_uci_moves(uci_moves)
+        session = self._sync_session_history(move_list)
+
+        w_ms = go.wtime_ms
+        b_ms = go.btime_ms
+        if w_ms is None or b_ms is None:
+            return 0.0
+
+        remaining = max(w_ms, b_ms)
+        if self._time_initial_seconds is None:
+            self._time_initial_seconds = remaining // 1000
+
+        time_initial = self._time_initial_seconds or 300
+        turn = session.game.board.turn
+        side_seconds = (w_ms // 1000) if turn == bulletchess.WHITE else (b_ms // 1000)
+
+        ply = len(session.game.moves_uci)
+        prev_clock_seconds = side_seconds
+        clock_fraction_left = (prev_clock_seconds / time_initial) if time_initial > 0 else 0.0
+        is_in_check = int(session.game.board in bulletchess.CHECK)
+        fen_pieces = session.game.board.fen().split()[0]
+        total_pieces = sum(1 for c in fen_pieces if c.isalpha())
+        num_legal_moves = len(session.game.board.legal_moves())
+
+        return predict_single(
+            model=self.xgb_model,
+            ply=ply,
+            time_initial=time_initial,
+            prev_clock_seconds=prev_clock_seconds,
+            clock_fraction_left=clock_fraction_left,
+            is_in_check_before_move=is_in_check,
+            total_pieces=total_pieces,
+            num_legal_moves=num_legal_moves,
+        )
+
+    def think_and_move(self, uci_moves: str, go: GoParams) -> str:
+        """Return best move after waiting for the predicted thinking time."""
+        if go.movetime_ms is not None:
+            delay = go.movetime_ms / 1000.0
+        else:
+            delay = self.get_move_time(uci_moves, go)
+        if delay > 0:
+            _time.sleep(delay)
+        return self.get_best_move(uci_moves)
