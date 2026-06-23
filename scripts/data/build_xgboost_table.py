@@ -1,11 +1,9 @@
-"""Build move-level train/val/test parquet tables for XGBoost.
+"""Build move-level XGBoost training tables from filtered Aix game data.
 
-Input files are game-level parquet files (produced by
-download_games.py) with Aix clock columns (clocks_white, clocks_black,
-time_initial, time_increment). All columns in _REQUIRED_COLUMNS must be present.
-
-Pipeline:
-  load -> stratify-split -> explode to move-level -> filter implausible -> save
+Reads game-level parquet files with clock lists (clocks_white, clocks_black),
+interleaves per-ply clocks, derives per-move time-spent and board features
+(is_in_check, total_pieces, num_legal_moves), expands to move-level rows,
+and splits 70/15/15 stratified by time_initial x ply_count buckets.
 """
 
 from __future__ import annotations

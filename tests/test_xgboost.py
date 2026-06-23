@@ -1,3 +1,9 @@
+"""Tests for the XGBoost move-time prediction pipeline (xgboost.py).
+
+Covers predict_single, predict_parquet, feature_frame, train output
+structure, baseline beating, model persistence, error handling, and
+end-to-end train-then-predict flow.
+"""
 from pathlib import Path
 from types import SimpleNamespace
 

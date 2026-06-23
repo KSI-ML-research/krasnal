@@ -1,7 +1,10 @@
 """XGBoost trainer and predictor for move-time estimation.
 
-Trains an XGBoost regressor on absolute move times using clock-derived
-features.
+Trains an XGBoost regressor on absolute move times using 7 clock-derived
+features (ply, time_initial, prev_clock_seconds, clock_fraction_left,
+is_in_check_before_move, total_pieces, num_legal_moves). Provides
+single-position prediction (predict_single) for UCI engine integration and
+batch prediction (predict_parquet) for evaluation.
 """
 
 from __future__ import annotations
